@@ -8,14 +8,30 @@ import { type OAuthPromptField, type OAuthProviderDescriptor } from "./providers
 type OAuthCredentialAction = "have-credentials" | "walkthrough" | "google-json" | "skip";
 type DnsVerificationAction = "check" | "skip";
 
+// The Platform API creates production on any of these, though only the provider
+// can add DNS records under them. `.render.com` also covers Render's shared `app.render.com`.
 const PROVIDER_DOMAIN_SUFFIXES = [
   ".clerk.app",
   ".vercel.app",
   ".netlify.app",
   ".pages.dev",
+  ".workers.dev",
   ".fly.dev",
   ".render.com",
+  ".onrender.com",
   ".herokuapp.com",
+  ".replit.app",
+  ".replit.dev",
+  ".railway.app",
+  ".emergent.host",
+  ".emergentagent.com",
+  ".web.app",
+  ".firebaseapp.com",
+  ".hosted.app",
+  ".github.io",
+  ".lovable.app",
+  ".bolt.host",
+  ".base44.app",
 ];
 
 export async function confirmProceed(): Promise<boolean> {
@@ -40,7 +56,7 @@ export function validateDomain(value: string | undefined): true | string {
     return "Enter a valid domain, such as example.com (without https://).";
   }
   if (PROVIDER_DOMAIN_SUFFIXES.some((suffix) => domain.toLowerCase().endsWith(suffix))) {
-    return `${domain} looks like a provider domain (e.g. *.vercel.app, *.clerk.app). Production needs a domain you own. See https://clerk.com/docs/guides/development/deployment/production`;
+    return `${domain} looks like a hosting provider's domain (e.g. *.vercel.app, *.clerk.app). \`clerk deploy\` sets up production through DNS records, so it needs a domain you can add them to. See https://clerk.com/docs/guides/development/deployment/production`;
   }
   return true;
 }

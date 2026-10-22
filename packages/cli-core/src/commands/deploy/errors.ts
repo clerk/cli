@@ -71,8 +71,8 @@ function translatePlapiError<T>(
 
   if (status === 400 && code === "provider_domain_operation_not_allowed_for_api") {
     return new CliError(
-      "The home URL points to a provider domain (e.g. *.vercel.app, *.replit.app). " +
-        "Production instances require a domain you own — use a custom domain instead.",
+      "The home URL points to a hosting provider's domain (e.g. *.vercel.app, *.replit.app). " +
+        "`clerk deploy` sets up production through DNS records, so it needs a domain you can add them to.",
       { code: ERROR_CODE.PROVIDER_DOMAIN_NOT_ALLOWED },
     );
   }

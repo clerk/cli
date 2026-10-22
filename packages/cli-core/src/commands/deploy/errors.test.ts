@@ -82,4 +82,23 @@ describe("mapDeployError", () => {
 
     expect(error).toBe(replacement);
   });
+
+  // True of `clerk deploy`, not of Clerk: the backend can put production on
+  // some providers' domains through a proxy that this create doesn't set up.
+  test("a provider-domain refusal says why clerk deploy can't use the domain", async () => {
+    const providerDomain = new PlapiError(
+      400,
+      JSON.stringify({ errors: [{ code: "provider_domain_operation_not_allowed_for_api" }] }),
+      "https://x",
+    );
+
+    const error = await rejectionOf(mapDeployError(Promise.reject(providerDomain)));
+
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).code).toBe(ERROR_CODE.PROVIDER_DOMAIN_NOT_ALLOWED);
+    expect((error as CliError).message).toBe(
+      "The home URL points to a hosting provider's domain (e.g. *.vercel.app, *.replit.app). " +
+        "`clerk deploy` sets up production through DNS records, so it needs a domain you can add them to.",
+    );
+  });
 });

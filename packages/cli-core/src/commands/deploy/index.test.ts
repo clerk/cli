@@ -191,6 +191,30 @@ function schemaForEnabledOAuth(config: Record<string, unknown>) {
   return schemaResponse(properties);
 }
 
+// Names under hosting providers' shared domains, where only the provider can
+// add DNS records. The Platform API creates production on them anyway.
+const HOSTING_DOMAINS = [
+  "my-app.replit.app",
+  "abc123-00-xyz.riker.replit.dev",
+  "my-app.onrender.com",
+  "my-app.railway.app",
+  "my-app.up.railway.app",
+  "my-app.emergent.host",
+  "my-app.emergentagent.com",
+  "my-app.preview.emergentagent.com",
+  "my-app.web.app",
+  "my-app.firebaseapp.com",
+  "my-backend--my-project.us-central1.hosted.app",
+  "my-app.workers.dev",
+  "my-app.github.io",
+  "my-app.lovable.app",
+  "my-app.bolt.host",
+  "my-app.base44.app",
+];
+
+const HOSTING_DOMAIN_REASON =
+  "`clerk deploy` sets up production through DNS records, so it needs a domain you can add them to.";
+
 describe("deploy", () => {
   let consoleSpy: ReturnType<typeof spyOn>;
   let writeSpy: ReturnType<typeof spyOn>;
@@ -1020,7 +1044,7 @@ describe("deploy", () => {
       expect(captured.out).toBe("");
     });
 
-    test.each(["https://example.com", "my-app.vercel.app", ""])(
+    test.each(["https://example.com", "my-app.vercel.app", "", ...HOSTING_DOMAINS])(
       "rejects --domain %p before reading anything",
       async (domain) => {
         mockIsAgent.mockReturnValue(true);
@@ -1033,6 +1057,17 @@ describe("deploy", () => {
         expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       },
     );
+
+    test("says why it refuses a hosting provider's domain", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+
+      const error = await runDeploy({ domain: "my-app.replit.app" }).catch((e: unknown) => e);
+
+      expect((error as CliError).message).toBe(
+        `Invalid --domain "my-app.replit.app": my-app.replit.app looks like a hosting provider's domain (e.g. *.vercel.app, *.clerk.app). ${HOSTING_DOMAIN_REASON} See https://clerk.com/docs/guides/development/deployment/production`,
+      );
+    });
 
     test("does not trigger interactive prompts", async () => {
       mockIsAgent.mockReturnValue(true);
@@ -1726,17 +1761,24 @@ describe("deploy", () => {
       expect(firstInputArg.validate("example..com")).toContain("Enter a valid domain");
       expect(firstInputArg.validate("example-.com")).toContain("Enter a valid domain");
       expect(firstInputArg.validate("-example.com")).toContain("Enter a valid domain");
-      expect(firstInputArg.validate("demo.vercel.app")).toContain(
-        "Production needs a domain you own",
-      );
-      expect(firstInputArg.validate("demo.clerk.app")).toContain(
-        "Production needs a domain you own",
-      );
+      expect(firstInputArg.validate("demo.vercel.app")).toContain(HOSTING_DOMAIN_REASON);
+      expect(firstInputArg.validate("demo.clerk.app")).toContain(HOSTING_DOMAIN_REASON);
       expect(mockSelect).not.toHaveBeenCalledWith(
         expect.objectContaining({
           message: "How would you like to set up your production domain?",
         }),
       );
+    });
+
+    test.each(HOSTING_DOMAINS)("the domain prompt refuses %p", async (domain) => {
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await collectCustomDomain();
+
+      const { validate } = mockInput.mock.calls[0]![0] as {
+        validate: (value: string) => true | string;
+      };
+      expect(validate(domain)).toContain(HOSTING_DOMAIN_REASON);
     });
 
     test("trims the collected production domain before returning it", async () => {
