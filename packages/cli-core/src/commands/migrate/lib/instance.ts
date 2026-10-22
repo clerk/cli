@@ -9,12 +9,11 @@
 /**
  * The user limit a development instance is created with.
  *
- * Only a default: Clerk raises it per instance on request, and the real value
- * (`max_allowed_users`) is not served by BAPI, DAPI or FAPI — only by Clerk's
- * internal staff API. The checks reject users past it, so an instance Clerk has
- * raised overrides it with `CLERK_MIGRATE_DEV_USER_LIMIT` (see
- * {@link resolveDevUserLimit}). A production instance's limit comes from its
- * plan; the import stops at the first `user_quota_exceeded` either way.
+ * Only a fallback: `GET /v1/instance` reports the real limit as
+ * `max_allowed_users`, and an API that predates the field, or a read that
+ * failed, leaves the checks to this or `CLERK_MIGRATE_DEV_USER_LIMIT` (see
+ * {@link resolveUserLimit}). The import stops at the first
+ * `user_quota_exceeded` either way.
  */
 export const DEV_USER_LIMIT = 100;
 
@@ -25,13 +24,31 @@ function positive(value: string | undefined): number | undefined {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
 }
 
+/** Where a run's user limit came from: Clerk, the environment, or the default. */
+export type UserLimitSource = "instance" | "env" | "default";
+
 /**
- * The development-instance user limit for this run: `CLERK_MIGRATE_DEV_USER_LIMIT`
- * when it is a positive number, otherwise {@link DEV_USER_LIMIT}.
+ * The user limit the checks hold an import to, or undefined for none.
+ *
+ * The instance's own `max_allowed_users` wins on any instance, since it is the
+ * number Clerk enforces, and `null` means it has no limit. Only when Clerk did
+ * not say does a development instance fall back to
+ * `CLERK_MIGRATE_DEV_USER_LIMIT`, then {@link DEV_USER_LIMIT}.
+ *
+ * @param reported - `max_allowed_users`, or undefined when Clerk did not say.
  */
-export function resolveDevUserLimit(env: Record<string, string | undefined> = process.env): number {
+export function resolveUserLimit(
+  reported: number | null | undefined,
+  instanceType: InstanceType,
+  env: Record<string, string | undefined> = process.env,
+): { limit: number; source: UserLimitSource } | undefined {
+  if (reported === null) return undefined;
+  if (reported !== undefined) return { limit: reported, source: "instance" };
+  if (instanceType !== "dev") return undefined;
   const override = positive(env.CLERK_MIGRATE_DEV_USER_LIMIT);
-  return override ? Math.floor(override) : DEV_USER_LIMIT;
+  return override
+    ? { limit: Math.floor(override), source: "env" }
+    : { limit: DEV_USER_LIMIT, source: "default" };
 }
 
 /** How many times a 429 is retried before the user is recorded as failed. */
