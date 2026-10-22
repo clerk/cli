@@ -9,7 +9,7 @@ import {
   ERROR_CODE,
   AuthError,
   AUTH_ERROR_REASON,
-  isCredentialRefused,
+  credentialRefusal,
   withNextStep,
   EXIT_CODE,
 } from "./errors.ts";
@@ -189,22 +189,30 @@ describe("BillingError", () => {
 });
 
 // A refused credential has to change before a retry can work; anything else
-// may pass on its own.
-describe("isCredentialRefused", () => {
+// may pass on its own. Who refused it decides the fix for a stored session:
+// Clerk's API refusing one the account lookup still accepts needs a sign-out
+// first, while one the CLI can't use already reads as signed out.
+describe("credentialRefusal", () => {
   test.each([
-    { what: "not signed in", error: new AuthError({ reason: AUTH_ERROR_REASON.NOT_LOGGED_IN }) },
+    {
+      what: "not signed in",
+      error: new AuthError({ reason: AUTH_ERROR_REASON.NOT_LOGGED_IN }),
+      by: "cli",
+    },
     {
       what: "an expired session",
       error: new AuthError({ reason: AUTH_ERROR_REASON.SESSION_EXPIRED }),
+      by: "cli",
     },
-    { what: "a 401", error: new PlapiError(401, "{}") },
-    { what: "a 403", error: new PlapiError(403, "{}") },
+    { what: "a 401", error: new PlapiError(401, "{}"), by: "clerk" },
+    { what: "a 403", error: new PlapiError(403, "{}"), by: "clerk" },
     {
       what: "a secret key in CLERK_PLATFORM_API_KEY",
       error: new CliError("Expected a Platform API key", { code: ERROR_CODE.INVALID_KEY_FORMAT }),
+      by: "cli",
     },
-  ])("$what: refused", ({ error }) => {
-    expect(isCredentialRefused(error)).toBe(true);
+  ])("$what: refused by $by", ({ error, by }) => {
+    expect(credentialRefusal(error)).toBe(by);
   });
 
   test.each([
@@ -214,7 +222,7 @@ describe("isCredentialRefused", () => {
     { what: "a network failure", error: new TypeError("fetch failed") },
     { what: "another CLI error", error: new CliError("the application list wasn't a list") },
   ])("$what: not refused", ({ error }) => {
-    expect(isCredentialRefused(error)).toBe(false);
+    expect(credentialRefusal(error)).toBeUndefined();
   });
 });
 

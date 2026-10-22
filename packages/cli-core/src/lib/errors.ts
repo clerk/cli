@@ -556,17 +556,28 @@ export function isAuthError(error: unknown): error is AuthError | ApiError {
 }
 
 /**
- * Whether a Platform API call failed because of its credential: none, a session
- * Clerk won't refresh or accept, a refused key (401, 403), or a
- * `CLERK_PLATFORM_API_KEY` of the wrong kind. Retrying can't fix any of these;
- * the credential has to change. Anything else (a network error, a 5xx, a 429)
- * may pass on its own.
+ * Who refused a Platform API call's credential, when that's why it failed:
+ * - `clerk`: Clerk's API answered 401 or 403.
+ * - `cli`: the CLI had none it could use: no credential, a session it can't
+ *   refresh, or a `CLERK_PLATFORM_API_KEY` of the wrong kind.
+ *
+ * Retrying can't fix either; the credential has to change. Who refused it
+ * decides how a stored session changes: one the CLI can't use already reads
+ * as signed out, so signing in replaces it, while one Clerk's API refused may
+ * still pass the account lookup, which keeps it. Undefined for anything else
+ * (a network error, a 5xx, a 429), which may pass on its own.
  */
-export function isCredentialRefused(error: unknown): boolean {
-  return (
-    isAuthError(error) ||
-    (error instanceof CliError && error.code === ERROR_CODE.INVALID_KEY_FORMAT)
-  );
+export type CredentialRefusal = "clerk" | "cli";
+
+export function credentialRefusal(error: unknown): CredentialRefusal | undefined {
+  if (error instanceof ApiError && (error.status === 401 || error.status === 403)) return "clerk";
+  if (
+    error instanceof CliError &&
+    (error.code === ERROR_CODE.AUTH_REQUIRED || error.code === ERROR_CODE.INVALID_KEY_FORMAT)
+  ) {
+    return "cli";
+  }
+  return undefined;
 }
 
 /**

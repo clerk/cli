@@ -4,8 +4,9 @@
  * be polished, the commands may not change.
  */
 
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import {
+  afterRefusedCredential,
   unlinkedFolderNextStep,
   type Credential,
   type LinkStop,
@@ -116,12 +117,15 @@ const LINK_STOPS: { stop: string; linkStop: LinkStop }[] = [
   { stop: "couldn't tell", linkStop: { autolink: "couldnt_tell" } },
   {
     stop: "a refused credential",
-    linkStop: { autolink: "list_failed", refused: true, retry: LINK_RETRY },
+    linkStop: { autolink: "list_failed", refused: "clerk", retry: LINK_RETRY },
   },
 ];
 const NO_MATCH: LinkStop = { autolink: "no_match" };
-const ANOTHER_FAILURE: LinkStop = { autolink: "list_failed", refused: false, retry: LINK_RETRY };
-const REFUSED: LinkStop = { autolink: "list_failed", refused: true, retry: LINK_RETRY };
+const ANOTHER_FAILURE: LinkStop = { autolink: "list_failed", retry: LINK_RETRY };
+// Clerk's API refused the credential (401, 403).
+const REFUSED: LinkStop = { autolink: "list_failed", refused: "clerk", retry: LINK_RETRY };
+// The CLI couldn't use it: none, a session it can't refresh, a key of the wrong kind.
+const UNUSABLE: LinkStop = { autolink: "list_failed", refused: "cli", retry: LINK_RETRY };
 
 // An init app "isn't in an account yet" by its token alone; only a list can
 // say the app isn't in this account.
@@ -618,28 +622,97 @@ describe("after agent-mode `clerk link` stopped", () => {
   const signInThenRetry = (folder: UnlinkedFolder) =>
     folder.kind === "init_app" ? ["clerk auth login"] : ["clerk auth login", "clerk link"];
 
-  test.each(named([...SESSION, ...NONE]))(
-    "a refused session, or none, $name, $credential: signs in, then retries; never a claim about the account",
+  test.each(NONE)(
+    "no credential, the list refused, $name: signs in, then retries; never a claim about the account",
     ({ folder }) => {
-      const step = unlinkedFolderNextStep(folder, { agent: true, linkStop: REFUSED });
+      const step = unlinkedFolderNextStep(folder, { agent: true, linkStop: UNUSABLE });
 
       expect(step.examples.map((example) => example.command)).toEqual(signInThenRetry(folder));
       expect(step.text).not.toMatch(SAYS_NOT_IN_ACCOUNT);
     },
   );
 
-  test("`clerk init` through `link`, a refused session: signs in, then retries `clerk init`", () => {
+  // A session the CLI can't use (expired, not refreshable) already reads as
+  // signed out, so `clerk auth login` signs in again by itself.
+  test.each(SESSION)(
+    "a stored session the CLI can't use, $name: signs in, then retries, with no sign-out",
+    ({ folder }) => {
+      const step = unlinkedFolderNextStep(folder, { agent: true, linkStop: UNUSABLE });
+
+      expect(step.examples.map((example) => example.command)).toEqual(signInThenRetry(folder));
+      expect(step.text).not.toContain("logout");
+    },
+  );
+
+  // Agent-mode `clerk auth login` keeps a stored session that still passes the
+  // account lookup, so only signing out first replaces one Clerk's API refused.
+  test.each(SESSION)(
+    "a stored session Clerk's API refused, $name: signs out, signs in again, then retries",
+    ({ folder }) => {
+      const step = unlinkedFolderNextStep(folder, { agent: true, linkStop: REFUSED });
+
+      expect(step.examples.map((example) => example.command)).toEqual(
+        folder.kind === "init_app"
+          ? ["clerk auth logout", "clerk auth login"]
+          : ["clerk auth logout", "clerk auth login", "clerk link"],
+      );
+      expect(step.text).toContain("signs the CLI out on this whole machine");
+      expect(step.text).toContain("an account that can list applications");
+      expect(step.text).not.toMatch(SAYS_NOT_IN_ACCOUNT);
+    },
+  );
+
+  test("`clerk init` through `link`, a refused session: signs out and in, then retries `clerk init`", () => {
     const step = unlinkedFolderNextStep(PUBLISHABLE, {
       agent: true,
       rerun: INIT_RERUN,
-      linkStop: { autolink: "list_failed", refused: true, retry: INIT_RERUN },
+      linkStop: { autolink: "list_failed", refused: "clerk", retry: INIT_RERUN },
     });
 
     expect(step.text).toContain("then run `clerk init` again");
     expect(step.examples.map((example) => example.command)).toEqual([
+      "clerk auth logout",
       "clerk auth login",
       "clerk init",
     ]);
+  });
+
+  // `link`'s claim of an init app was refused: the token is still on disk,
+  // and the fix is the credential's, whatever stop it was.
+  test.each([
+    { credential: "api_key" as const, by: "clerk" as const, expected: ["clerk link"] },
+    { credential: "api_key" as const, by: "cli" as const, expected: ["clerk link"] },
+    {
+      credential: "session" as const,
+      by: "clerk" as const,
+      expected: ["clerk auth logout", "clerk auth login"],
+    },
+    { credential: "session" as const, by: "cli" as const, expected: ["clerk auth login"] },
+    { credential: "none" as const, by: "cli" as const, expected: ["clerk auth login"] },
+  ])(
+    "a claim of an init app refused by $by, $credential: $expected",
+    ({ credential, by, expected }) => {
+      const step = afterRefusedCredential(
+        { kind: "init_app", credential },
+        by,
+        LINK_RETRY,
+        undefined,
+      );
+
+      expect(step.examples.map((example) => example.command)).toEqual([...expected]);
+    },
+  );
+
+  test("a refused claim through `clerk init`, API key: fix the key, then retry `clerk init`", () => {
+    const step = afterRefusedCredential(
+      { kind: "init_app", credential: "api_key" },
+      "clerk",
+      INIT_RERUN,
+      INIT_RERUN,
+    );
+
+    expect(step.text).toContain("Replace `CLERK_PLATFORM_API_KEY`");
+    expect(step.examples.map((example) => example.command)).toEqual(["clerk init"]);
   });
 
   // Platform API calls use the key over any session, so signing in can't help.
@@ -657,20 +730,75 @@ describe("after agent-mode `clerk link` stopped", () => {
 
   test.each(named(SIGNED_IN))(
     "another failure, $name, $credential: retry first, then link by ID if it fails again",
-    ({ folder }) => {
+    ({ name, folder }) => {
       const step = unlinkedFolderNextStep(folder, { agent: true, linkStop: ANOTHER_FAILURE });
 
       expect(step.text).toContain("retry: run `clerk link` again");
       expect(step.text).toContain("If it fails again");
       expect(step.text).toContain("Clerk Dashboard");
       expect(step.text).not.toContain("Then run");
-      expect(step.examples.map((example) => example.command)).toEqual([
-        "clerk link",
-        "clerk link --app <app_id>",
-      ]);
+      expect(step.examples.map((example) => example.command)).toEqual(
+        isClaimableSdkApp({ name, folder })
+          ? ["clerk link", "clerk open", "clerk link --app <app_id>"]
+          : ["clerk link", "clerk link --app <app_id>"],
+      );
       expect(step.text).not.toMatch(SAYS_NOT_IN_ACCOUNT);
     },
   );
+
+  // An unclaimed SDK app isn't in the Dashboard, so a person looking for its
+  // ID could pick another app: it's claimed first, where the retry searches.
+  test.each([
+    { credential: "session" as const, into: "the account this CLI is signed in to" },
+    { credential: "api_key" as const, into: "the workspace `CLERK_PLATFORM_API_KEY` belongs to" },
+  ])(
+    "another failure, a claimable SDK app, $credential: claim it into its destination before looking up its ID",
+    ({ credential, into }) => {
+      const step = unlinkedFolderNextStep(
+        { kind: "sdk_app", credential },
+        { agent: true, linkStop: ANOTHER_FAILURE },
+      );
+
+      expect(step.text).toContain("`clerk open`");
+      expect(step.text).toContain(into);
+      expect(step.text.indexOf("`clerk open`")).toBeLessThan(step.text.indexOf("--app <app_id>"));
+    },
+  );
+
+  // This stop comes before `link` could say the claim link is unusable, so
+  // the fallback says it: the folder's own app if it's already claimed, or
+  // an existing one as a separate choice.
+  test("another failure, an SDK app with no usable claim link: its own app if claimed, or an existing one", () => {
+    const step = unlinkedFolderNextStep(
+      {
+        kind: "sdk_app",
+        credential: "session",
+        unusable: { reason: "it has no claim URL", findableByKey: true },
+      },
+      { agent: true, linkStop: ANOTHER_FAILURE },
+    );
+
+    expect(step.text).toContain("has no usable claim link: it has no claim URL");
+    expect(step.text).toContain("already claimed");
+    expect(step.text).toContain("an existing application");
+    // A person who guesses could pick another app: they compare keys.
+    expect(step.text).toContain(
+      "the one whose publishable key matches the one in `.clerk/.tmp/keyless.json`",
+    );
+    // An agent reading only the commands keeps the condition.
+    const byId = step.examples.find((example) => example.command === "clerk link --app <app_id>");
+    expect(byId?.description).toContain("only if this folder's app is already claimed");
+  });
+
+  // The person finds the folder's own app by the key it holds.
+  test.each([
+    { name: "a publishable key", folder: PUBLISHABLE, names: "publishable key is" },
+    { name: "a secret key only", folder: SECRET_ONLY, names: "secret key is" },
+  ])("another failure, $name: names the key to find the app by", ({ folder, names }) => {
+    const { text } = unlinkedFolderNextStep(folder, { agent: true, linkStop: ANOTHER_FAILURE });
+
+    expect(text).toContain(`the one whose ${names}`);
+  });
 
   test.each(NONE)(
     "another failure with no credential, $name: signs in first, never the bare retry",
@@ -686,7 +814,7 @@ describe("after agent-mode `clerk link` stopped", () => {
     const step = unlinkedFolderNextStep(PUBLISHABLE, {
       agent: true,
       rerun: INIT_RERUN,
-      linkStop: { autolink: "list_failed", refused: false, retry: INIT_RERUN },
+      linkStop: { autolink: "list_failed", retry: INIT_RERUN },
     });
 
     expect(step.text).toContain("retry: run `clerk init` again");
@@ -703,7 +831,7 @@ describe("after agent-mode `clerk link` stopped", () => {
     const step = unlinkedFolderNextStep(PUBLISHABLE, {
       agent: true,
       rerun: migrate,
-      linkStop: { autolink: "list_failed", refused: false, retry: migrate },
+      linkStop: { autolink: "list_failed", retry: migrate },
     });
 
     expect(step.text).toContain("retry: run the same `clerk migrate import` command again");
@@ -741,4 +869,80 @@ describe("after agent-mode `clerk link` stopped", () => {
       );
     },
   );
+});
+
+// `clerk init --starter` links inside the project it just created. From the
+// folder the agent ran it in, `clerk link` would link that folder and
+// `clerk init` could scaffold a second project, so the advice names the
+// project's folder and every command changes into it first, by its absolute
+// path: a shell that keeps its folder between commands is already inside it.
+describe("advice for a project in another folder", () => {
+  const originalPlatform = process.platform;
+  const setPlatform = (platform: NodeJS.Platform) =>
+    Object.defineProperty(process, "platform", { value: platform, writable: true });
+  afterEach(() => setPlatform(originalPlatform));
+
+  // `quoteArg`'s two forms: single quotes on POSIX shells; Windows gets the
+  // double quotes cmd.exe and PowerShell honor. A path with no space needs none.
+  test.each([
+    { platform: "darwin" as const, name: "site", path: "/work/site", cd: "cd /work/site && " },
+    {
+      platform: "darwin" as const,
+      name: "my site",
+      path: "/work/my site",
+      cd: "cd '/work/my site' && ",
+    },
+    {
+      platform: "linux" as const,
+      name: "my site",
+      path: "/work/my site",
+      cd: "cd '/work/my site' && ",
+    },
+    {
+      platform: "win32" as const,
+      name: "my site",
+      path: "/work/my site",
+      cd: 'cd "/work/my site" && ',
+    },
+  ])(
+    "$name ($platform): the text names it, and every command starts with `$cd`",
+    ({ platform, name, path, cd }) => {
+      setPlatform(platform);
+      const rerun: Rerun = { ...INIT_RERUN, folder: { name, path } };
+      const step = unlinkedFolderNextStep(PUBLISHABLE, {
+        agent: true,
+        rerun,
+        linkStop: { autolink: "list_failed", retry: rerun },
+      });
+
+      expect(step.text).toContain(`Run these commands in \`${name}\``);
+      expect(step.examples.length).toBeGreaterThan(0);
+      expect(step.examples.every((example) => example.command.startsWith(cd))).toBe(true);
+    },
+  );
+
+  test("a refused claim's advice changes into it too", () => {
+    const rerun: Rerun = { ...INIT_RERUN, folder: { name: "site", path: "/work/site" } };
+    const step = afterRefusedCredential(
+      { kind: "init_app", credential: "api_key" },
+      "clerk",
+      rerun,
+      rerun,
+    );
+
+    expect(step.text).toContain("Run these commands in `site`");
+    expect(step.examples.map((example) => example.command)).toEqual([
+      "cd /work/site && clerk init",
+    ]);
+  });
+
+  test("the same folder: no `cd`", () => {
+    const step = unlinkedFolderNextStep(PUBLISHABLE, {
+      agent: true,
+      rerun: INIT_RERUN,
+      linkStop: NO_MATCH,
+    });
+
+    expect(step.examples.some((example) => example.command.startsWith("cd "))).toBe(false);
+  });
 });

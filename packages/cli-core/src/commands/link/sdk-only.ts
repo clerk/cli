@@ -17,7 +17,7 @@ import {
   CliError,
   ERROR_CODE,
   errorMessage,
-  isCredentialRefused,
+  credentialRefusal,
   throwUsageError,
 } from "../../lib/errors.ts";
 import {
@@ -100,7 +100,7 @@ export async function linkSdkOnlyFolder(
     if (!agent) throw error;
     throw agentStopError(await readUnlinkedFolder(cwd), {
       reason: `This folder's app was created by the Clerk SDK, and the CLI couldn't list your applications to look for it (${errorMessage(error)}).`,
-      linkStop: { autolink: "list_failed", refused: isCredentialRefused(error), retry },
+      linkStop: { autolink: "list_failed", refused: credentialRefusal(error), retry },
       rerun,
     });
   }

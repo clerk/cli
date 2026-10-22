@@ -44,7 +44,12 @@ import {
   type FolderKeys,
 } from "../../lib/local-keys.ts";
 import { decodePublishableKey } from "../../lib/publishable-key.ts";
-import { readUnlinkedFolder, type LinkStop, type Rerun } from "../../lib/unlinked-folder.ts";
+import {
+  afterRefusedCredential,
+  readUnlinkedFolder,
+  type LinkStop,
+  type Rerun,
+} from "../../lib/unlinked-folder.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -54,9 +59,10 @@ import {
   ERROR_CODE,
   EXIT_CODE,
   errorMessage,
-  isCredentialRefused,
+  credentialRefusal,
   throwUserAbort,
   withApiContext,
+  withNextStep,
 } from "../../lib/errors.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
@@ -135,7 +141,10 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
   const initClaim = !existing && !options.app ? await readInitClaim(cwd) : undefined;
   if (initClaim) {
     openFrame();
-    const claimed = await claimFirst(cwd, initClaim, agent, showNextSteps);
+    const claimed = await claimFirst(cwd, initClaim, agent, showNextSteps, {
+      retry,
+      rerun: options.rerun,
+    });
     if (claimed) return claimed;
   }
 
@@ -449,7 +458,7 @@ function linkStopFor(
     case "couldnt_tell":
       return { autolink: autolinked.status };
     case "list_failed":
-      return { autolink: "list_failed", refused: isCredentialRefused(autolinked.error), retry };
+      return { autolink: "list_failed", refused: credentialRefusal(autolinked.error), retry };
   }
 }
 
@@ -536,6 +545,7 @@ async function claimFirst(
   initClaim: InitClaim,
   agent: boolean,
   showNextSteps: boolean,
+  { retry, rerun }: { retry: Rerun; rerun?: Rerun },
 ): Promise<LinkOutcome | undefined> {
   if (agent) {
     if (!(await hasAccountCredentials())) return undefined;
@@ -573,6 +583,15 @@ async function claimFirst(
         code: ERROR_CODE.NOT_LINKED,
       });
     case "failed":
+      // A refused credential can't pass on a retry, so an agent gets the fix
+      // with the error, which keeps Clerk's code and exit status. The token
+      // is still on disk, so the folder reads as an init app. A temporary
+      // failure stays as it was.
+      const refusal = credentialRefusal(result.error);
+      if (agent && refusal) {
+        const step = afterRefusedCredential(await readUnlinkedFolder(cwd), refusal, retry, rerun);
+        throw withNextStep(result.error, step);
+      }
       throw result.error;
   }
 }

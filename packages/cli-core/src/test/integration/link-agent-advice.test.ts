@@ -66,13 +66,24 @@ useCleanClerkKeyEnv();
 
 /** The status the app list fails with; undefined answers with the account's apps. */
 let listFailure: number | undefined;
+/** The status the claim fails with; undefined claims the init app. */
+let claimFailure: number | undefined;
+
+/** Clerk's error body for a failed request, with the code it uses for that status. */
+function clerkError(status: number): Response {
+  const code = status === 401 ? "authentication_invalid" : "internal_clerk_error";
+  return Response.json({ errors: [{ code, message: `failed with ${status}` }] }, { status });
+}
 
 beforeEach(async () => {
   listFailure = undefined;
+  claimFailure = undefined;
   await write("package.json", JSON.stringify({ name: "my-app" }));
   http.stub(async (url, init) => {
     const { pathname } = new URL(url);
-    if (pathname === CLAIM_PATH && init?.method === "POST") return Response.json(INIT_APP);
+    if (pathname === CLAIM_PATH && init?.method === "POST") {
+      return claimFailure ? clerkError(claimFailure) : Response.json(INIT_APP);
+    }
     if (pathname === `${APPS_PATH}/${INIT_APP.application_id}`) return Response.json(INIT_APP);
     if (pathname === APPS_PATH && init?.method === "POST") {
       return Response.json(app("app_created", "created-app.clerk.accounts.dev"));
@@ -298,6 +309,16 @@ const STOPS: Cell[] = [
     expected: ["clerk link"],
     says: ["Replace `CLERK_PLATFORM_API_KEY`"],
   },
+  // Agent `clerk auth login` keeps a session that passes the account lookup,
+  // so a refused one is replaced by signing out first.
+  {
+    name: "a publishable key, the list refusing the stored session (401)",
+    credential: "session",
+    setUp: FOLDERS.publishableKey,
+    listFails: 401,
+    expected: ["clerk auth logout", "clerk auth login", "clerk link"],
+    says: ["signs the CLI out on this whole machine", "an account that can list applications"],
+  },
   {
     name: "an SDK app, the list refusing the API key (401)",
     credential: "api_key",
@@ -316,13 +337,18 @@ const STOPS: Cell[] = [
     says: ["retry: run `clerk link` again", "Clerk Dashboard"],
     saysNot: ["No application in your account"],
   },
+  // An unclaimed SDK app isn't in the Dashboard: a person claims it first.
   {
     name: "an SDK app, the list failing (500)",
     credential: "session",
     setUp: async () => FOLDERS.sdkApp(),
     listFails: 500,
-    expected: ["clerk link", "clerk link --app <app_id>"],
-    says: ["retry: run `clerk link` again", "Clerk Dashboard"],
+    expected: ["clerk link", "clerk open", "clerk link --app <app_id>"],
+    says: [
+      "retry: run `clerk link` again",
+      "Clerk Dashboard",
+      "into the account this CLI is signed in to",
+    ],
   },
 ];
 
@@ -367,9 +393,103 @@ describe("agent `clerk link` that can't choose an app", () => {
   );
 });
 
-// `init` passes its own rerun, so the advice ends with `clerk init`, never a
-// bare `clerk link`, and its retry is `clerk init`.
+// The claim fails before the list runs. A refused credential can't pass on a
+// retry, so the error keeps Clerk's code and exit 1 and adds the fix; a
+// temporary failure stays as it was. The token stays on disk for the rerun.
+describe("agent `clerk link` whose claim of the init app fails", () => {
+  const tokenFile = () => Bun.file(join(h.tempDir, ".clerk", "keyless.json"));
+
+  test.each([
+    {
+      credential: "api_key" as const,
+      expected: ["clerk link"],
+      says: "Replace `CLERK_PLATFORM_API_KEY`",
+    },
+    {
+      credential: "session" as const,
+      expected: ["clerk auth logout", "clerk auth login"],
+      says: "signs the CLI out on this whole machine",
+    },
+  ])(
+    "refused (401), $credential only: Clerk's code and exit 1, then $expected",
+    async ({ credential, expected, says }) => {
+      await FOLDERS.initApp();
+      await useCredential(credential);
+      claimFailure = 401;
+
+      const result = await clerk.raw("--mode", "agent", "link");
+      const error = agentError(result);
+
+      expect(result.exitCode).toBe(1);
+      expect(error.code).toBe("authentication_invalid");
+      expect(error.message).toContain("failed with 401");
+      expect(error.message).toContain(says);
+      expect(commands(error)).toEqual([...expected]);
+      expect(result.stderr).not.toContain("claim_token_init");
+      expect(await tokenFile().exists()).toBe(true);
+      expect(await linkedAppId()).toBeUndefined();
+    },
+  );
+
+  test("a server error (500): the original error, with no next step", async () => {
+    await FOLDERS.initApp();
+    await useCredential("api_key");
+    claimFailure = 500;
+
+    const result = await clerk.raw("--mode", "agent", "link");
+    const error = agentError(result);
+
+    expect(result.exitCode).toBe(1);
+    expect(error.code).toBe("internal_clerk_error");
+    expect(error.examples).toBeUndefined();
+    expect(await tokenFile().exists()).toBe(true);
+  });
+});
+
+// The most common refused session: one that expired and can't be refreshed.
+// It already reads as signed out, so `clerk auth login` replaces it, with no
+// sign-out first, and the CLI's own advice and the step agree.
+describe("agent `clerk link` with a stored session the CLI can't refresh", () => {
+  beforeEach(async () => {
+    await useCredential("session");
+    mockState.sessionUnrefreshable = true;
+  });
+
+  test("at the claim of the init app: its own error and exit 1, then `clerk auth login`, which claims", async () => {
+    await FOLDERS.initApp();
+
+    const result = await clerk.raw("--mode", "agent", "link");
+    const error = agentError(result);
+
+    expect(result.exitCode).toBe(1);
+    expect(error.code).toBe("auth_required");
+    expect(error.message).toStartWith(
+      "Session expired. Run `clerk auth login` to re-authenticate.\n",
+    );
+    expect(error.message).toContain("created by `clerk init`");
+    expect(error.message).not.toContain("logout");
+    expect(commands(error)).toEqual(["clerk auth login"]);
+    expect(await Bun.file(join(h.tempDir, ".clerk", "keyless.json")).exists()).toBe(true);
+  });
+
+  test("at the app list: usage_error, exit 2, then `clerk auth login` and the retry", async () => {
+    await FOLDERS.publishableKey();
+
+    const result = await clerk.raw("--mode", "agent", "link");
+    const error = agentError(result);
+
+    expect(result.exitCode).toBe(2);
+    expect(error.code).toBe("usage_error");
+    expect(error.message).not.toContain("logout");
+    expect(commands(error)).toEqual(["clerk auth login", "clerk link"]);
+  });
+});
+
+// `init` passes its own rerun, with the flags it ran with, so the advice ends
+// with that command, never a bare `clerk link`, and its retry is the same.
 describe("agent `clerk init` reaching `link`'s stop", () => {
+  const INIT_AGAIN = "clerk init";
+
   beforeEach(async () => {
     await write(
       "package.json",
@@ -385,7 +505,7 @@ describe("agent `clerk init` reaching `link`'s stop", () => {
       name: "a Clerk line the CLI can't read",
       setUp: () =>
         write(".env.local", `  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = ${pk(STRANGER_APP)}\n`),
-      expected: ["clerk apps list --json", "clerk link --app <app_id>", "clerk init"],
+      expected: ["clerk apps list --json", "clerk link --app <app_id>", INIT_AGAIN],
       says: "couldn't read the `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` line",
     },
     {
@@ -396,14 +516,14 @@ describe("agent `clerk init` reaching `link`'s stop", () => {
           `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${pk(STRANGER_APP)}\nCLERK_SECRET_KEY=${sk(STRANGER_APP)}\n`,
         ),
       listFails: 500,
-      expected: ["clerk init", "clerk link --app <app_id>", "clerk init"],
-      says: "retry: run `clerk init` again",
+      expected: [INIT_AGAIN, "clerk link --app <app_id>", INIT_AGAIN],
+      says: `retry: run \`${INIT_AGAIN}\` again`,
     },
     {
       name: "an SDK app not in the account",
       setUp: () => FOLDERS.sdkApp(),
-      expected: ["clerk open", "clerk link", "clerk init"],
-      says: "Then run `clerk init` again.",
+      expected: ["clerk open", "clerk link", INIT_AGAIN],
+      says: `Then run \`${INIT_AGAIN}\` again.`,
     },
   ])(
     "$name, stored session only: usage_error, exit 2, ending with `clerk init`",

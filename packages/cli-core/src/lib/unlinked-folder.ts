@@ -12,7 +12,9 @@
  */
 
 import { hasStoredCredentials } from "./credential-store.ts";
+import type { CredentialRefusal, NextStepAdvice } from "./errors.ts";
 import type { Example } from "./help.ts";
+import { quoteArg } from "./json-body.ts";
 import { peekKeylessBreadcrumb } from "./keyless.ts";
 import {
   couldntTellReason,
@@ -22,6 +24,7 @@ import {
   noUsableClaimLinkSentence,
   readFolderKeys,
   readSdkClaimLink,
+  SDK_KEYLESS_SOURCE,
   sdkFileWithoutKeyReason,
   unreadableFolderReason,
   type FolderKeys,
@@ -198,6 +201,18 @@ export interface Rerun {
   clause: string;
   /** The command itself, for `examples`. Absent when it can't be echoed: its arguments may hold a secret. */
   command?: string;
+  /**
+   * The folder every advised command must run in, when it isn't where the
+   * command that stopped ran: a project `clerk init` just created. `name` is
+   * its path relative to there, for the text; `path` is absolute, for the
+   * commands.
+   */
+  folder?: ProjectFolder;
+}
+
+export interface ProjectFolder {
+  name: string;
+  path: string;
 }
 
 /**
@@ -205,21 +220,18 @@ export interface Rerun {
  * stopped without linking. Its stop already says why, so the advice adds
  * only what to run, and never sends the agent back into the same stop.
  *
- * A failed list carries `refused` (`isCredentialRefused`: the credential has
- * to change) and `retry`, the command that stopped: the one time the advice
- * is that command, worded as a retry.
+ * A failed list carries `refused` when the credential has to change, saying
+ * who refused it (`credentialRefusal`), and `retry`, the command that
+ * stopped: the one time the advice is that command, worded as a retry.
  */
 export type LinkStop =
   | { autolink: "no_key" }
   | { autolink: "no_match" }
   | { autolink: "couldnt_tell" }
-  | { autolink: "list_failed"; refused: boolean; retry: Rerun };
+  | { autolink: "list_failed"; refused?: CredentialRefusal; retry: Rerun };
 
-export interface NextStep {
-  text: string;
-  /** The commands `text` names, in order. Sites attach them to the error in agent mode only. */
-  examples: Example[];
-}
+/** The step for a folder: text for after a site's own lead sentence, and its commands. */
+export type NextStep = NextStepAdvice;
 
 export interface NextStepContext {
   agent: boolean;
@@ -263,8 +275,12 @@ const EXAMPLE = {
 /** The step for `folder`: the text to put after a site's own lead sentence, and its commands. */
 export function unlinkedFolderNextStep(folder: UnlinkedFolder, context: NextStepContext): NextStep {
   const { agent, rerun, linkStop } = context;
-  if (agent && linkStop) return afterLinkStop(folder, linkStop, rerun);
-  return withRerun(stepFor(folder, agent, isSignedIn(folder.credential)), rerun);
+  const retry = linkStop?.autolink === "list_failed" ? linkStop.retry : undefined;
+  const step =
+    agent && linkStop
+      ? afterLinkStop(folder, linkStop, rerun)
+      : withRerun(stepFor(folder, agent, isSignedIn(folder.credential)), rerun);
+  return inFolder(step, rerun?.folder ?? retry?.folder);
 }
 
 function stepFor(folder: UnlinkedFolder, agent: boolean, signedIn: boolean): NextStep {
@@ -286,16 +302,11 @@ function stepFor(folder: UnlinkedFolder, agent: boolean, signedIn: boolean): Nex
 function afterLinkStop(folder: UnlinkedFolder, stop: LinkStop, rerun: Rerun | undefined): NextStep {
   const signedIn = isSignedIn(folder.credential);
   if (stop.autolink === "list_failed") {
-    // Platform API calls use the key over any session, so signing in can't help.
-    if (stop.refused && folder.credential === "api_key") return fixApiKey(stop.retry);
+    // Without a credential, the list never reached Clerk.
     if (stop.refused || !signedIn) {
-      // A credential problem, not proof the app needs claiming: after signing
-      // in, the retry decides. An init app's sign-in claims and links it.
-      return folder.kind === "init_app"
-        ? withRerun(initApp(true, false), rerun)
-        : signInThenRetry(stop.retry);
+      return afterRefusal(folder, stop.refused ?? "cli", stop.retry, rerun);
     }
-    return retryThenLinkById(stop.retry, rerun);
+    return retryThenLinkById(folder, stop.retry, rerun);
   }
   // Without a credential, `link` skipped the claim: signing in claims the app.
   if (!signedIn && folder.kind === "init_app") return withRerun(initApp(true, false), rerun);
@@ -308,6 +319,44 @@ function afterLinkStop(folder: UnlinkedFolder, stop: LinkStop, rerun: Rerun | un
     case "no_key":
       return withRerun(noKey(folder, signedIn), rerun);
   }
+}
+
+/**
+ * Clerk refused the credential a Platform API call used, or there was none:
+ * the list `link` matches with, or `link`'s claim of an init app. Retrying
+ * can't fix it; the credential has to change, then `retry` (the command that
+ * stopped) runs again. A credential problem isn't proof the app needs
+ * claiming, so after the fix the retry decides.
+ */
+export function afterRefusedCredential(
+  folder: UnlinkedFolder,
+  refusal: CredentialRefusal,
+  retry: Rerun,
+  rerun: Rerun | undefined,
+): NextStep {
+  return inFolder(afterRefusal(folder, refusal, retry, rerun), rerun?.folder ?? retry.folder);
+}
+
+function afterRefusal(
+  folder: UnlinkedFolder,
+  refusal: CredentialRefusal,
+  retry: Rerun,
+  rerun: Rerun | undefined,
+): NextStep {
+  // Platform API calls use the key over any session, so signing in can't help.
+  if (folder.credential === "api_key") return fixApiKey(retry);
+  // Only a session Clerk's API refused can still pass the account lookup,
+  // which makes agent `clerk auth login` keep it: it's signed out first.
+  if (folder.credential === "session" && refusal === "clerk") {
+    return folder.kind === "init_app"
+      ? withRerun(signInAgainToClaim(), rerun)
+      : signInAgainThenRetry(retry);
+  }
+  // No credential, or a session the CLI can't use, reads as signed out, so
+  // signing in replaces it. An init app's sign-in claims and links it.
+  return folder.kind === "init_app"
+    ? withRerun(initApp(true, false), rerun)
+    : signInThenRetry(retry);
 }
 
 /** No app in the account holds the folder's key. */
@@ -563,6 +612,49 @@ function fixApiKey(retry: Rerun): NextStep {
   };
 }
 
+/**
+ * Agent-mode `clerk auth login` keeps a stored session that still passes the
+ * account lookup, even one the Platform API refuses, so signing out first is
+ * what makes it sign in again. Signing out applies to the whole machine, and
+ * the same account may be refused again, so the text says both.
+ */
+const SIGN_OUT_THEN_IN =
+  "`clerk auth logout` (it signs the CLI out on this whole machine, not just this folder), then `clerk auth login` (it opens a browser, so a person must finish signing in, with an account that can list applications)";
+
+const SIGN_OUT = { command: "clerk auth logout", description: "Sign the CLI out on this machine" };
+const SIGN_IN_AGAIN = {
+  command: "clerk auth login",
+  description: "Sign in again; a person finishes it, with an account that can list applications",
+};
+
+/** Clerk refused the stored session: sign out, sign in again, then run the command that stopped again. */
+function signInAgainThenRetry(retry: Rerun): NextStep {
+  return {
+    text: `Clerk refused this CLI's stored session. Run ${SIGN_OUT_THEN_IN}, then ${retry.clause}.`,
+    examples: [
+      SIGN_OUT,
+      SIGN_IN_AGAIN,
+      ...(retry.command
+        ? [{ command: retry.command, description: "Run it again once signed in" }]
+        : []),
+    ],
+  };
+}
+
+/** The same, for an init app: signing in again claims it and links this folder. */
+function signInAgainToClaim(): NextStep {
+  return {
+    text: `Clerk refused this CLI's stored session, and this folder's app was created by \`clerk init\` and isn't in an account yet. Run ${SIGN_OUT_THEN_IN}: signing in claims the app and links this folder.`,
+    examples: [
+      SIGN_OUT,
+      {
+        ...SIGN_IN_AGAIN,
+        description: `${SIGN_IN_AGAIN.description}; it claims this folder's app`,
+      },
+    ],
+  };
+}
+
 /** The list failed on its credential: sign in, then run the command that stopped again. */
 function signInThenRetry(retry: Rerun): NextStep {
   return {
@@ -582,22 +674,84 @@ function signInThenRetry(retry: Rerun): NextStep {
  * failing (a server bug on one account, say) would loop on retries alone, so
  * the same message offers linking by an ID from the Dashboard: that's a
  * different API call, so it can work while the list doesn't.
+ *
+ * An SDK-created app is in the Dashboard only once someone claims it. Looking
+ * up "its" ID before that could pick another app, which `clerk link --app`
+ * links without checking the folder's keys, so a claimable one is claimed
+ * first, where the retry searches. One that can't be claimed from this folder
+ * is named as the folder's own app only if it's already claimed; any other app
+ * is a separate choice. This stop comes before `link` could say so.
  */
-function retryThenLinkById(retry: Rerun, rerun: Rerun | undefined): NextStep {
+function retryThenLinkById(
+  folder: UnlinkedFolder,
+  retry: Rerun,
+  rerun: Rerun | undefined,
+): NextStep {
   const thenRerun = rerun ? `, then ${rerun.clause}` : "";
+  const linkById = "run `clerk link --app <app_id>`";
+  // A person who guesses could pick another app, so they find it by its key.
+  const which = appByKey(folder);
+  let fallback = `have a person find the app's ID in the Clerk Dashboard${which} and ${linkById}${thenRerun}.`;
+  let byIdWhen = "If it fails again";
+  const openFirst: Example[] = [];
+  if (folder.kind === "sdk_app" && !folder.unusable) {
+    fallback = `have a person claim the app from the link \`clerk open\` prints, into ${CLAIM_INTO[folder.credential]}, if it isn't there yet, then find its ID in the Clerk Dashboard and ${linkById}${thenRerun}.`;
+    openFirst.push(EXAMPLE.open);
+  } else if (folder.kind === "sdk_app" && folder.unusable) {
+    fallback = `if this folder's app is already claimed, have a person find its ID in the Clerk Dashboard${which} and ${linkById}${thenRerun}. ${noUsableClaimLinkSentence(folder.unusable.reason)} So if the app isn't claimed yet, it can't be claimed from this folder, and linking an existing application instead is a separate choice.`;
+    byIdWhen = "If it fails again, and only if this folder's app is already claimed";
+  }
   return {
-    text: `A failed list can be temporary, so retry: ${retry.clause}. If it fails again, have a person find the app's ID in the Clerk Dashboard and run \`clerk link --app <app_id>\`${thenRerun}.`,
+    text: `A failed list can be temporary, so retry: ${retry.clause}. If it fails again, ${fallback}`,
     examples: [
       ...(retry.command ? [{ command: retry.command, description: "Retry" }] : []),
+      ...openFirst,
       {
         command: "clerk link --app <app_id>",
-        description:
-          "If it fails again: link the app by the ID a person finds in the Clerk Dashboard",
+        description: `${byIdWhen}: link the app by the ID a person finds in the Clerk Dashboard`,
       },
       ...(rerun?.command
         ? [{ command: rerun.command, description: "Run it again once this folder is linked" }]
         : []),
     ],
+  };
+}
+
+/**
+ * How a person picks the folder's own app out of the Dashboard: by the key
+ * the folder holds, as a parenthetical; empty when it holds none.
+ */
+function appByKey(folder: UnlinkedFolder): string {
+  if (folder.kind === "sdk_app") {
+    return folder.unusable?.findableByKey === false
+      ? ""
+      : ` (the one whose publishable key matches the one in \`${SDK_KEYLESS_SOURCE}\`)`;
+  }
+  if (folder.kind !== "unknown_owner") return "";
+  if (folder.publishableKey) {
+    return ` (the one whose publishable key is ${describeKeyLocation(folder.publishableKey)})`;
+  }
+  if (folder.secretKey) {
+    return ` (the one whose secret key is ${describeKeyLocation(folder.secretKey)})`;
+  }
+  return "";
+}
+
+/**
+ * Names the project's folder and changes into it before each command, when
+ * the commands must run somewhere other than where the command that stopped
+ * ran (`Rerun.folder`). From there, `clerk link` would link the wrong folder
+ * and `clerk init` could scaffold a second project. Some agents run each
+ * command in a new shell, so every command carries its own `cd`; others keep
+ * the shell's folder between commands, so the `cd` takes the absolute path,
+ * which works from anywhere, including the project's own folder.
+ */
+function inFolder(step: NextStep, folder: ProjectFolder | undefined): NextStep {
+  if (!folder) return step;
+  const cd = `cd ${quoteArg(folder.path)} && `;
+  return {
+    text: `Run these commands in \`${folder.name}\`, the project's folder. ${step.text}`,
+    examples: step.examples.map((example) => ({ ...example, command: `${cd}${example.command}` })),
   };
 }
 

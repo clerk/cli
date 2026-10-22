@@ -17,7 +17,7 @@
  * none.
  */
 
-import { beforeEach, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import type { Example } from "../../lib/help.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -70,12 +70,19 @@ useSyntheticShellClerkKeys();
 useCleanClerkKeyEnv();
 
 let accountApps: Application[];
+/** A session token the Platform API refuses; others are accepted. */
+let refusedToken: string | undefined;
 
 beforeEach(async () => {
   accountApps = [OTHER_APP];
+  refusedToken = undefined;
   await write("package.json", JSON.stringify({ name: "my-app" }));
   http.stub(async (url, init) => {
     const { pathname } = new URL(url);
+    const token = new Headers(init?.headers).get("authorization");
+    if (refusedToken && token === `Bearer ${refusedToken}`) {
+      return Response.json({ errors: [{ message: "refused" }] }, { status: 401 });
+    }
     if (pathname === CLAIM_PATH && init?.method === "POST") {
       accountApps.push(INIT_APP);
       return Response.json(INIT_APP);
@@ -304,4 +311,88 @@ test("row 7, plain keys of an app not in the account, signed in: `clerk link` st
   expect(error.code).toBe("usage_error");
   expect(commands(error)[0]).not.toBe("clerk link");
   expect(await linkedAppId()).toBeUndefined();
+});
+
+// The Platform API refuses the stored session while Clerk's account lookup
+// still accepts it. Agent `clerk auth login` then keeps the session, so the
+// advice signs out first.
+describe("a stored session the Platform API refuses", () => {
+  beforeEach(async () => {
+    accountApps = [OTHER_APP, KEYS_APP];
+    await FOLDERS.plainKeys();
+    useCredential("session");
+    // The account lookup reads this first: with it, the session counts as working.
+    const { setAuth } = await import("../../lib/config.ts");
+    await setAuth({ userId: "user_123" });
+    refusedToken = mockState.storedToken ?? undefined;
+  });
+
+  test("`clerk auth login` alone keeps it, so `clerk link` is refused again", async () => {
+    expect((await run("clerk auth login")).exitCode).toBe(0);
+
+    const linked = await run("clerk link");
+
+    expect(linked.exitCode).toBe(2);
+    expect(commands(agentError(linked))).toEqual([
+      "clerk auth logout",
+      "clerk auth login",
+      "clerk link",
+    ]);
+    expect(await linkedAppId()).toBeUndefined();
+  });
+
+  test("following the advice from `deploy` through `link`'s stop links the folder", async () => {
+    expect(commands(agentError(await run("clerk deploy")))).toEqual(["clerk link", "clerk deploy"]);
+    const stopped = await run("clerk link");
+    const advice = commands(agentError(stopped));
+    expect(advice).toEqual(["clerk auth logout", "clerk auth login", "clerk link"]);
+
+    for (const command of advice) {
+      const result = await run(command);
+      expect({ command, exitCode: result.exitCode }).toEqual({ command, exitCode: 0 });
+    }
+
+    expect(await linkedAppId()).toBe(KEYS_APP.application_id);
+  });
+});
+
+// `link`'s claim of an init app fails on the session before any list runs.
+// The token stays on disk, so signing in again claims the app.
+describe("a claim of the init app refused for its stored session", () => {
+  beforeEach(async () => {
+    await FOLDERS.initApp();
+    useCredential("session");
+  });
+
+  test("Clerk's API refused it: signing out and in again claims and links the app", async () => {
+    const { setAuth } = await import("../../lib/config.ts");
+    await setAuth({ userId: "user_123" });
+    refusedToken = mockState.storedToken ?? undefined;
+
+    expect(commands(agentError(await run("clerk deploy")))).toEqual(["clerk link", "clerk deploy"]);
+    const stopped = await run("clerk link");
+    expect(stopped.exitCode).toBe(1);
+    const advice = commands(agentError(stopped));
+    expect(advice).toEqual(["clerk auth logout", "clerk auth login"]);
+
+    for (const command of advice) {
+      const result = await run(command);
+      expect({ command, exitCode: result.exitCode }).toEqual({ command, exitCode: 0 });
+    }
+
+    expect(await linkedAppId()).toBe(INIT_APP.application_id);
+  });
+
+  test("the CLI can't refresh it: signing in claims and links the app", async () => {
+    mockState.sessionUnrefreshable = true;
+
+    const stopped = await run("clerk link");
+    expect(stopped.exitCode).toBe(1);
+    const advice = commands(agentError(stopped));
+    expect(advice).toEqual(["clerk auth login"]);
+
+    expect((await run(advice[0]!)).exitCode).toBe(0);
+
+    expect(await linkedAppId()).toBe(INIT_APP.application_id);
+  });
 });

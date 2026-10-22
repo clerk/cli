@@ -19,7 +19,7 @@ import { tmpdir } from "node:os";
 import { capturedOutput } from "../../lib/stubs.ts";
 import { setActiveCapture } from "../../../lib/log.ts";
 import { http } from "../../lib/http.ts";
-import { ApiError } from "../../../lib/errors.ts";
+import { ApiError, AUTH_ERROR_REASON, AuthError } from "../../../lib/errors.ts";
 import type { Application, ApplicationInstance } from "../../../lib/plapi.ts";
 import type { OpenResult } from "../../../lib/open.ts";
 
@@ -50,7 +50,20 @@ export const mockState = {
    * answering, e.g. `new ApiError(503, "...")` for Clerk being unreachable.
    */
   userInfoError: null as Error | null,
+  /**
+   * The stored session expired and can't be refreshed: reading it throws the
+   * CLI's own "Session expired" error. A new sign-in replaces it.
+   */
+  sessionUnrefreshable: false,
 };
+
+/** What reading the stored session gives: the token, or the CLI's error for one it can't refresh. */
+async function validStoredToken(): Promise<string | null> {
+  if (mockState.sessionUnrefreshable && mockState.storedToken) {
+    throw new AuthError({ reason: AUTH_ERROR_REASON.SESSION_EXPIRED });
+  }
+  return mockState.storedToken;
+}
 
 /**
  * URLs the CLI asked the browser launcher to open, in order. Cleared in
@@ -65,7 +78,7 @@ mock.module(
   () =>
     ({
       getToken: async () => mockState.storedToken,
-      getValidToken: async () => mockState.storedToken,
+      getValidToken: validStoredToken,
       getStoredSession: async () =>
         mockState.storedToken
           ? {
@@ -80,6 +93,7 @@ mock.module(
         Boolean(process.env.CLERK_PLATFORM_API_KEY) || mockState.storedToken !== null,
       storeToken: async (value: { accessToken: string }) => {
         mockState.storedToken = value.accessToken;
+        mockState.sessionUnrefreshable = false;
       },
       deleteToken: async () => {
         mockState.storedToken = null;
@@ -672,6 +686,7 @@ export async function setupTest(): Promise<TestHarness> {
   mockState.gitRepoIdentifier = "/repo/.git";
   mockState.openBrowserResult = BROWSER_OPENED;
   mockState.userInfoError = null;
+  mockState.sessionUnrefreshable = false;
   openedUrls.length = 0;
   // `--mode agent` sets the mocked mode for the rest of the process; without
   // this, every later test in the file would run as an agent.
