@@ -82,6 +82,7 @@ Commands:
   doctor           [options]                      Check your project's Clerk integration health
   enable                                          Enable Clerk features on the linked instance
   env                                             Manage environment variables
+  feedback         [options]                      Report a wrong result, a confusing error, a missing capability or a needed improvement to Clerk
   help             [command]                      Display help for command
   impersonate|imp  [options] [user]               Impersonate a Clerk user
   init             [options]                      Initialize Clerk in your project
@@ -102,12 +103,25 @@ Commands:
 The Clerk CLI collects usage telemetry: command name, flag names, duration, outcome,
 environment signals (OS, install method, terminal), a random machine identifier — and
 your workspace and app IDs when a project is linked. It never collects command
-arguments, option values, file paths, or personal data. The first run only shows a
-disclosure notice and sends nothing (CI environments send from the first run), and
-`clerk --verbose` prints every event before it is sent. Shell completion (`clerk
+arguments, option values, file paths, or personal data, except the text you choose to
+send with `clerk feedback`, which is scrubbed on a best-effort basis for common secret
+formats, home-directory paths and email addresses before it leaves your machine (`clerk feedback --dry-run` shows
+exactly what would be sent and whether a real run would send it, and sends no report,
+though the run's usual usage event still applies; with telemetry on it may create the
+config directory and the local machine id; with telemetry off it writes no machine id or record, though in
+agent mode the CLI's usual sandbox check may still create the config directory). The first run only shows a disclosure
+notice and sends nothing (CI environments send from the first run), except
+`clerk feedback`, which shows the notice and then sends the report you asked it to send
+and the run's usage event. `clerk --verbose` prints every event before it is sent. Shell completion (`clerk
 completion <shell>` and the `__complete` helper behind Tab) sends nothing at all.
 See https://clerk.com/docs/telemetry for details.
 
+Feedback reports are stored in Clerk's internal telemetry warehouse next to usage
+events, readable by Clerk staff with warehouse access. The CLI cannot delete one. To have
+a report removed, contact Clerk support at https://clerk.com/contact/support with its
+report id (printed after sending).
+
 Opt out with `clerk telemetry disable`, or by setting `CLERK_TELEMETRY_DISABLED=1`
 (the standard `DO_NOT_TRACK=1` also works). `clerk telemetry status` shows the
-effective state and why.
+effective state and why. Opting out also blocks `clerk feedback`, which then prints the
+GitHub issues URL instead.

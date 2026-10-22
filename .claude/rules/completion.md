@@ -28,6 +28,8 @@ alwaysApply: false
 
 Use this when `.choices()` would be too restrictive — e.g. `--instance` shows `dev`/`prod` but also accepts raw instance IDs.
 
+Two options list fixed values here even though they reject anything outside the list, because they reject it in their handler rather than with `.choices()`: `clerk migrate import --source` (an unknown key gets the usage error that lists the valid sources) and `clerk feedback --outcome` (agent mode needs the JSON usage-error envelope and exit 2). Commander rejects a `.choices()` value with plain text and exit 1 before any hook runs, so neither could give its own error.
+
 **3. Fully dynamic or user-specific values** (app IDs, file paths, live API data) — do nothing. The shell falls back to file completion or freeform input.
 
 ## Checklist

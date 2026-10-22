@@ -33,9 +33,18 @@ describe("generateCompletions", () => {
       expect(names).toContain("completion");
       expect(names).toContain("env");
       expect(names).toContain("doctor");
+      expect(names).toContain("feedback");
       // Options are also included
       expect(names).toContain("--verbose");
       expect(names).toContain("--mode");
+    });
+
+    test("completes the feedback outcomes without `.choices()` (so an invalid value gets the handler's usage error)", () => {
+      expect(completionNames("feedback", "--outcome", "")).toEqual([
+        "blocked",
+        "worked_around",
+        "succeeded_with_friction",
+      ]);
     });
 
     test("completes partial subcommand name", () => {

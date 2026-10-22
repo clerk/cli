@@ -15,6 +15,7 @@ import { registerImpersonate } from "./commands/impersonate/index.ts";
 import { registerEnv } from "./commands/env/index.ts";
 import { registerConfig } from "./commands/config/index.ts";
 import { registerTelemetry } from "./commands/telemetry/index.ts";
+import { registerFeedback } from "./commands/feedback/index.ts";
 import { registerToggles } from "./commands/toggles/index.ts";
 import { registerApi } from "./commands/api/index.ts";
 import { registerDoctor } from "./commands/doctor/index.ts";
@@ -76,6 +77,7 @@ const registrants: CommandRegistrant[] = [
   registerEnv,
   registerConfig,
   registerTelemetry,
+  registerFeedback,
   registerToggles,
   registerApi,
   registerDoctor,
