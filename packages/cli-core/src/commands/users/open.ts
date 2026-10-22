@@ -191,6 +191,10 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     instance: options.instance,
   });
 
+  // Refuse before the picker, not after a user is chosen: with no app ID there
+  // is no dashboard link to build, whichever user is picked.
+  if (!target.appId) await assertNotKeyless(options, "<user-id>");
+
   if (!target.secretKey) {
     throw new CliError("Internal: users open target is missing a secret key for pickUser.", {
       code: ERROR_CODE.NO_SECRET_KEY,

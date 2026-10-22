@@ -289,6 +289,40 @@ describe("users open", () => {
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
+  describe("no user-id + --secret-key without a resolvable dashboard target", () => {
+    beforeEach(() => {
+      mockResolveUsersInstanceContext.mockResolvedValue({ secretKey: "sk_test_loose" });
+    });
+
+    test("refuses an unclaimed key before the picker, pointing at claiming it", async () => {
+      mockKeyAccess.mockResolvedValue({ claimed: false, source: "the `--secret-key` flag" });
+
+      const error = await open({ secretKey: "sk_test_loose" }).catch((thrown: unknown) => thrown);
+
+      expect((error as Error).message).toContain(
+        "secret key from the `--secret-key` flag belongs to an unclaimed accountless application",
+      );
+      expect((error as Error).message).toContain("clerk auth login");
+      expect(mockKeyAccess).toHaveBeenCalledWith({
+        secretKey: "sk_test_loose",
+        source: "the `--secret-key` flag",
+      });
+      expect(mockPickUser).not.toHaveBeenCalled();
+    });
+
+    test("refuses a claimed key before the picker, pointing at `--app`, as not_linked", async () => {
+      mockKeyAccess.mockResolvedValue({ claimed: true, source: "the `--secret-key` flag" });
+
+      const error = (await open({ secretKey: "sk_test_loose" }).catch(
+        (thrown: unknown) => thrown,
+      )) as CliError;
+
+      expect(error.message).toContain("or pass `--app <id>`");
+      expect(error.code).toBe(ERROR_CODE.NOT_LINKED);
+      expect(mockPickUser).not.toHaveBeenCalled();
+    });
+  });
+
   test("forwards --app and --instance to the resolver", async () => {
     mockResolveProfile.mockResolvedValue(undefined);
 

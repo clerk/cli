@@ -141,6 +141,8 @@ A secret key for a **claimed** application takes the same path, since the key al
 - `workspace_id` set: the application belongs to an account. The error says the key doesn't carry the application ID, and to run `clerk link` (or pass `--app <id>`) with `clerk auth login` or `CLERK_PLATFORM_API_KEY`. It exits `not_linked`.
 - The lookup fails: the error gives both, and never calls the application unclaimed.
 
+Without a user ID, `users open --secret-key <key>` (no `--app` or `--instance`) gives the same refusal before the user picker runs, since no user picked could produce a dashboard link.
+
 ## API Endpoints
 
 | Method | Endpoint       | Command(s)                                              |
