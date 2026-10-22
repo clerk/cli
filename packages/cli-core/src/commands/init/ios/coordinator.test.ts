@@ -409,7 +409,10 @@ test("doctor applies the Personal Team rule instead of pointing back at clerk in
     getProfile: async () => ({ profile: { appId: "app_test" } }),
   } as unknown as DoctorContext;
   const results = await runIOSDoctorChecks(ctx, { root }, dependencies);
-  expect(results.find((result) => result.name === "Personal Team")?.status).toBe("warn");
+  const personal = results.find((result) => result.name === "Personal Team");
+  expect(personal?.status).toBe("warn");
+  // Doctor changes nothing, so it doesn't say anything was left out.
+  expect(personal?.message).not.toContain("left out");
   // Sign in with Apple is on in Clerk, but the team can't use it, so its entitlement isn't required.
   expect(results.some((result) => result.name.startsWith("Apple entitlement:"))).toBe(false);
   expect(

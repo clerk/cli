@@ -7,14 +7,7 @@ import { discoverRemote, describeIdentity } from "./identity.ts";
 import { auditRemote, nativeAPI } from "./remote.ts";
 import { resolvedSDKHealth, type Check } from "./sdk-health.ts";
 import { signedByPersonalTeam } from "./teams.ts";
-import {
-  PERSONAL_TEAM_APPLE,
-  PERSONAL_TEAM_DOMAINS,
-  describePreview,
-  prepareSetup,
-  type SetupOptions,
-  type Dependencies,
-} from "./workflow.ts";
+import { describePreview, prepareSetup, type SetupOptions, type Dependencies } from "./workflow.ts";
 
 export async function doctor(options: SetupOptions, dependencies: Dependencies = {}) {
   // Diagnosis is GET-only and does not require opting into provider activation.
@@ -81,7 +74,10 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
     checks.push({
       name: "Personal Team",
       status: "warn",
-      message: mac ? `${PERSONAL_TEAM_APPLE} ${PERSONAL_TEAM_DOMAINS}` : PERSONAL_TEAM_APPLE,
+      // Doctor changes nothing, so it says what's unavailable rather than what setup left out.
+      message: mac
+        ? "This app is signed by a Personal Team, which can't use Sign in with Apple or provision Associated Domains for a Mac app, so passkeys and password AutoFill are off."
+        : "This app is signed by a Personal Team, which can't use Sign in with Apple.",
     });
   const capabilities = await planAllCapabilities(
     preview.inspection,

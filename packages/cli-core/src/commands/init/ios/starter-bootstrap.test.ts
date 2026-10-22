@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import * as listage from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
 import * as coordinator from "./coordinator.ts";
@@ -26,7 +27,8 @@ const run = (options: Partial<AppleStarterOptions>, platform: "ios" | "macos" = 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "clerk-apple-starter-"));
   spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
-  // The selected Xcode is new enough.
+  // The selected Xcode runs and is new enough.
+  spies.push(spyOn(xcodeTools, "selectedXcodeFailure").mockResolvedValue(undefined));
   spies.push(spyOn(xcodeTools, "compatibleXcode").mockResolvedValue(undefined));
 });
 
@@ -235,6 +237,41 @@ describe("promptAppleStarter", () => {
     await expect(run({ name: "MyApp", bundleId: "com.example.MyApp" })).rejects.toMatchObject({
       message: expect.stringContaining(message),
     });
+    expect(existsSync(join(tmp, "MyApp"))).toBe(false);
+  });
+
+  test("stops before writing when the selected Xcode can't run", async () => {
+    xcode({ teams: [PAID] });
+    spies.push(
+      spyOn(xcodeTools, "selectedXcodeFailure").mockResolvedValue(
+        "You have not agreed to the Xcode license agreements.",
+      ),
+    );
+    await expect(run({ name: "MyApp", bundleId: "com.example.MyApp" })).rejects.toMatchObject({
+      message: expect.stringContaining("You have not agreed to the Xcode license agreements."),
+    });
+    expect(existsSync(join(tmp, "MyApp"))).toBe(false);
+  });
+
+  test("leaves the Command Line Tools to the Xcode search", async () => {
+    xcode({ teams: [PAID] });
+    spies.push(
+      spyOn(xcodeTools, "selectedXcodeFailure").mockResolvedValue(
+        "xcode-select: error: tool 'xcodebuild' requires Xcode, but active developer directory '/Library/Developer/CommandLineTools' is a command line tools instance",
+      ),
+    );
+    const result = await run({ name: "MyApp", bundleId: "com.example.MyApp" });
+    expect(result.projectName).toBe("MyApp");
+  });
+
+  test("keeps the license fix for an installed Xcode", async () => {
+    xcode({ teams: [PAID] });
+    const license = new CliError(
+      "/Applications/Xcode.app needs its license accepted. Open it once, then rerun clerk init.",
+      { code: ERROR_CODE.IOS_SETUP_BLOCKED },
+    );
+    spies.push(spyOn(xcodeTools, "compatibleXcode").mockRejectedValue(license));
+    await expect(run({ name: "MyApp", bundleId: "com.example.MyApp" })).rejects.toBe(license);
     expect(existsSync(join(tmp, "MyApp"))).toBe(false);
   });
 

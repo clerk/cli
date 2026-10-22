@@ -8,7 +8,7 @@ import { quoteArg } from "../../../lib/json-body.ts";
 import { dirExists } from "../context.ts";
 import { canSetUpXcode } from "./coordinator.ts";
 import { validBundle } from "./identity.ts";
-import { compatibleXcode } from "./xcode-tools.ts";
+import { compatibleXcode, selectedXcodeFailure } from "./xcode-tools.ts";
 import {
   SWIFT_TARGET_NAME,
   TEAM_ID,
@@ -193,10 +193,20 @@ async function chooseTeam(
 const MINIMUM_XCODE = 26;
 
 async function assertStarterXcode(): Promise<void> {
+  // compatibleXcode leaves a selected Xcode that can't run for setup's xcodebuild to explain,
+  // which would come after the starter is written. Only the Command Line Tools are its to handle.
+  const failure = await selectedXcodeFailure();
+  if (failure && !/command line tools/i.test(failure))
+    throw new CliError(
+      `The selected Xcode can't run yet: ${failure}\nFix that, then run clerk init --starter again.`,
+      { code: ERROR_CODE.BOOTSTRAP_UNSUPPORTED },
+    );
   let developerDir: string | undefined;
   try {
     developerDir = await compatibleXcode(MINIMUM_XCODE);
-  } catch {
+  } catch (error) {
+    // Keep the license fix it names for an installed Xcode; its other messages are about existing projects.
+    if (error instanceof CliError && /license/i.test(error.message)) throw error;
     throw new CliError(
       `A new iOS or macOS app needs Xcode ${MINIMUM_XCODE} or later. Install it, then run clerk init --starter again.`,
       { code: ERROR_CODE.BOOTSTRAP_UNSUPPORTED },

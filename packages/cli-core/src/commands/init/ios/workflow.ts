@@ -55,9 +55,9 @@ import {
   type InspectOptions,
 } from "./xcode.ts";
 
-export const PERSONAL_TEAM_APPLE =
+const PERSONAL_TEAM_APPLE =
   "This app is signed by a Personal Team, which can't use Sign in with Apple, so its capability was left out. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
-export const PERSONAL_TEAM_DOMAINS =
+const PERSONAL_TEAM_DOMAINS =
   "Associated Domains were left out: a Personal Team can't provision them for a Mac app, so passkeys and password AutoFill stay off. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
 
 export interface SetupOptions extends InspectOptions {
