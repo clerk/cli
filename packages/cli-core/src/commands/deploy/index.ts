@@ -105,6 +105,8 @@ type DeployOptions = {
   yes?: boolean;
   /** Set by the wizard when `domain` came from its prompt, so messages don't call it --domain. */
   domainEntered?: boolean;
+  /** Set by the wizard when its create found an instance another run made. */
+  resumingAfterCreate?: boolean;
 };
 
 export async function deploy(options: DeployOptions = {}) {
@@ -366,11 +368,6 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     // `not_started` is now false and the resume has not read anything yet, so
     // the run sends no stage unless the resume below observes one.
     setTelemetryStage(null);
-    log.blank();
-    log.info(
-      "A production instance already exists for this application. Resuming the existing deploy.",
-    );
-    log.blank();
     const refreshed = await withSpinner("Refreshing application state...", async () =>
       resolveLiveApplicationContext(ctx.profile),
     );
@@ -383,6 +380,7 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
       ...options,
       domain,
       domainEntered,
+      resumingAfterCreate: true,
     });
     return;
   }
@@ -492,6 +490,13 @@ async function reconcileExistingDeploy(
   recordDeployObservation({ kind: "active", snapshot });
   if (options.domain) {
     assertRequestedDomain(options.domain, snapshot.domain, options.domainEntered);
+  }
+  // Only once the domain check passed, so it never comes right before a refusal.
+  if (options.resumingAfterCreate) {
+    log.blank();
+    log.info(
+      "A production instance already exists for this application. Resuming the existing deploy.",
+    );
   }
 
   log.blank();

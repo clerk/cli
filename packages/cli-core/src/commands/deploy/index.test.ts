@@ -1123,10 +1123,10 @@ describe("deploy", () => {
 
     // A domain typed at the prompt is checked like --domain when the create
     // loses a race: the wizard must not carry on into another domain's setup.
-    function typedDomainLosesRace(existingDomain: { provisioning: boolean }) {
+    function typedDomainLosesRace(existingDomain: { provisioning: boolean }, typed = "other.com") {
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
-      mockInput.mockResolvedValueOnce("other.com");
+      mockInput.mockResolvedValueOnce(typed);
       mockCreateProductionInstance.mockImplementation(() => {
         mockLiveProduction({ domain: "example.com" });
         if (existingDomain.provisioning) {
@@ -1156,6 +1156,20 @@ describe("deploy", () => {
       );
       expect(mockSelect).not.toHaveBeenCalled();
       expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      // Refused, so it never says it is resuming.
+      expect(stripAnsi(captured.err)).not.toContain("Resuming the existing deploy");
+    });
+
+    test("a typed domain that matches the instance another run made resumes it", async () => {
+      await linkedProject();
+      typedDomainLosesRace({ provisioning: false }, "example.com");
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeployUntilPause({});
+
+      expect(stripAnsi(captured.err)).toContain(
+        "A production instance already exists for this application. Resuming the existing deploy.",
+      );
     });
 
     test("a typed domain can't be checked while the winning instance's domain provisions", async () => {
@@ -1171,6 +1185,7 @@ describe("deploy", () => {
           "This run did not change the instance's domain. Nothing was changed in Clerk. " +
           "Run `clerk deploy status` to see its domain once Clerk returns it.",
       );
+      expect(stripAnsi(captured.err)).not.toContain("Resuming the existing deploy");
     });
 
     // A create that loses a race to another one but whose refresh can't find
