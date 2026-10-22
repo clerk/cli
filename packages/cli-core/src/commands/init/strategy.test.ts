@@ -75,6 +75,56 @@ describe("init strategy", () => {
     );
   });
 
+  test("--template implies --accountless for an authed user", async () => {
+    setup({ email: "user@example.com" });
+    mockExistingProject(KEYLESS_CTX);
+    mockMiddlewareScaffold();
+
+    await init({ template: "b2b-saas", yes: true });
+
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalledWith(
+      KEYLESS_CTX.framework.dep,
+      "b2b-saas",
+    );
+    expect(heuristics.isAuthenticated).not.toHaveBeenCalled();
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(linkMod.link).not.toHaveBeenCalled();
+    expect(pullMod.pull).not.toHaveBeenCalled();
+  });
+
+  test("--template implies --accountless with CLERK_PLATFORM_API_KEY set", async () => {
+    setup({ apiKey: true });
+    mockExistingProject(KEYLESS_CTX);
+    mockMiddlewareScaffold();
+
+    await init({ template: "b2b-saas", yes: true });
+
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalledWith(
+      KEYLESS_CTX.framework.dep,
+      "b2b-saas",
+    );
+    expect(linkMod.link).not.toHaveBeenCalled();
+  });
+
+  test("--template in agent mode ignores a linked profile, like --accountless", async () => {
+    setup({ isAgent: true, email: "user@example.com" });
+    mockExistingProject(KEYLESS_CTX);
+    const resolveProfileSpy = spyOn(config, "resolveProfile").mockResolvedValue({
+      profile: { appId: "app_123" },
+    } as never);
+    track(resolveProfileSpy);
+    mockMiddlewareScaffold();
+
+    await init({ template: "b2b-saas" });
+
+    expect(resolveProfileSpy).not.toHaveBeenCalled();
+    expect(keylessMod.createAccountlessApp).toHaveBeenCalledWith(
+      KEYLESS_CTX.framework.dep,
+      "b2b-saas",
+    );
+    expect(pullMod.pull).not.toHaveBeenCalled();
+  });
+
   test("--template with --login throws a usage error", async () => {
     setup();
 
@@ -671,16 +721,6 @@ describe("init strategy", () => {
   });
 
   describe("--template / --fresh silently dropped when the strategy isn't keyless (defect)", () => {
-    test("--template with CLERK_PLATFORM_API_KEY set errors instead of silently dropping the template", async () => {
-      setup({ apiKey: true });
-      mockExistingProject(KEYLESS_CTX);
-
-      await expect(init({ template: "b2b-saas", yes: true })).rejects.toThrow(
-        /--template only applies to accountless applications/,
-      );
-      expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
-    });
-
     test("--fresh with CLERK_PLATFORM_API_KEY set errors instead of silently doing nothing", async () => {
       setup({ apiKey: true });
       mockExistingProject(KEYLESS_CTX);
