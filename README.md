@@ -82,7 +82,7 @@ Commands:
   doctor           [options]                      Check your project's Clerk integration health
   enable                                          Enable Clerk features on the linked instance
   env                                             Manage environment variables
-  feedback         [options]                      Report a wrong result, a confusing error or a missing capability to Clerk
+  feedback         [options]                      Report a wrong result, a confusing error, a missing capability or a needed improvement to Clerk
   help             [command]                      Display help for command
   impersonate|imp  [options] [user]               Impersonate a Clerk user
   init             [options]                      Initialize Clerk in your project

@@ -36,7 +36,9 @@ const DESCRIPTION =
 export function registerFeedback(program: Program): void {
   program
     .command("feedback")
-    .summary("Report a wrong result, a confusing error or a missing capability to Clerk")
+    .summary(
+      "Report a wrong result, a confusing error, a missing capability or a needed improvement to Clerk",
+    )
     .description(DESCRIPTION)
     .option("--goal <text>", "What you were trying to do (required)")
     .option("--attempted <text>", "What you ran and what you expected (required)")
