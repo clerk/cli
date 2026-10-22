@@ -5,6 +5,7 @@ import { join } from "node:path";
 import * as listage from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
 import * as coordinator from "./coordinator.ts";
+import * as xcodeTools from "./xcode-tools.ts";
 import * as teams from "./teams.ts";
 import { promptAppleStarter, type AppleStarterOptions } from "./starter-bootstrap.ts";
 
@@ -25,6 +26,8 @@ const run = (options: Partial<AppleStarterOptions>, platform: "ios" | "macos" = 
 beforeEach(() => {
   tmp = mkdtempSync(join(tmpdir(), "clerk-apple-starter-"));
   spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
+  // The selected Xcode is new enough.
+  spies.push(spyOn(xcodeTools, "compatibleXcode").mockResolvedValue(undefined));
 });
 
 afterEach(() => {
@@ -151,6 +154,12 @@ describe("promptAppleStarter", () => {
 
   test.each([
     ["name", { name: "my-app" }, 'Invalid --name "my-app"'],
+    ["name starting with an underscore", { name: "_App" }, 'Invalid --name "_App"'],
+    [
+      "Bundle ID over 255 characters",
+      { bundleId: `com.example.${"a".repeat(250)}` },
+      "Invalid --bundle-id",
+    ],
     ["Bundle ID", { bundleId: "myapp" }, 'Invalid --bundle-id "myapp"'],
     ["Team ID", { bundleId: "com.example.MyApp", teamId: "abc" }, 'Invalid --team-id "abc"'],
   ] as const)("rejects an invalid %s before writing anything", async (_, options, message) => {
@@ -202,6 +211,26 @@ describe("promptAppleStarter", () => {
       "Globex · COMPANY002",
       "Enter a Team ID",
     ]);
+  });
+
+  test.each([
+    [
+      "no Xcode 26 is installed",
+      () => Promise.reject(new Error("too old")),
+      "needs Xcode 26 or later. Install it",
+    ],
+    [
+      "an older Xcode is selected",
+      () => Promise.resolve("/Applications/Xcode-26.app/Contents/Developer"),
+      "sudo xcode-select -s /Applications/Xcode-26.app/Contents/Developer",
+    ],
+  ] as const)("stops before writing when %s", async (_, selection, message) => {
+    xcode({ teams: [PAID] });
+    spies.push(spyOn(xcodeTools, "compatibleXcode").mockImplementation(selection));
+    await expect(run({ name: "MyApp", bundleId: "com.example.MyApp" })).rejects.toMatchObject({
+      message: expect.stringContaining(message),
+    });
+    expect(existsSync(join(tmp, "MyApp"))).toBe(false);
   });
 
   test("needs Xcode", async () => {

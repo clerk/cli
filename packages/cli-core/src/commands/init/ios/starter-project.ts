@@ -14,8 +14,8 @@ export interface StarterProject {
   platform: ApplePlatform;
 }
 
-export const SWIFT_TARGET_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
-export const BUNDLE_IDENTIFIER = /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/;
+// A leading letter keeps the name a Swift identifier and a usable Bundle ID component.
+export const SWIFT_TARGET_NAME = /^[A-Za-z][A-Za-z0-9_]*$/;
 export const TEAM_ID = /^[A-Z0-9]{10}$/;
 
 // The deployment floors native setup accepts (plan.ts), so the starter runs on every supported OS.

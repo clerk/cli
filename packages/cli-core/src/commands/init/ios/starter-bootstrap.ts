@@ -6,8 +6,9 @@ import { log } from "../../../lib/log.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import { dirExists } from "../context.ts";
 import { canSetUpXcode } from "./coordinator.ts";
+import { validBundle } from "./identity.ts";
+import { compatibleXcode } from "./xcode-tools.ts";
 import {
-  BUNDLE_IDENTIFIER,
   SWIFT_TARGET_NAME,
   TEAM_ID,
   writeStarterProject,
@@ -87,9 +88,9 @@ async function chooseName(cwd: string, options: AppleStarterOptions): Promise<st
 }
 
 function bundleProblem(value: string): string | undefined {
-  return BUNDLE_IDENTIFIER.test(value)
+  return validBundle(value)
     ? undefined
-    : "Enter a reverse-DNS Bundle ID, like com.example.MyApp.";
+    : "Enter a reverse-DNS Bundle ID of up to 255 characters, like com.example.MyApp.";
 }
 
 async function chooseBundleIdentifier(
@@ -186,6 +187,27 @@ async function chooseTeam(
   return teams.find((team) => team.id === id) ?? { id, name: id, personal: false };
 }
 
+// The Clerk SDK needs Swift 6.2, and setup builds the starter with the selected Xcode, so check
+// it before writing anything a too-old Xcode couldn't open.
+const MINIMUM_XCODE = 26;
+
+async function assertStarterXcode(): Promise<void> {
+  let developerDir: string | undefined;
+  try {
+    developerDir = await compatibleXcode(MINIMUM_XCODE);
+  } catch {
+    throw new CliError(
+      `A new iOS or macOS app needs Xcode ${MINIMUM_XCODE} or later. Install it, then run clerk init --starter again.`,
+      { code: ERROR_CODE.BOOTSTRAP_UNSUPPORTED },
+    );
+  }
+  if (developerDir)
+    throw new CliError(
+      `A new iOS or macOS app needs Xcode ${MINIMUM_XCODE} or later as the selected Xcode. Select it with \`sudo xcode-select -s ${developerDir}\`, then run clerk init --starter again.`,
+      { code: ERROR_CODE.BOOTSTRAP_UNSUPPORTED },
+    );
+}
+
 /**
  * Asks for the new app's name, Bundle ID, and Apple Developer team, then writes a SwiftUI
  * starter that native setup recognizes. Every answer is settled before anything is written.
@@ -200,6 +222,7 @@ export async function promptAppleStarter(
       "A new iOS or macOS app needs Xcode on macOS. Install Xcode, then run clerk init --starter again.",
       { code: ERROR_CODE.BOOTSTRAP_UNSUPPORTED },
     );
+  await assertStarterXcode();
   const defaults = readXcodeDefaults();
   const name = await chooseName(cwd, options);
   const projectDir = join(cwd, name);

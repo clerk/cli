@@ -63,8 +63,18 @@ export function parseTeams(value: unknown, lastSelected?: string): AppleTeam[] {
   );
 }
 
-/** The teams and Organization Identifier from Xcode's settings, read without changing them. */
+let cachedDefaults: XcodeDefaults | undefined;
+
+/**
+ * The teams and Organization Identifier from Xcode's settings, read without changing them. Read
+ * once per command: it starts several processes, and starter, setup, and doctor all need it.
+ */
 export function readXcodeDefaults(): XcodeDefaults {
+  cachedDefaults ??= loadXcodeDefaults();
+  return cachedDefaults;
+}
+
+function loadXcodeDefaults(): XcodeDefaults {
   if (process.platform !== "darwin") return { teams: [] };
   try {
     const plist = exportXcodeDefaults();
