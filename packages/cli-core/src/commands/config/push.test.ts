@@ -390,6 +390,7 @@ describe("config push", () => {
       { op: "patch" as const, dryRun: false },
       { op: "patch" as const, dryRun: true },
       { op: "put" as const, dryRun: false },
+      { op: "put" as const, dryRun: true },
     ])(
       "$op refuses a secret that is still [REDACTED] (dryRun: $dryRun)",
       async ({ op, dryRun }) => {
