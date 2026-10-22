@@ -285,6 +285,17 @@ describe("a Next.js folder whose .env.development.local can't be read", () => {
     expect(error.message).toEndWith("Then run `clerk whoami` again.");
   });
 
+  // Signed in, whoami reports the account; the file can only change which
+  // local key would override it, and a failed profile read is treated alike.
+  test("whoami, stored session, no exported key: reports the account, with no local key", async () => {
+    const result = await run("whoami", "--json");
+    const report = JSON.parse(result.stdout) as { email: string; localSecretKeySource: unknown };
+
+    expect(result.exitCode).toBe(0);
+    expect(report.email).toBe("test@example.com");
+    expect(report.localSecretKeySource).toBeNull();
+  });
+
   test("doctor: no check crashes, and the not-linked check names the unreadable file", async () => {
     const result = await run("doctor", "--json");
     const checks = JSON.parse(result.stdout) as {

@@ -117,7 +117,12 @@ async function resolveIdentity(options: WhoamiOptions): Promise<Identity> {
     ? process.env.CLERK_SECRET_KEY
       ? { source: "CLERK_SECRET_KEY env var" }
       : undefined
-    : await findLocalSecretKey(process.cwd());
+    : await findLocalSecretKey(process.cwd()).catch((error: unknown) => {
+        // Best-effort, like the profile above: an env file the CLI can't read
+        // doesn't stop whoami from reporting the account.
+        log.debug(`whoami: couldn't read this folder's keys (${errorMessage(error)})`);
+        return undefined;
+      });
 
   return {
     kind: "account",
