@@ -393,8 +393,9 @@ export function transformUsers(
     }
     // An async hook's changes after its first await land once this user is
     // already normalized and validated, so they would be lost without a word.
-    if (result instanceof Promise) {
-      result.catch(() => undefined);
+    // Any thenable, not only a native Promise: a hook may use another library's.
+    if (typeof (result as PromiseLike<unknown> | undefined)?.then === "function") {
+      Promise.resolve(result).catch(() => undefined);
       throwUsageError(
         `The "${key}" source's postTransform returned a promise. It must be synchronous: changes made after an await never reach the import.`,
         CUSTOM_SOURCES_URL,
