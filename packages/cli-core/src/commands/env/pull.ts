@@ -207,7 +207,7 @@ async function pullKeylessKeys(
       // which may be the wrong one.
       throw new CliError(
         `The publishable key found locally (${describeKeyLocation(publishableKey)}) doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
-          removeStrayPublishableKey(publishableKey, publishableKeyName),
+          removeStrayPublishableKey(publishableKey),
         { code: ERROR_CODE.KEY_PAIR_MISMATCH },
       );
     }
@@ -240,17 +240,15 @@ async function pullKeylessKeys(
   }
 }
 
-/**
- * How to stop using a publishable key that belongs to another app, from where
- * it was found. `envName` is the name the framework reads it under.
- */
-function removeStrayPublishableKey(located: LocatedKey, envName: string): string {
-  // Deleting the SDK keyless file also deletes its app's claim link, so the
-  // first fix is a key in an env file, which wins over that file.
+/** How to stop using a publishable key that belongs to another app, from where it was found. */
+function removeStrayPublishableKey(located: LocatedKey): string {
+  // The reader takes keys from the SDK keyless file only when the folder holds
+  // no plain key, so both keys must go in the env file; deleting the SDK file
+  // also deletes its app's claim link.
   if (located.source === SDK_KEYLESS_SOURCE) {
     return (
-      `Add the publishable key of the secret key's app as \`${envName}\` in your env file (a key there wins over the SDK keyless file), then pull again. ` +
-      `Or delete the stale \`${SDK_KEYLESS_SOURCE}\`, which also deletes its app's claim link.`
+      "Add both keys of the app you want to your env file (keys there win over the SDK keyless file), then pull again. " +
+      `Or delete the stale \`${SDK_KEYLESS_SOURCE}\`, which also deletes its claim link.`
     );
   }
   if (located.source === `${located.name}${ENV_VAR_SOURCE_SUFFIX}`) {

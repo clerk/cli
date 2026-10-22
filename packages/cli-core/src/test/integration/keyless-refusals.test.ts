@@ -266,7 +266,7 @@ test.each([
         ".clerk/.tmp/keyless.json",
         JSON.stringify({ publishableKey: OTHER_APP_KEY, secretKey: SECRET_KEY }),
       ),
-    says: "Add the publishable key of the secret key's app as `CLERK_PUBLISHABLE_KEY` in your env file (a key there wins over the SDK keyless file), then pull again. Or delete the stale `.clerk/.tmp/keyless.json`, which also deletes its app's claim link.",
+    says: "Add both keys of the app you want to your env file (keys there win over the SDK keyless file), then pull again. Or delete the stale `.clerk/.tmp/keyless.json`, which also deletes its claim link.",
   },
 ])(
   "env pull, a mismatched key pair, $kind: key_pair_mismatch, and says where to remove the key",
