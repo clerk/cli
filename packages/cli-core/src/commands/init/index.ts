@@ -73,7 +73,18 @@ import {
 import { withNativeProgress } from "./ios/progress.js";
 import { APPLE_FLAGS } from "./flags.ts";
 import { initRerun } from "./rerun.ts";
-import type { Rerun } from "../../lib/unlinked-folder.ts";
+import {
+  appInNoAccount,
+  isUnclaimedApp,
+  readUnlinkedFolder,
+  unlinkedFolderNextStep,
+  type Rerun,
+  type UnlinkedFolder,
+} from "../../lib/unlinked-folder.ts";
+import { describeKeyLocation, SDK_KEYLESS_SOURCE } from "../../lib/local-keys.ts";
+
+/** Where the existing app `init` keeps came from: its init token, or the SDK's keyless file. */
+type KeptKeylessApp = "init_token" | "sdk_file";
 
 export type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   /** Framework to set up (skips auto-detection). */
@@ -690,18 +701,23 @@ async function authenticateAndLink(
  * since neither can consent to a destructive default. `--fresh` is the
  * explicit "I know, replace it anyway" escape hatch.
  */
-async function shouldKeepExistingKeyless(
+async function keptKeylessApp(
   cwd: string,
   skipConfirm: boolean,
   fresh: boolean,
-): Promise<boolean> {
-  if (fresh) return false;
+): Promise<{ kept: KeptKeylessApp; folder: UnlinkedFolder } | undefined> {
+  if (fresh) return undefined;
 
   const existing = await readKeylessBreadcrumb(cwd);
   const sdkApp = existing ? undefined : await readSdkKeylessApp(cwd);
-  if (!existing && !sdkApp?.secretKey) return false;
+  if (!existing && !sdkApp?.secretKey) return undefined;
+  const kept = existing ? "init_token" : "sdk_file";
+  const folder = await readUnlinkedFolder(cwd);
 
-  if (skipConfirm) return true;
+  // Offer to replace only an app in no account yet. Replacing anything else
+  // would overwrite keys pasted from the Dashboard, or an SDK app that may
+  // already be claimed.
+  if (skipConfirm || !appInNoAccount(folder)) return { kept, folder };
 
   const replace = await confirm({
     message: existing
@@ -709,7 +725,15 @@ async function shouldKeepExistingKeyless(
       : "This project already has an unclaimed accountless application (minted by its Clerk SDK in `.clerk/.tmp/keyless.json`). Replace it with a new one?",
     default: false,
   });
-  return !replace;
+  return replace ? undefined : { kept, folder };
+}
+
+/** Where the keys init kept are, for the line that names them. */
+function keptKeysLocation(kept: KeptKeylessApp, folder: UnlinkedFolder, envFile: string): string {
+  const plainKey =
+    folder.kind === "unknown_owner" ? (folder.secretKey ?? folder.publishableKey) : undefined;
+  if (plainKey) return describeKeyLocation(plainKey);
+  return `in ${kept === "sdk_file" ? SDK_KEYLESS_SOURCE : envFile}`;
 }
 
 async function setupKeylessApp(
@@ -718,8 +742,16 @@ async function setupKeylessApp(
   envFile: string,
   { template, fresh, skipConfirm }: KeylessRunOptions,
 ): Promise<void> {
-  if (await shouldKeepExistingKeyless(cwd, skipConfirm, fresh)) {
-    printExistingKeylessInfo(envFile);
+  const existing = await keptKeylessApp(cwd, skipConfirm, fresh);
+  if (existing) {
+    const { kept, folder } = existing;
+    printExistingKeylessInfo({
+      keys: keptKeysLocation(kept, folder, envFile),
+      unclaimed: appInNoAccount(folder),
+      // Plain keys may be pasted from the Dashboard; `--fresh` would overwrite them.
+      offerFresh: isUnclaimedApp(folder),
+      step: unlinkedFolderNextStep(folder, { agent: isAgent() }).text,
+    });
     return;
   }
 
