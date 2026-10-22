@@ -2,7 +2,8 @@
 
 Send Clerk a structured report about a problem with the CLI: a command that exited 0 but
 did something other than what you expected, an error that was confusing or wrong, or a
-capability you needed and could not find.
+capability you needed and could not find. A report can also describe an improvement that
+would have helped.
 
 ## Usage
 

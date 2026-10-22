@@ -14,7 +14,7 @@ import {
  * same list the README is checked against.
  */
 const DESCRIPTION =
-  "Send Clerk a report about a problem with this CLI.\n\n" +
+  "Send Clerk a report about a problem with this CLI, or an improvement that would have helped.\n\n" +
   "Use it when a command exited 0 but did something other than what you expected, " +
   "when an error was confusing or wrong, or when a capability you needed is missing.\n\n" +
   "The report is one event on the CLI's telemetry channel: your goal, what you " +
