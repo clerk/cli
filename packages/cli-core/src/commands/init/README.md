@@ -140,7 +140,7 @@ All scaffolding is idempotent — files are skipped if they already contain Cler
 
 The middleware filename is version-aware: `proxy.ts` for Next.js 16+, `middleware.ts` for ≤15. Existing middleware files are preserved and composed with `clerkMiddleware`.
 
-The auth pages are skipped when the project already has a catch-all page for the same URL, including one inside route groups such as `app/(marketing)/sign-in/[[...sign-in]]/page.tsx`. The skip reason names the existing file.
+`clerk init` skips an auth page when the project already has an optional catch-all page for the same URL, including one inside route groups, such as `app/(marketing)/sign-in/[[...sign-in]]/page.tsx`. The skip reason names the existing file.
 
 The auth pages wrap the component in `<Suspense>` because `<SignIn />` and `<SignUp />` read the URL during prerendering. For new projects (`--starter` or blank directory), `app/layout.tsx` also gets an auth header with both `<Show>` blocks inside one `<Suspense>`, because `<Show>` reads the user's session from the request. With Cache Components enabled, the default for new `create-next-app` projects, `next build` fails without these boundaries.
 

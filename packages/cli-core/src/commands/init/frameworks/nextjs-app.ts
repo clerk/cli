@@ -83,15 +83,30 @@ function authPagePath(ctx: ProjectContext, kind: AuthKind): string {
 }
 
 const PAGE_EXTENSIONS = ["tsx", "jsx", "ts", "js"] as const;
+const OPTIONAL_CATCH_ALL = /^\[\[\.\.\.[^\]]+\]\]$/;
 
 function isRouteGroup(segment: string): boolean {
   return segment.startsWith("(") && segment.endsWith(")");
 }
 
+/** List the directories in `dir`, sorted so the scan is deterministic. A missing `dir` has none. */
+async function listDirs(cwd: string, dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(join(cwd, dir), { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
 /**
- * Find an existing catch-all auth page that serves the same URL as `authPagePath`.
+ * Find an existing optional catch-all auth page that serves the same URL as `authPagePath`.
  * Route groups like `(marketing)` don't change the URL, so they may appear at any depth,
- * before or after the i18n locale segment.
+ * before or after the i18n locale segment. The catch-all's parameter name doesn't change
+ * the URL either, so `sign-in/[[...rest]]` counts too.
  */
 async function findExistingAuthPage(ctx: ProjectContext, kind: AuthKind): Promise<string | null> {
   const pending = [{ dir: `${srcPrefix(ctx)}app`, needsLocale: Boolean(ctx.i18nLocaleDir) }];
@@ -100,27 +115,24 @@ async function findExistingAuthPage(ctx: ProjectContext, kind: AuthKind): Promis
     const { dir, needsLocale } = pending.shift()!;
 
     if (!needsLocale) {
-      const pageDir = `${dir}/${kind}/[[...${kind}]]`;
-      const page = await findFirstFile(
-        ctx.cwd,
-        PAGE_EXTENSIONS.map((ext) => `${pageDir}/page.${ext}`),
+      const kindDir = `${dir}/${kind}`;
+      const catchAlls = (await listDirs(ctx.cwd, kindDir)).filter((name) =>
+        OPTIONAL_CATCH_ALL.test(name),
       );
-      if (page) return page;
+      for (const catchAll of catchAlls) {
+        const page = await findFirstFile(
+          ctx.cwd,
+          PAGE_EXTENSIONS.map((ext) => `${kindDir}/${catchAll}/page.${ext}`),
+        );
+        if (page) return page;
+      }
     }
 
-    let entries;
-    try {
-      entries = await readdir(join(ctx.cwd, dir), { withFileTypes: true });
-    } catch {
-      continue;
-    }
-
-    for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
-      if (!entry.isDirectory()) continue;
-      if (isRouteGroup(entry.name)) {
-        pending.push({ dir: `${dir}/${entry.name}`, needsLocale });
-      } else if (needsLocale && entry.name === ctx.i18nLocaleDir) {
-        pending.push({ dir: `${dir}/${entry.name}`, needsLocale: false });
+    for (const name of await listDirs(ctx.cwd, dir)) {
+      if (isRouteGroup(name)) {
+        pending.push({ dir: `${dir}/${name}`, needsLocale });
+      } else if (needsLocale && name === ctx.i18nLocaleDir) {
+        pending.push({ dir: `${dir}/${name}`, needsLocale: false });
       }
     }
   }

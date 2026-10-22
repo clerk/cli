@@ -197,6 +197,22 @@ test("skips auth pages inside nested route groups", async () => {
   expect(findAction(plan.actions, "src/app/sign-up/[[...sign-up]]/page.tsx").type).toBe("create");
 });
 
+test("skips auth pages whose catch-all uses a different parameter name", async () => {
+  await mkdir(join(tempDir, "app/(auth)/sign-in/[[...rest]]"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/(auth)/sign-in/[[...rest]]/page.tsx"),
+    "export default function() {}",
+  );
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
+    type: "skip",
+    skipReason: "Sign-in page already exists at app/(auth)/sign-in/[[...rest]]/page.tsx",
+  });
+});
+
 test("ignores auth pages under a non-group segment", async () => {
   await mkdir(join(tempDir, "app/docs/sign-in/[[...sign-in]]"), { recursive: true });
   await Bun.write(
@@ -491,12 +507,10 @@ test("skips i18n auth page when it already exists inside [locale]", async () => 
   });
 });
 
-test("skips i18n auth page inside route groups around [locale]", async () => {
-  await mkdir(join(tempDir, "app/(main)/[locale]/(auth)/sign-in/[[...sign-in]]"), {
-    recursive: true,
-  });
+test("skips i18n auth page inside a route group under [locale]", async () => {
+  await mkdir(join(tempDir, "app/[locale]/(auth)/sign-in/[[...sign-in]]"), { recursive: true });
   await Bun.write(
-    join(tempDir, "app/(main)/[locale]/(auth)/sign-in/[[...sign-in]]/page.tsx"),
+    join(tempDir, "app/[locale]/(auth)/sign-in/[[...sign-in]]/page.tsx"),
     "export default function() {}",
   );
   await mkdir(join(tempDir, "app/(main)/sign-up/[[...sign-up]]"), { recursive: true });
@@ -505,13 +519,14 @@ test("skips i18n auth page inside route groups around [locale]", async () => {
     "export default function() {}",
   );
   await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+  await Bun.write(join(tempDir, "app/[locale]/layout.tsx"), "export default function() {}");
 
   const plan = await nextjsApp.scaffold(makeCtx({ i18nLocaleDir: "[locale]" }));
 
   expect(findAction(plan.actions, "app/[locale]/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
     type: "skip",
     skipReason:
-      "Sign-in page already exists at app/(main)/[locale]/(auth)/sign-in/[[...sign-in]]/page.tsx",
+      "Sign-in page already exists at app/[locale]/(auth)/sign-in/[[...sign-in]]/page.tsx",
   });
   // A sign-up page outside [locale] serves a different URL, so init still creates one.
   expect(findAction(plan.actions, "app/[locale]/sign-up/[[...sign-up]]/page.tsx").type).toBe(
