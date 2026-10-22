@@ -191,8 +191,13 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
     ctx,
     state.kind === "active" ? state.snapshot.productionInstanceId : state.productionInstanceId,
   );
-  if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
-  else if (!created) throw uncheckedDomainError(domain);
+  // An application has one production instance, so this run's own create is
+  // on the requested domain however Clerk spells it back. Only a run that
+  // found the instance has a domain to check.
+  if (!created) {
+    if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
+    else throw uncheckedDomainError(domain);
+  }
   log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
 }
 

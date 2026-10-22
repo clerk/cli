@@ -834,6 +834,41 @@ describe("deploy", () => {
       expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
     });
 
+    // An application has one production instance, so a create that succeeded
+    // is on the requested domain, however Clerk then spells it.
+    test("--domain reports its own create without comparing the domain Clerk returns", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      const create = mockCreateProductionInstance.getMockImplementation() as (
+        appId: string,
+        params: { domain: string },
+      ) => unknown;
+      mockCreateProductionInstance.mockImplementation(
+        (appId: string, params: { domain: string }) => {
+          mockLiveProduction({ domain: "www.example.com" });
+          return create(appId, params);
+        },
+      );
+
+      await runDeploy({ domain: "example.com" });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.productionInstanceId).toBe("ins_prod_mock");
+      expect(payload.domain).toBe("www.example.com");
+    });
+
+    // A resume still compares, ignoring only case and a trailing dot.
+    test("--domain resumes an existing instance whose domain Clerk spells differently", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockLiveProduction({ domain: "Example.COM." });
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
+    });
+
     // A case or trailing-dot difference in how Clerk spells the domain is
     // still the domain this run asked for.
     test.each(["example.com.", "Example.COM."])(
