@@ -1215,9 +1215,8 @@ export default {
   transformer: {
     account_ref: "userId", // required: becomes the Clerk user's external_id
     contact_email: "email",
-    given: "firstName",
-    family: "lastName",
     pw_bcrypt: "password",
+    // full_name is left unmapped: postTransform splits it below.
   },
   carries: {
     passwords: { level: "yes", note: "bcrypt hashes from the pw_bcrypt column." },
@@ -1226,10 +1225,37 @@ export default {
   },
   defaults: { passwordHasher: "bcrypt" },
   postTransform: (user) => {
-    if (!user.firstName) delete user.firstName;
+    // Unmapped columns arrive under their own names.
+    const [first, ...rest] = String(user.full_name ?? "")
+      .trim()
+      .split(/\s+/);
+    if (first) user.firstName = first;
+    if (rest.length) user.lastName = rest.join(" ");
+    delete user.full_name;
   },
 };
 ```
+
+Two optional hooks run around the `transformer` mapping:
+
+- `postTransform(user, context)` runs once per user, after the mapping. `user`
+  holds the mapped fields, plus every column the `transformer` doesn't name,
+  still under its own name. Change `user` in place; the return value is
+  ignored. It must be synchronous: an `async` hook, or one that returns a
+  promise, stops the import, since its changes would arrive after the user
+  was checked. One that throws stops the import with the source's key, the
+  row number and the error. `context` holds per-run values a built-in needs,
+  such as Firebase's hash parameters; a custom source can ignore it.
+- `preTransform(filePath, fileType)` runs once, before the file is read, and
+  may be `async`. `fileType` is `"application/json"`, `"text/csv"` or `""`.
+  Return `{ filePath, data?, csvHeaders? }`: `filePath` is the file to read
+  (the same one, or one you wrote), `data` is the users when you parsed them
+  yourself and skips reading the file, and `csvHeaders` names the columns of
+  a CSV with no header row. It isn't called for a file from
+  `clerk migrate export`, which holds its users already.
+
+A `transformer` target that isn't a Clerk field, like `full_name: "name"`, is
+only a rename: Clerk won't store it unless `postTransform` moves it.
 
 TypeScript is fine — Bun's transpiler is part of the runtime, so `interface`,
 `satisfies` and `as const` all work in a file the compiled binary imports.
