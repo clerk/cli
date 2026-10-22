@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { insertAfterLastImport } from "./transformations.ts";
+import { addSuspenseImport, insertAfterLastImport } from "./transformations.ts";
 
 describe("insertAfterLastImport", () => {
   test("inserts after a single-line import", () => {
@@ -45,5 +45,74 @@ const x = 1;
     const result = insertAfterLastImport(source, "SNIPPET\n");
 
     expect(result.indexOf("SNIPPET")).toBeLessThan(result.indexOf("// import"));
+  });
+});
+
+describe("addSuspenseImport", () => {
+  const isClerk = (specifier: string) => specifier === "@clerk/nextjs";
+
+  test("inserts after the last anchor import", () => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\nimport "./globals.css";\n`;
+
+    const result = addSuspenseImport(source, isClerk);
+
+    expect(result).toBe(
+      `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense } from "react";\nimport "./globals.css";\n`,
+    );
+  });
+
+  test("ignores a subpath of the anchor package", () => {
+    const source = `import { auth } from "@clerk/nextjs/server";\nimport { a } from "a";\nconst x = 1;\n`;
+
+    const result = addSuspenseImport(source, isClerk);
+
+    expect(result).toBe(
+      `import { auth } from "@clerk/nextjs/server";\nimport { a } from "a";\nimport { Suspense } from "react";\nconst x = 1;\n`,
+    );
+  });
+
+  test("leaves a file that already imports Suspense unchanged", () => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense, type ReactNode } from 'react';\n`;
+
+    expect(addSuspenseImport(source, isClerk)).toBe(source);
+  });
+
+  test("leaves a commented Suspense import unchanged", () => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\nimport { /* layout */ Suspense } from "react";\n`;
+
+    expect(addSuspenseImport(source, isClerk)).toBe(source);
+  });
+
+  test.each([
+    [`import type { Suspense } from "react";`, `import { Suspense } from "react";`],
+    [`import { type Suspense } from "react";`, `import { Suspense } from "react";`],
+    [`import { type  Suspense } from "react";`, `import { Suspense } from "react";`],
+    [`import {\n  type\n  Suspense,\n} from "react";`, `import {\n  Suspense,\n} from "react";`],
+    [
+      `import type { ReactNode, Suspense } from "react";`,
+      `import { type ReactNode, Suspense } from "react";`,
+    ],
+    [
+      `import { type ReactNode, type Suspense } from "react";`,
+      `import { type ReactNode, Suspense } from "react";`,
+    ],
+  ])("promotes %s to a value import instead of adding a duplicate", (reactImport, promoted) => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\n${reactImport}\n`;
+
+    expect(addSuspenseImport(source, isClerk)).toBe(
+      `import { ClerkProvider } from "@clerk/nextjs";\n${promoted}\n`,
+    );
+  });
+
+  test.each([
+    `import { Suspense as Pending } from "react";`,
+    `import type { Suspense as SuspenseProps } from "react";`,
+    `import { type\nSuspense as SuspenseProps } from "react";`,
+  ])("adds the import when %s aliases Suspense away", (reactImport) => {
+    const source = `import { ClerkProvider } from "@clerk/nextjs";\n${reactImport}\n`;
+
+    expect(addSuspenseImport(source, isClerk)).toBe(
+      `import { ClerkProvider } from "@clerk/nextjs";\nimport { Suspense } from "react";\n${reactImport}\n`,
+    );
   });
 });
