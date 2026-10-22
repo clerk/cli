@@ -96,7 +96,7 @@ test("`clerk link`'s rerun advice names the import, without its arguments", asyn
 
   expect(mockLink).toHaveBeenCalledWith({
     skipIfLinked: true,
-    rerun: "run the same `clerk migrate import` command again",
+    rerun: { clause: "run the same `clerk migrate import` command again" },
   });
 });
 

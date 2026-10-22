@@ -44,7 +44,7 @@ describe("init", () => {
       app: undefined,
       cwd: FAKE_CTX.cwd,
       onlyIfFolderKeysMatch: true,
-      rerun: "run `clerk init` again",
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
     });
   });
 
@@ -62,7 +62,7 @@ describe("init", () => {
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
       onlyIfFolderKeysMatch: true,
-      rerun: "run `clerk init` again",
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
       createIfMissing: undefined,
     });
   });
@@ -79,7 +79,7 @@ describe("init", () => {
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
       onlyIfFolderKeysMatch: true,
-      rerun: "run `clerk init` again",
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
       createIfMissing: undefined,
     });
   });
@@ -406,7 +406,7 @@ describe("init", () => {
       app: undefined,
       cwd: "/tmp/fake",
       onlyIfFolderKeysMatch: true,
-      rerun: "run `clerk init` again",
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
     });
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
@@ -594,7 +594,7 @@ describe("init", () => {
       app: undefined,
       cwd: FAKE_BOOTSTRAP.projectDir,
       onlyIfFolderKeysMatch: true,
-      rerun: "run `clerk init` again",
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
     });
   });
 

@@ -674,7 +674,7 @@ async function authenticateAndLink(
     createIfMissing,
     onlyIfFolderKeysMatch: true,
     // After claiming an SDK-created app, rerunning `init` finishes setup.
-    rerun: "run `clerk init` again",
+    rerun: { clause: "run `clerk init` again", command: "clerk init" },
     ...linkOptions,
   });
 }

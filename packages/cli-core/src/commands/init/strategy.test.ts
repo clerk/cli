@@ -320,7 +320,7 @@ describe("init strategy", () => {
       app: undefined,
       cwd: KEYLESS_CTX.cwd,
       onlyIfFolderKeysMatch: true,
-      rerun: "run `clerk init` again",
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
       createIfMissing: expect.any(String),
     });
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
@@ -354,7 +354,7 @@ describe("init strategy", () => {
       app: "app_abc",
       cwd: KEYLESS_CTX.cwd,
       onlyIfFolderKeysMatch: true,
-      rerun: "run `clerk init` again",
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
       createIfMissing: expect.any(String),
     });
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
@@ -401,7 +401,7 @@ describe("init strategy", () => {
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
       onlyIfFolderKeysMatch: true,
-      rerun: "run `clerk init` again",
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
       createIfMissing: expect.any(String),
     });
   });

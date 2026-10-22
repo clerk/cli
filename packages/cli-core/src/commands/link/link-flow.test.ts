@@ -220,7 +220,7 @@ describe("couldn't tell which key the folder's app loads", () => {
     const consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
     await expect(link({ skipIfLinked: true, createIfMissing: "my-project" })).rejects.toThrow(
-      `Cannot select an application in agent mode. ${UNDECIDED}. Pass --app <id>`,
+      `Cannot select an application in agent mode. ${UNDECIDED}.`,
     );
 
     expect(mockCreateApplication).not.toHaveBeenCalled();
@@ -885,7 +885,7 @@ describe("an SDK-only folder", () => {
     await sdkFile();
     mockListApplications.mockResolvedValue([OTHER_APP]);
 
-    await link({ cwd: dir, rerun: "run `clerk init` again" });
+    await link({ cwd: dir, rerun: { clause: "run `clerk init` again", command: "clerk init" } });
 
     const output = Bun.stripANSI(captured.err);
     expect(output).toContain("then run `clerk init` again");

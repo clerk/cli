@@ -27,8 +27,29 @@ deterministic paths:
 - in a folder with an init token (below), it claims that app silently and links it
 - in an SDK-only folder (below), it links the account's app whose key the SDK's file holds, or stops with `usage_error` (exit 2) saying to run `clerk open`, which prints the claim link for a person
 - otherwise, bare `clerk link` tries silent autolink on the key the folder's app loads
-- if no app can be determined, the command exits with a usage error led by "Cannot select an application in agent mode." telling the caller to pass `--app`; when the CLI couldn't tell which key the app loads, couldn't read one of the folder's env files, couldn't list the account's apps, or found the folder's secret keys disagreeing, the error says why
+- if no app can be determined, the command exits with `usage_error` (exit 2), led by "Cannot select an application in agent mode."; when the CLI couldn't tell which key the app loads, couldn't read one of the folder's env files, couldn't list the account's apps, or found the folder's secret keys disagreeing, the error says why
 - if the folder's key belongs to an app with no development instance, it stops with `instance_not_found`
+
+After its reason, each agent stop says what to run next for what the folder
+holds, with the same advice `clerk deploy` gives (`lib/unlinked-folder.ts`),
+and the JSON error carries those commands, in order, as `examples`. The advice
+never names `clerk link` again, since it would stop the same way, except as a
+retry of the command that stopped:
+
+| What `link` knew when it stopped                                                    | Advice                                                                                                                                                                                                                                                                         |
+| ----------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| The app list refused `CLERK_PLATFORM_API_KEY` (401, 403, or not a Platform API key) | Replace the key, or unset it and sign in with `clerk auth login`; then the retry. Never `clerk auth login` alone: Platform API calls use the key over any session.                                                                                                             |
+| The app list refused the stored session, or there's no credential                   | `clerk auth login`, then the retry. With an init token, `clerk auth login` alone: it claims the app and links the folder.                                                                                                                                                      |
+| The app list failed for another reason (a 5xx, a network error)                     | The retry. If it fails again, a person finds the app's ID in the Clerk Dashboard and runs `clerk link --app <app_id>`.                                                                                                                                                         |
+| No account app holds the folder's key                                               | For an SDK-created app with a usable claim link: `clerk open`, naming where a person must claim it (the account or workspace the agent's credential reaches), then `clerk link`. Otherwise `clerk apps list --json`, then `clerk link --app <app_id>` to link an existing app. |
+| It couldn't tell which key the app loads                                            | `clerk apps list --json`, then `clerk link --app <app_id>`.                                                                                                                                                                                                                    |
+| It found no key                                                                     | By what the folder holds. With no keys at all: "Pass --app <id>, or run `clerk apps list --json` and retry."                                                                                                                                                                   |
+
+Signed out, every step that lists apps starts with `clerk auth login`. The
+retry is `clerk link`; when `clerk init` called `link`, it's `clerk init`,
+which also ends every piece of advice; for `clerk migrate import`, it's "run
+the same `clerk migrate import` command again", never echoed, since its
+arguments can hold a secret key.
 
 `clerk init` calls `link` with an internal `createIfMissing` option (the
 project name) so an authenticated agent run that finds no autolink match auto-
@@ -58,14 +79,14 @@ failed, or when the folder's secret keys disagree. One decision function in
    - **Claimed but the folder left unlinked** (another app's keys, keys it couldn't read, or a failed link), **or a stale token** (the claim returns not found): `link` goes on to match the folder's own key (steps 5 onward), but never creates an app. The claim report says why the folder wasn't linked and names no command to run next, since `link` carries on in the same run.
    - **Refused** (a workspace managed by an integration, or no organization): stops with `not_linked`, exit 1. **A temporary failure:** stops with the original error. Neither reaches the picker.
 4. **SDK-only folder: match or claim page.** When the folder's only Clerk keys are in `.clerk/.tmp/keyless.json`, which a Clerk SDK writes for an app it created for itself, `link` looks for that app in the account by the file's publishable key. The CLI can't claim it: there's no token.
-   - **The file has no publishable key or can't be read:** stops with `usage_error`, exit 2, in both modes, offering `clerk link --app <app_id>`. Checked before any sign-in or app list.
+   - **The file has no publishable key or can't be read:** stops with `usage_error`, exit 2, in both modes, offering `clerk link --app <app_id>` (for an agent, after `clerk apps list --json`). Checked before any sign-in or app list. An agent with no credential whose folder still holds an init token is told to run `clerk auth login`, which claims that app, after this reason.
    - **A match:** links it, with or without a usable claim URL. This is also what the rerun after claiming does. When `init` calls `link` after a claim attempt, its every-key check runs first, since the SDK file's secret key needn't be the matched app's.
    - **No match, and no usable claim URL** (none, or one that isn't https): stops with `usage_error`, exit 2, in both modes. An agent isn't sent to `clerk open`, which would find no link either.
    - This step also runs after a claim that didn't link the folder: the token is gone then, so a folder whose only keys are the SDK's is SDK-only.
    - An env file the framework doesn't load (Nuxt loads only `.env`) that can't be read doesn't skip this step.
    - **No match, person:** opens the app's claim page in the browser, says to claim it into the account the rerun will search and then rerun the command (`clerk link`; `clerk init` and `clerk migrate import` name themselves, the import without echoing its arguments), and always adds a line pointing at `clerk open --print` for a browser that opened on another screen. It never prints the URL, which carries a claim token. Exits 1 with no error line; telemetry records outcome `incomplete` with `not_linked`, so `clerk link && clerk deploy` stops there. When no browser can be opened, the message leads with "Couldn't open a browser here".
-   - **No match, agent:** stops with `usage_error`, exit 2, saying to run `clerk open`.
-   - **The app list fails:** a person gets the original error; an agent gets `usage_error`, exit 2, naming the failed list. Never the picker, which used to offer only "create a new application" after a server error.
+   - **No match, agent:** stops with `usage_error`, exit 2, saying to run `clerk open`, naming where a person must claim the app, then `clerk link`.
+   - **The app list fails:** a person gets the original error; an agent gets `usage_error`, exit 2, naming the failed list, then the advice for a failed list (see Agent Mode). Never the picker, which used to offer only "create a new application" after a server error.
 5. If `skipIfLinked` or in agent mode, tries silent autolink on the key the folder's app loads (detect → match → persist without prompting)
 6. Checks for authentication (calls `clerk auth login` if needed, with login's own claim off)
 7. If `--app` is provided, fetches that app directly

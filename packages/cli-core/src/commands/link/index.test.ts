@@ -259,9 +259,7 @@ describe("link", () => {
       mockIsAgent.mockReturnValue(true);
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
-      await expect(runLink()).rejects.toThrow(
-        "Cannot select an application in agent mode. Pass --app <id>",
-      );
+      await expect(runLink()).rejects.toThrow("Cannot select an application in agent mode.");
 
       expect(mockSearch).not.toHaveBeenCalled();
       expect(mockListApplications).not.toHaveBeenCalled();

@@ -285,7 +285,7 @@ async function ensureImportTarget(
     // arguments aren't echoed: they can hold a secret key.
     const linked = await link({
       skipIfLinked: true,
-      rerun: "run the same `clerk migrate import` command again",
+      rerun: { clause: "run the same `clerk migrate import` command again" },
     });
     if (linked.status === "claim_page_opened") return "claim_page_opened";
   }

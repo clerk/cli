@@ -13,7 +13,13 @@
 
 import { linkApp, matchKeyToApp } from "../../lib/autolink.ts";
 import { claimDestination, describeClaimDestination } from "../../lib/claim-prompt.ts";
-import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  errorMessage,
+  isCredentialRefused,
+  throwUsageError,
+} from "../../lib/errors.ts";
 import {
   isSdkOnly,
   LINK_EXISTING_APP_SENTENCE,
@@ -26,13 +32,12 @@ import {
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { listApplications, type Application } from "../../lib/plapi.ts";
+import { readUnlinkedFolder, type LinkStop, type Rerun } from "../../lib/unlinked-folder.ts";
 import { cyan } from "../../lib/color.ts";
 import { signedInAccount } from "./account.ts";
+import { agentStopError } from "./agent-stop.ts";
 
 export type SdkOnlyOutcome = { status: "linked"; appId: string } | { status: "claim_page_opened" };
-
-/** The lead sentence of agent-mode `clerk link`'s not-linked stop, kept verbatim. */
-const AGENT_LEAD = "Cannot select an application in agent mode.";
 
 /** What `linkSdkOnlyFolder` needs besides the folder. */
 export interface SdkOnlyOptions {
@@ -46,8 +51,13 @@ export interface SdkOnlyOptions {
    * secret key needn't be the matched app's.
    */
   beforeLink?: (app: Application) => Promise<void>;
-  /** What to tell a person to run after claiming, as a clause. */
-  rerun: string;
+  /**
+   * The command that stopped: what a person runs again after claiming, and
+   * what an agent retries after a failed app list.
+   */
+  retry: Rerun;
+  /** The caller's command to run again once the folder is linked (`init`, `migrate`). */
+  rerun?: Rerun;
 }
 
 /**
@@ -62,20 +72,25 @@ export interface SdkOnlyOptions {
 export async function linkSdkOnlyFolder(
   cwd: string,
   agent: boolean,
-  { keys, openFrame, beforeLink, rerun }: SdkOnlyOptions,
+  { keys, openFrame, beforeLink, retry, rerun }: SdkOnlyOptions,
 ): Promise<SdkOnlyOutcome | undefined> {
   if (!isSdkOnly(keys)) return undefined;
   openFrame();
 
-  function noUsableLink(why: string): never {
-    throwUsageError(
-      `${agent ? `${AGENT_LEAD} ` : ""}${noUsableClaimLinkSentence(why)} ${LINK_EXISTING_APP_SENTENCE}`,
-    );
+  async function noUsableLink(why: string, linkStop?: LinkStop): Promise<never> {
+    const sentence = noUsableClaimLinkSentence(why);
+    if (!agent) throwUsageError(`${sentence} ${LINK_EXISTING_APP_SENTENCE}`);
+    const folder = await readUnlinkedFolder(cwd);
+    // An unusable SDK app's advice opens with this same sentence. Any other
+    // kind, such as an init token a signed-out agent couldn't claim, gets
+    // its own advice, after this reason.
+    const said = folder.kind === "sdk_app" && folder.unusable;
+    throw agentStopError(folder, { reason: said ? undefined : sentence, linkStop, rerun });
   }
   // Before any list or sign-in: without a publishable key there's nothing to
   // match and no way to claim, so the CLI never guesses with a picker.
   const publishableKey = keys.publishableKey?.value;
-  if (!publishableKey) noUsableLink(sdkFileWithoutKeyReason(keys.sdkFile));
+  if (!publishableKey) return noUsableLink(sdkFileWithoutKeyReason(keys.sdkFile));
 
   const account = agent ? null : await signedInAccount();
   let apps: Application[];
@@ -83,9 +98,11 @@ export async function linkSdkOnlyFolder(
     apps = await listApplications();
   } catch (error) {
     if (!agent) throw error;
-    throwUsageError(
-      `${AGENT_LEAD} This folder's app was created by the Clerk SDK, and the CLI couldn't list your applications to look for it (${errorMessage(error)}). Sign in with \`clerk auth login\`, or retry.`,
-    );
+    throw agentStopError(await readUnlinkedFolder(cwd), {
+      reason: `This folder's app was created by the Clerk SDK, and the CLI couldn't list your applications to look for it (${errorMessage(error)}).`,
+      linkStop: { autolink: "list_failed", refused: isCredentialRefused(error), retry },
+      rerun,
+    });
   }
 
   // Matching needs no claim link: only sending a person to claim the app does.
@@ -104,15 +121,19 @@ export async function linkSdkOnlyFolder(
   }
 
   const claimLink = await readSdkClaimLink(cwd);
-  if (claimLink.status === "unusable") noUsableLink(claimLink.reason);
-
-  if (agent) {
-    throwUsageError(
-      `${AGENT_LEAD} This folder's app was created by the Clerk SDK and isn't in your account yet. Run \`clerk open\` to get its claim link for a person to claim it, then ${rerun}.`,
-    );
+  if (claimLink.status === "unusable") {
+    return noUsableLink(claimLink.reason, { autolink: "no_match" });
   }
 
-  await sendToClaimPage(claimLink.url, account, rerun);
+  if (agent) {
+    throw agentStopError(await readUnlinkedFolder(cwd), {
+      reason: "This folder's app was created by the Clerk SDK and isn't in your account yet.",
+      linkStop: { autolink: "no_match" },
+      rerun,
+    });
+  }
+
+  await sendToClaimPage(claimLink.url, account, retry.clause);
   return { status: "claim_page_opened" };
 }
 

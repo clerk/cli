@@ -19,6 +19,7 @@ import {
 import { claimDestination, confirmClaim } from "../../lib/claim-prompt.ts";
 import { signedInAccount } from "./account.ts";
 import { linkSdkOnlyFolder } from "./sdk-only.ts";
+import { agentStopError } from "./agent-stop.ts";
 import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
 import {
   createApplication,
@@ -43,6 +44,7 @@ import {
   type FolderKeys,
 } from "../../lib/local-keys.ts";
 import { decodePublishableKey } from "../../lib/publishable-key.ts";
+import { readUnlinkedFolder, type LinkStop, type Rerun } from "../../lib/unlinked-folder.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -52,6 +54,7 @@ import {
   ERROR_CODE,
   EXIT_CODE,
   errorMessage,
+  isCredentialRefused,
   throwUserAbort,
   withApiContext,
 } from "../../lib/errors.ts";
@@ -80,12 +83,13 @@ interface LinkOptions {
    */
   onlyIfFolderKeysMatch?: boolean;
   /**
-   * What to tell a person to run after claiming an SDK-created app on its
-   * claim page, as a clause. Default "run `clerk link` again"; `init` and
+   * The caller's command, to run again once the folder is linked: `init` and
    * `migrate` name themselves, since rerunning `link` alone wouldn't finish
-   * their work.
+   * their work. It's also what a person reruns after claiming an SDK-created
+   * app, and what an agent retries after a failed app list; for `clerk link`
+   * itself, that's "run `clerk link` again".
    */
-  rerun?: string;
+  rerun?: Rerun;
 }
 
 /**
@@ -121,7 +125,9 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
     framed = true;
   };
   const showNextSteps = options.showNextSteps !== false;
-  const rerun = options.rerun ?? "run `clerk link` again";
+  // The command that stopped, for a person to rerun after claiming, or an
+  // agent to retry after a failed list.
+  const retry: Rerun = options.rerun ?? { clause: "run `clerk link` again", command: "clerk link" };
 
   // Claim first: a signed-in picker can't show the app `clerk init` created,
   // because it isn't in an account yet. An explicit `--app` or an existing
@@ -151,7 +157,8 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
         keys: folder.keys,
         openFrame,
         beforeLink: checkFolderKeys,
-        rerun,
+        retry,
+        rerun: options.rerun,
       });
       if (sdkOnly) {
         await outro(sdkOnly.status === "linked" && showNextSteps ? NEXT_STEPS.LINK : undefined);
@@ -159,13 +166,13 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
       }
     }
 
-    let autolinked: AutolinkResult | undefined;
-    if (options.skipIfLinked || agent) {
-      autolinked = await autolink(cwd, { beforeLink: checkFolderKeys });
-      if (autolinked.status === "linked") {
-        if (framed) await outro();
-        return { status: "linked", appId: autolinked.profile.appId };
-      }
+    const autolinked =
+      options.skipIfLinked || agent
+        ? await autolink(cwd, { beforeLink: checkFolderKeys })
+        : undefined;
+    if (autolinked?.status === "linked") {
+      if (framed) await outro();
+      return { status: "linked", appId: autolinked.profile.appId };
     }
 
     step = decideNextStep({
@@ -175,8 +182,16 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
       createIfMissing: options.createIfMissing,
       afterClaim: Boolean(initClaim),
       keyCheck: Boolean(checkFolderKeys),
+      retry,
     });
     if (step.kind === "stop") throw step.error;
+    if (step.kind === "agent_stop") {
+      throw agentStopError(await readUnlinkedFolder(cwd), {
+        reason: step.reason,
+        linkStop: step.linkStop,
+        rerun: options.rerun,
+      });
+    }
   }
 
   openFrame();
@@ -343,7 +358,9 @@ function isUnusable(all: AllFolderKeys): boolean {
 type NextStep =
   | { kind: "create"; name: string }
   | { kind: "pick"; detect: boolean; allowCreate: boolean; why?: string }
-  | { kind: "stop"; error: Error };
+  | { kind: "stop"; error: Error }
+  // An agent that can't choose: `link` reads the folder for the advice.
+  | { kind: "agent_stop"; reason?: string; linkStop: LinkStop };
 
 /**
  * One decision for every way auto-link can fail to link, so no path creates
@@ -361,11 +378,12 @@ type NextStep =
  */
 function decideNextStep(input: {
   agent: boolean;
-  autolinked?: AutolinkResult;
+  autolinked?: Exclude<AutolinkResult, { status: "linked" }>;
   folder: FolderFacts;
   createIfMissing?: string;
   afterClaim: boolean;
   keyCheck: boolean;
+  retry: Rerun;
 }): NextStep {
   const { agent, autolinked } = input;
   // Auto-link read the same keys; its reason stands when it gives one.
@@ -408,15 +426,31 @@ function decideNextStep(input: {
     return { kind: "create", name: input.createIfMissing };
   }
   const reason = blockers.map(describeBlocker).find((clause) => clause !== undefined);
-  // The lead sentence stays verbatim: agents and the skill's troubleshooting
-  // table match on it.
   return {
-    kind: "stop",
-    error: new CliError(
-      `Cannot select an application in agent mode. ${reason ? `${capitalize(reason)}. ` : ""}Pass --app <id>, or run \`clerk apps list --json\` and retry.`,
-      { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE },
-    ),
+    kind: "agent_stop",
+    ...(reason && { reason: `${capitalize(reason)}.` }),
+    // An agent's `link` always runs auto-link; without a result, it found nothing.
+    linkStop: linkStopFor(autolinked ?? { status: "no_key" }, input.retry),
   };
+}
+
+/**
+ * What auto-link knew when an agent's `link` stopped, for the advice. Every
+ * outcome that can get here is listed, so a new one fails the typecheck until
+ * someone writes its advice.
+ */
+function linkStopFor(
+  autolinked: Exclude<AutolinkResult, { status: "linked" | "no_development_instance" }>,
+  retry: Rerun,
+): LinkStop {
+  switch (autolinked.status) {
+    case "no_key":
+    case "no_match":
+    case "couldnt_tell":
+      return { autolink: autolinked.status };
+    case "list_failed":
+      return { autolink: "list_failed", refused: isCredentialRefused(autolinked.error), retry };
+  }
 }
 
 /**
