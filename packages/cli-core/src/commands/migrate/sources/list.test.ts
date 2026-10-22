@@ -62,6 +62,7 @@ describe("sources", () => {
   test("says how to add one", async () => {
     await list(undefined);
     expect(captured.err).toContain("--source ./my-source.ts");
+    expect(captured.err).toContain("README.md#custom-sources");
   });
 
   test("--json lists every built-in with its carries on stdout", async () => {

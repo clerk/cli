@@ -23,12 +23,14 @@ import path from "node:path";
 import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import type { CarryLevel, SourceEntry } from "../types.ts";
 
-const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/overview";
+/** How to write a source. The README ships nowhere, so link the published copy. */
+export const CUSTOM_SOURCES_URL =
+  "https://github.com/clerk/cli/blob/main/packages/cli-core/src/commands/migrate/README.md#custom-sources";
 
 const LEVELS: readonly CarryLevel[] = ["yes", "no", "partial"];
 
 function invalid(problem: string, file: string): never {
-  throwUsageError(`${file} is not a valid source: ${problem}`, DOCS_URL);
+  throwUsageError(`${file} is not a valid source: ${problem}`, CUSTOM_SOURCES_URL);
 }
 
 /**
@@ -163,7 +165,7 @@ export async function loadCustomSource(
   if (!fs.existsSync(resolved)) {
     throw new CliError(`No source file at ${resolved}.`, {
       code: ERROR_CODE.FILE_NOT_FOUND,
-      docsUrl: DOCS_URL,
+      docsUrl: CUSTOM_SOURCES_URL,
     });
   }
   if (fs.statSync(resolved).isDirectory()) {
@@ -187,7 +189,7 @@ export async function loadCustomSource(
     throwUsageError(
       `Could not load ${file}: ${(error as Error).message}\n` +
         "The file must be valid JavaScript or TypeScript that this CLI can import.",
-      DOCS_URL,
+      CUSTOM_SOURCES_URL,
     );
   }
 
@@ -198,7 +200,7 @@ export async function loadCustomSource(
       named.length > 0
         ? ` Found named export${named.length === 1 ? "" : "s"} ${named.map((n) => `\`${n}\``).join(", ")} — did you mean \`export default\`?`
         : "";
-    throwUsageError(`${file} has no default export.${hint}`, DOCS_URL);
+    throwUsageError(`${file} has no default export.${hint}`, CUSTOM_SOURCES_URL);
   }
 
   return validateSource(module.default, file, reservedKeys);

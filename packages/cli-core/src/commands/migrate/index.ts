@@ -7,6 +7,7 @@ import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
 import { run } from "./run.ts";
 import { runs } from "./runs.ts";
 import { undo } from "./undo.ts";
+import { CUSTOM_SOURCES_URL } from "./sources/load-custom.ts";
 import { list as sources } from "./sources/list.ts";
 
 export function registerMigrate(program: Program): void {
@@ -63,7 +64,7 @@ export function registerMigrate(program: Program): void {
     .argument("[file|export-run-id]", "The export file, or the ID of the export run that wrote it")
     .option(
       "--source <key|path>",
-      "Where the file came from: a built-in source, or a source you wrote. Not needed for a file from `clerk migrate export`, though a source you wrote replaces its own",
+      `Where the file came from: a built-in source, or a source you wrote (${CUSTOM_SOURCES_URL}). Not needed for a file from \`clerk migrate export\`, though a source you wrote replaces its own`,
     )
     .option("--dry-run", "Check the file against the instance, report, and write nothing")
     .option("--allow-partial", "Import the users that pass the checks, and skip the rest")
