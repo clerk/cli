@@ -117,8 +117,10 @@ Secret key resolution order (Backend API, the default):
 
 1. `--secret-key` flag (explicit)
 2. Auto-resolve from `--app <id>` via the Platform API (see below)
-3. This project's own accountless secret key — from `CLERK_SECRET_KEY`, `.env.local`
-   (or the framework's detected env var name), or the SDK's own `.clerk/.tmp/keyless.json`
+3. `CLERK_SECRET_KEY` exported in the shell, then this folder's own secret key, read the way
+   every accountless command reads it (see [accountless mode in `config`'s README](../config/README.md#accountless-mode)):
+   the framework's env files in its load order, or the SDK's own `.clerk/.tmp/keyless.json`
+   when the folder holds no plain key
 4. Auto-resolve from linked project profile via the Platform API (see below)
 
 Step 2 exchanges a Platform API token for the target instance's secret key and

@@ -23,12 +23,13 @@ Authentication is resolved in this order:
 
 - `--secret-key <key>` (explicit)
 - `--app <id>` plus Platform API auth to resolve the instance secret key (explicit)
-- this project's own accountless secret key — `CLERK_SECRET_KEY`, `.env.local` (or the framework's detected env var name), or the SDK's own `.clerk/.tmp/keyless.json`
+- `CLERK_SECRET_KEY` exported in the shell
+- the secret key this folder's app loads, read the way every accountless command reads it (see [accountless mode in `config`'s README](../config/README.md#accountless-mode)): the framework's env files in its load order, or the SDK's own `.clerk/.tmp/keyless.json` when the folder holds no plain key. Env files that hold different secret keys give none.
 - a linked project profile via `clerk link`
 
 The third step is what makes `clerk users` work with no login and no Platform API auth on an **unclaimed accountless application** — the one an SDK creates for itself on first `next dev` (or similar) with no keys configured. It only applies when the directory isn't linked and `--app` wasn't passed, since either of those names an explicit destination the on-disk key might not belong to.
 
-The users commands talk to the instance's Backend API. Identifier and required-field rules are enforced by BAPI, so any BAPI secret key (via `CLERK_SECRET_KEY`, `.env.local`, `--secret-key`, or `--app`-resolved) is enough — no `applications:manage` Platform API scope is required.
+The users commands talk to the instance's Backend API. Identifier and required-field rules are enforced by BAPI, so any BAPI secret key (via `CLERK_SECRET_KEY`, an env file, `--secret-key`, or `--app`-resolved) is enough — no `applications:manage` Platform API scope is required.
 
 ## Interactive mode
 

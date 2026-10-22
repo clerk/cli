@@ -93,12 +93,12 @@ export async function resolveBapiSecretKey(options: ResolveBapiSecretKeyOptions)
     return envSecretKey;
   }
 
-  // An unclaimed keyless application keeps its only secret key on disk
-  // (.env.local, or the SDK's own keyless.json) — the same resolution `whoami`,
-  // `config`, and `env pull` already share. The shipped binary is compiled with
-  // --no-compile-autoload-dotenv, so without this every `users`/`api` command
-  // would report "no secret key" on a perfectly live keyless project the moment
-  // it wasn't run via `bun run` (which autoloads .env.local for us in dev).
+  // An unlinked folder's own secret key, read as `clerk link` and every
+  // accountless command read it (`readFolderKeys`: the framework's env files in
+  // its load order, or the SDK keyless file when the folder holds no plain key).
+  // The shipped binary is compiled with --no-compile-autoload-dotenv, so
+  // without this every `users`/`api` command would report "no secret key" on a
+  // live keyless project the moment it wasn't run via `bun run`.
   const keyless = await resolveKeylessTarget({ instance: options.instance, cwd: options.cwd });
   if (keyless) {
     return keyless.secretKey;

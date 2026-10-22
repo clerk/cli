@@ -48,7 +48,7 @@ sequenceDiagram
         API-->>CLI: { instances: [{ instance_id, publishable_key, secret_key }] }
         CLI->>CLI: Find matching instance by instance_id
     else Unclaimed accountless application (no --app, not linked)
-        CLI->>FS: Find local keys (env vars, .env/.env.local, .clerk/.tmp/keyless.json)
+        CLI->>FS: Read the keys the app loads (shell, then the framework's env files in load order, else .clerk/.tmp/keyless.json)
         FS-->>CLI: { secret_key, publishable_key? }
         opt Publishable key found locally
             CLI->>API: GET /v1/domains (Backend API, secret key auth)

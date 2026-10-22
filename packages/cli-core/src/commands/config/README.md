@@ -186,13 +186,13 @@ Both must hold, otherwise the account-authenticated path runs unchanged:
 
 When credentials _are_ present and the directory simply isn't linked, the command prints a warning that it's using the reduced key-based view and points at `clerk link`, so the narrower output is never a silent surprise.
 
-The secret key is resolved the way the app itself would resolve one, and this order is shared by every accountless-capable command (`lib/keyless-target.ts`):
+The secret key is the one the app itself loads. Every accountless-capable command and `clerk link` read it the same way (`readFolderKeys` in `lib/local-keys.ts`):
 
-1. `CLERK_SECRET_KEY`, or the framework's secret key variable (e.g. `NUXT_CLERK_SECRET_KEY`), in the environment
-2. `.env`, then `.env.local` — the later file wins
-3. `.clerk/.tmp/keyless.json` — the keys a Clerk SDK minted for itself when the app ran with no keys configured
+1. The names the app reads, the framework's own first (e.g. `NUXT_CLERK_SECRET_KEY`, then `CLERK_SECRET_KEY`). The first name found anywhere wins, so `NUXT_CLERK_SECRET_KEY` in `.env` beats an exported `CLERK_SECRET_KEY`. Within one name, a variable exported in the shell beats the files.
+2. The env files the detected framework loads, in its documented order (Next.js: `.env.development.local`, `.env.local`, `.env.development`, `.env`; Nuxt: `.env` only). With no framework detected, or one with no documented order, all four files are read, and files holding different secret keys give no key: the folder counts as not linked, and its not-linked error says the files disagree.
+3. `.clerk/.tmp/keyless.json`, the keys a Clerk SDK wrote for an app it created itself, only when the folder holds no plain key of either kind. The SDK writes that file only when nothing else configures Clerk, so its keys are never paired with a plain key.
 
-A key that doesn't start with `sk_` is rejected. The SDK file comes last because SDKs only create their own application when nothing else supplies keys.
+A key that doesn't start with `sk_` is rejected.
 
 ### Payload shape
 
