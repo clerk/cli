@@ -21,9 +21,11 @@ export function shellQuote(word: string): string {
 }
 
 /**
- * The first words of a command an agent runs as given: `clerk` only when the
- * `clerk` on PATH is this same install, else the running CLI by its quoted
- * path, so the command neither fails on a missing `clerk` nor runs another one.
+ * The first words of a command an agent runs as given. On Windows, `clerk`.
+ * Elsewhere, `clerk` when `clerkOnPath` (looked up with `node_modules/.bin`
+ * folders left out of PATH, see {@link lookupCliPrefix}) resolves to the
+ * running binary, or to the running script for a source run; otherwise the
+ * running CLI's quoted absolute path, or the quoted `bun` and script paths.
  */
 export function cliPrefixFor(facts: LaunchFacts): string {
   // No single quoting works in both PowerShell and cmd.exe, and the commands
