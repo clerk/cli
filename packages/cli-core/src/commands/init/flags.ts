@@ -13,6 +13,7 @@ export const APPLE_FLAGS = [
   ["appleSdk", "--apple-sdk"],
   ["bundleId", "--bundle-id"],
   ["appIdPrefix", "--app-id-prefix"],
+  ["teamId", "--team-id"],
   ["signInWithApple", "--sign-in-with-apple"],
   ["prebuiltAuthUi", "--prebuilt-auth-ui"],
 ] as const;
@@ -26,7 +27,7 @@ export const RERUN_FLAGS = [
   ["pm", "--pm"],
   ["login", "--login"],
   ["json", "--json"],
-  ...APPLE_FLAGS,
+  ...APPLE_FLAGS.filter(([key]) => key !== "teamId"),
   ["yes", "--yes"],
   ["skills", "--no-skills"],
 ] as const;
@@ -42,4 +43,5 @@ export const NOT_RERUN = {
   "--starter":
     "it would scaffold the project again; the rerun runs in the project's folder instead",
   "--name": "it names the project `--starter` creates",
+  "--team-id": "it applies only to the app `--starter` creates",
 } as const;

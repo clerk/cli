@@ -1292,7 +1292,7 @@ describe("buildDeployStatusReport", () => {
     expect(command).toStartWith(
       "( set +x; allow_shared=0; set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; ",
     );
-    expect(command).toContain("FORCE_COLOR=0 vercel env ls --no-color");
+    expect(command).toContain("FORCE_COLOR=0 FORCE_HYPERLINK=0 vercel env ls --no-color");
     expect(command).toEndWith('vercel env add "$key" production --force || exit 1; done )');
   });
 
@@ -1365,10 +1365,22 @@ clerk() {
   esac
 }
 `;
+    // The link modes copy Vercel's link check (supports-hyperlinks) as it runs
+    // inside the command, where stderr is a pipe and color is off. Links are
+    // OSC 8 ended by BEL, as ansi-escapes writes them, or by the other ending, `ESC \`.
     const vercelStub = `
+vercel_env() {
+  if [ "$links" = 1 ]; then
+    esc=$(printf '\\033')
+    if [ "$SCENARIO" = always_linked_st ]; then close="$esc\\\\"; else close=$(printf '\\007'); fi
+    printf '%s]8;;https://vercel.com/team/project/settings/environments/%s%s%s%s]8;;%s' "$esc" "$1" "$close" "$2" "$esc" "$close"
+  else
+    printf '%s' "$2"
+  fi
+}
 vercel() {
   if [ "$1 $2" = "env ls" ]; then
-    echo "FORCE_COLOR=$FORCE_COLOR $*" >> "$RECEIVED.ls"
+    echo "FORCE_COLOR=$FORCE_COLOR FORCE_HYPERLINK=$FORCE_HYPERLINK $*" >> "$RECEIVED.ls"
     case "$SCENARIO" in
       ls_fails) echo "Error: no linked project" >&2; return 1 ;;
       unrecognized) echo "Vercel CLI 99.0.0"; echo "Something we have never seen" ;;
@@ -1391,6 +1403,21 @@ vercel() {
             done
             ;;
           colored_shared) printf ' \\033[1mCLERK_SECRET_KEY\\033[22m    \\033[90mEncrypted\\033[39m  Sensitive  \\033[1mProduction\\033[22m, \\033[1mPreview\\033[22m, \\033[1mDevelopment\\033[22m    1d ago\\n' ;;
+          linked_*|always_linked*)
+            links=0
+            if [ -n "$FORCE_HYPERLINK" ]; then
+              if [ "$FORCE_HYPERLINK" != 0 ]; then links=1; fi
+            elif [ -n "$NETLIFY" ]; then
+              links=1
+            fi
+            case "$SCENARIO" in always_linked*) links=1 ;; esac
+            case "$SCENARIO" in
+              linked_production_last) environments="$(vercel_env preview Preview), $(vercel_env production Production)" ;;
+              always_linked_unshared) environments=$(vercel_env production Production) ;;
+              *) environments="$(vercel_env production Production), $(vercel_env preview Preview), $(vercel_env development Development)" ;;
+            esac
+            printf ' CLERK_SECRET_KEY    Encrypted  Sensitive  %s    1d ago\\n' "$environments"
+            ;;
         esac
         ;;
     esac
@@ -1524,7 +1551,8 @@ vercel() {
     );
 
     // A Preview or Development-only variable has no production target for
-    // `--force` to rewrite, so it doesn't need the user.
+    // `--force` to rewrite, so it doesn't need the user. `large`, 1,000 rows,
+    // fails in bash if a `grep -q` exits early and closes the pipe.
     test
       .skipIf(!installed)
       .each(["none", "unrelated", "production_only", "preview_dev_only", "large"])(
@@ -1562,6 +1590,7 @@ vercel() {
         "trailing_equals",
         "shared",
         "unrecognized",
+        "always_linked",
         "pull_fails",
         "ls_fails",
         "first_upload_fails",
@@ -1597,10 +1626,56 @@ vercel() {
       expect(result.uploads).toEqual(bothUploaded);
     });
 
-    test.skipIf(!installed)("lists the variables with color turned off", async () => {
+    test.skipIf(!installed)("lists the variables with color and links turned off", async () => {
       const result = await run("none");
 
-      expect(result.listings).toEqual(["FORCE_COLOR=0 env ls --no-color"]);
+      expect(result.listings).toEqual(["FORCE_COLOR=0 FORCE_HYPERLINK=0 env ls --no-color"]);
+    });
+
+    // A link's codes sit between an environment name and the comma beside it,
+    // on either side, where the shared check looks.
+    test.skipIf(!installed).each<{ label: string; scenario: string; env: Record<string, string> }>([
+      { label: "FORCE_HYPERLINK=1", scenario: "linked_shared", env: { FORCE_HYPERLINK: "1" } },
+      { label: "NETLIFY=true", scenario: "linked_shared", env: { NETLIFY: "true" } },
+      {
+        label: "FORCE_HYPERLINK=1, Production last",
+        scenario: "linked_production_last",
+        env: { FORCE_HYPERLINK: "1" },
+      },
+      {
+        label: "NETLIFY=true, Production last",
+        scenario: "linked_production_last",
+        env: { NETLIFY: "true" },
+      },
+    ])(
+      "stops with exit 3 before uploading when $label would link environment names",
+      async ({ scenario, env }) => {
+        const result = await run(scenario, { env });
+
+        expect(result.exitCode).toBe(3);
+        expect(result.uploads).toEqual([]);
+        expect(result.output).toContain(
+          "Also set for an environment other than Production: CLERK_SECRET_KEY",
+        );
+        expect(result.output).not.toContain("FAKE");
+      },
+    );
+
+    // Codes the command can't read stop it even where no variable is shared,
+    // since it can't tell what they hide.
+    test.skipIf(!installed).each([
+      { label: "links ended by BEL", scenario: "always_linked" },
+      { label: "links ended by ESC \\", scenario: "always_linked_st" },
+      { label: "links and no shared variable", scenario: "always_linked_unshared" },
+    ])("stops with exit 1 when the variable list holds $label", async ({ scenario }) => {
+      const result = await run(scenario);
+
+      expect(result.exitCode).toBe(1);
+      expect(result.uploads).toEqual([]);
+      expect(result.stderr).toContain(
+        "vercel env ls printed escape codes this command can't read; check the project's variables before replacing any.",
+      );
+      expect(result.output).not.toContain("FAKE");
     });
 
     // Any environment besides Production on the variable's line, custom ones included.

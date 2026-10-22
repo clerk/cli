@@ -12,6 +12,9 @@ import {
   PM_INSTALL_COMMANDS,
   type BootstrapEntry,
 } from "./bootstrap-registry.js";
+import { canSetUpXcode } from "./ios/coordinator.js";
+import { APPLE_STARTERS, promptAppleStarter, type AppleStarter } from "./ios/starter-bootstrap.js";
+import type { ApplePlatform } from "./ios/starter-project.js";
 
 async function spawnInherited(args: string[], cwd: string): Promise<number> {
   const proc = Bun.spawn(args, { cwd, stdout: "inherit", stderr: "inherit" });
@@ -27,6 +30,20 @@ const FRAMEWORK_CHOICES = BOOTSTRAP_REGISTRY.map((entry) => ({
   value: entry.dep,
 }));
 
+type StarterChoice =
+  | { kind: "npm"; entry: BootstrapEntry }
+  | { kind: "apple"; platform: ApplePlatform };
+
+// Native starters write an Xcode project, so they're offered only where native setup can run.
+function starterChoices() {
+  return canSetUpXcode()
+    ? [
+        ...FRAMEWORK_CHOICES,
+        ...APPLE_STARTERS.map((starter) => ({ name: starter.label, value: starter.platform })),
+      ]
+    : FRAMEWORK_CHOICES;
+}
+
 const PM_CHOICES: Array<{ name: string; value: PackageManager }> = [
   { name: "bun", value: "bun" },
   { name: "pnpm", value: "pnpm" },
@@ -34,19 +51,30 @@ const PM_CHOICES: Array<{ name: string; value: PackageManager }> = [
   { name: "npm", value: "npm" },
 ];
 
-async function pickFramework(frameworkOverride?: FrameworkInfo): Promise<BootstrapEntry> {
+async function pickFramework(
+  frameworkOverride?: FrameworkInfo,
+  applePlatform: ApplePlatform = "ios",
+): Promise<StarterChoice> {
   if (!frameworkOverride) {
+    const choices = starterChoices();
     const chosen = await search({
       message: "Which framework?",
-      source: (term) => filterChoices(FRAMEWORK_CHOICES, term),
+      source: (term) => filterChoices(choices, term),
     });
-    return findEntry(chosen)!;
+    const apple = APPLE_STARTERS.find((starter) => starter.platform === chosen);
+    return apple
+      ? { kind: "apple", platform: apple.platform }
+      : { kind: "npm", entry: findEntry(chosen)! };
   }
 
+  if (frameworkOverride.dep === "ios") return { kind: "apple", platform: applePlatform };
   const entry = findEntry(frameworkOverride.dep);
-  if (entry) return entry;
+  if (entry) return { kind: "npm", entry };
 
-  const supported = BOOTSTRAP_REGISTRY.map((e) => e.label).join(", ");
+  const supported = [
+    ...BOOTSTRAP_REGISTRY.map((e) => e.label),
+    ...APPLE_STARTERS.map((s) => s.label),
+  ].join(", ");
   throw new CliError(
     `Bootstrap is not supported for ${frameworkOverride.name}. Supported: ${supported}`,
     { code: ERROR_CODE.BOOTSTRAP_UNSUPPORTED },
@@ -180,13 +208,21 @@ export type BootstrapOverrides = {
   implicitBootstrap?: boolean;
   pmOverride?: PackageManager;
   nameOverride?: string;
+  /** Accountless-only flags that were passed, which a native iOS or macOS starter can't use. */
+  accountlessFlags?: readonly string[];
+  /** Answers for a native iOS or macOS starter; `flags` names the Apple flags that were passed. */
+  apple?: {
+    platform?: ApplePlatform;
+    bundleId?: string;
+    teamId?: string;
+    signInWithApple?: boolean;
+    flags: readonly string[];
+  };
 };
 
-export type BootstrapResult = {
-  projectDir: string;
-  projectName: string;
-  packageManager: PackageManager;
-};
+export type BootstrapResult =
+  | { projectDir: string; projectName: string; packageManager: PackageManager; apple?: undefined }
+  | { projectDir: string; projectName: string; apple: AppleStarter; packageManager?: undefined };
 
 /**
  * Interactive bootstrap flow.
@@ -201,6 +237,8 @@ export async function promptAndBootstrap(
     implicitBootstrap = false,
     pmOverride,
     nameOverride,
+    accountlessFlags = [],
+    apple,
   }: BootstrapOverrides = { skipConfirm: false },
 ): Promise<BootstrapResult> {
   if (!skipConfirm && !implicitBootstrap) {
@@ -217,12 +255,36 @@ export async function promptAndBootstrap(
     );
   }
 
-  if (nameOverride) {
+  // A Swift app name follows different rules, so a name for a starter that hasn't been
+  // chosen yet is checked once the framework is known.
+  const validateName = () => {
+    if (!nameOverride) return;
     const valid = validateProjectName(nameOverride);
     if (valid !== true) throwUsageError(`Invalid --name "${nameOverride}": ${valid}`);
-  }
+  };
+  if (frameworkOverride && frameworkOverride.dep !== "ios") validateName();
 
-  const entry = await pickFramework(frameworkOverride);
+  const choice = await pickFramework(frameworkOverride, apple?.platform);
+  if (choice.kind === "apple") {
+    if (accountlessFlags.length)
+      throwUsageError(
+        `${accountlessFlags.join(", ")} ${accountlessFlags.length === 1 ? "applies" : "apply"} only to accountless web setup; iOS and macOS apps link a Clerk application instead.`,
+      );
+    return promptAppleStarter(cwd, choice.platform, {
+      skipConfirm,
+      name: nameOverride,
+      bundleId: apple?.bundleId,
+      teamId: apple?.teamId,
+      signInWithApple: apple?.signInWithApple,
+    });
+  }
+  if (!frameworkOverride) validateName();
+  if (apple?.flags.length)
+    throwUsageError(
+      `${apple.flags.join(", ")} ${apple.flags.length === 1 ? "applies" : "apply"} only to iOS and macOS apps.`,
+    );
+
+  const { entry } = choice;
   const pm = pmOverride ?? (skipConfirm ? resolvePackageManager() : await pickPackageManager());
   const projectName =
     nameOverride ??
