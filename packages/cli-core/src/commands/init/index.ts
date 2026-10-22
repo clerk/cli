@@ -295,9 +295,9 @@ async function assertUsableFlags(
   if (options.starter && (options.dryRun || options.json)) {
     throwUsageError("--dry-run and --json work on an existing project, not with --starter.");
   }
-  if (options.dryRun && (options.app || accountless || options.login)) {
+  if (options.dryRun && (options.app || accountless || options.login || options.template)) {
     throwUsageError(
-      "--dry-run never signs in or changes your Clerk application; drop --app, --login, and --accountless.",
+      "--dry-run never signs in or changes your Clerk application; drop --app, --login, --accountless, and --template.",
     );
   }
   if (options.appIdPrefix != null && !/^[A-Z0-9]{10}$/.test(options.appIdPrefix.trim())) {

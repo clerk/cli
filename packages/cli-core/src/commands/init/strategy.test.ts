@@ -743,6 +743,15 @@ describe("init strategy", () => {
       );
     });
 
+    test("--template with --dry-run throws a usage error before bootstrapping", async () => {
+      setup();
+
+      await expect(init({ template: "b2b-saas", dryRun: true })).rejects.toThrow(
+        /--dry-run never signs in or changes your Clerk application/,
+      );
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    });
+
     test("--template with --app throws a usage error before bootstrapping", async () => {
       setup({ email: "user@example.com" });
       spyOn(context, "gatherContext").mockResolvedValue(KEYLESS_CTX);
