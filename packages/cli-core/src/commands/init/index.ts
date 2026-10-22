@@ -282,6 +282,11 @@ async function assertUsableFlags(
       "--template applies to accountless applications and cannot be combined with --login.",
     );
   }
+  if (options.template && options.app) {
+    throwUsageError(
+      "--template applies to accountless applications and cannot be combined with --app.",
+    );
+  }
   if (options.fresh && options.login) {
     throwUsageError(
       "--fresh applies to accountless applications and cannot be combined with --login.",

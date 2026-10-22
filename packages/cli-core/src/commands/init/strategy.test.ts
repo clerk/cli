@@ -743,13 +743,15 @@ describe("init strategy", () => {
       );
     });
 
-    test("--template with --app errors (a real app target always forces the authenticated flow)", async () => {
+    test("--template with --app throws a usage error before bootstrapping", async () => {
       setup({ email: "user@example.com" });
       spyOn(context, "gatherContext").mockResolvedValue(KEYLESS_CTX);
 
       await expect(init({ template: "b2b-saas", app: "app_abc", yes: true })).rejects.toThrow(
-        /--template only applies to accountless applications/,
+        /--template applies to accountless applications and cannot be combined with --app/,
       );
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+      expect(context.gatherContext).not.toHaveBeenCalled();
     });
 
     test("--template on a non-keyless framework in agent mode names the missing keyless support", async () => {
