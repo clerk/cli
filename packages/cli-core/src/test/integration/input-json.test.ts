@@ -247,6 +247,28 @@ test("structured JSON error in agent mode for invalid JSON", async () => {
   expect(parsed.error.code).toBe("invalid_json");
 });
 
+test("--mode agent before --input-json still prints JSON for invalid JSON", async () => {
+  const result = await clerk.raw("--mode", "agent", "--input-json", "{", "whoami");
+  expect(result.exitCode).not.toBe(0);
+  const parsed = JSON.parse(result.stderr);
+  expect(parsed.error.code).toBe("invalid_json");
+});
+
+test("unknown command with --mode agent prints a JSON usage error", async () => {
+  const result = await clerk.raw("--mode", "agent", "nosuchcommand");
+  expect(result.exitCode).not.toBe(0);
+  const parsed = JSON.parse(result.stderr);
+  expect(parsed.error.code).toBe("usage_error");
+  expect(parsed.error.message).toContain("unknown command");
+});
+
+test("unknown command without --mode stays plain text in human mode", async () => {
+  const result = await clerk.raw("nosuchcommand");
+  expect(result.exitCode).not.toBe(0);
+  expect(result.stderr).toContain("unknown command");
+  expect(() => JSON.parse(result.stderr)).toThrow();
+});
+
 test("structured JSON error in agent mode for file not found", async () => {
   const result = await clerk.raw(
     "--mode",

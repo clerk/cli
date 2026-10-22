@@ -590,6 +590,8 @@ export async function setupTest(): Promise<TestHarness> {
   resetPromptQueues();
   http.reset();
   process.stdin.isTTY = true;
+  const { _resetMode } = await import("../../../mode.ts");
+  _resetMode();
 
   const logSpy = spyOn(console, "log").mockImplementation(() => {});
   const errorSpy = spyOn(console, "error").mockImplementation(() => {});
