@@ -14,7 +14,7 @@ type ProductionInstanceExistsRecovery<T> = () => Promise<T>;
 
 export type MapDeployErrorOptions<T> = {
   /**
-   * When PLAPI returns 409 `production_instance_exists` for a creation call,
+   * When PLAPI returns `production_instance_exists` for a creation call,
    * the wizard should re-derive state via `fetchApplication` rather than
    * surfacing the error. Pass a recovery callback here to opt into that path.
    */
@@ -41,7 +41,7 @@ async function maybeRecover<T>(
   error: PlapiError,
   options: MapDeployErrorOptions<T>,
 ): Promise<RecoveryOutcome<T>> {
-  if (error.status === 409 && error.code === "production_instance_exists") {
+  if (error.code === "production_instance_exists") {
     if (options.onProductionInstanceExists) {
       return { recovered: true, value: await options.onProductionInstanceExists() };
     }
@@ -59,7 +59,9 @@ function translatePlapiError(error: PlapiError): CliError | PlapiError {
     });
   }
 
-  if (status === 400 && code === "provider_domain_operation_not_allowed_for_api") {
+  // The next three match on code alone, so a status change in PLAPI can't
+  // silently disable them.
+  if (code === "provider_domain_operation_not_allowed") {
     return new CliError(
       "The home URL points to a provider domain (e.g. *.vercel.app, *.replit.app). " +
         "Production instances require a domain you own — use a custom domain instead.",
@@ -67,14 +69,14 @@ function translatePlapiError(error: PlapiError): CliError | PlapiError {
     );
   }
 
-  if (status === 400 && code === "home_url_taken") {
+  if (code === "home_url_taken") {
     return new CliError(
       "Another instance is already using that home URL. Pick a different domain and run `clerk deploy` again.",
       { code: ERROR_CODE.HOME_URL_TAKEN },
     );
   }
 
-  if (status === 409 && code === "production_instance_exists") {
+  if (code === "production_instance_exists") {
     // Reached only when the caller did NOT pass onProductionInstanceExists.
     // Surface a typed error so any future call site can branch on it.
     return new CliError(

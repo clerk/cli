@@ -2677,7 +2677,7 @@ describe("deploy", () => {
       expect(mockFetchApplication).not.toHaveBeenCalled();
     });
 
-    test("recovers from 409 production_instance_exists and persists the recovered instance id", async () => {
+    test("recovers from 400 production_instance_exists and persists the recovered instance id", async () => {
       await linkedProject();
       mockIsAgent.mockReturnValue(false);
       mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
@@ -2685,12 +2685,12 @@ describe("deploy", () => {
       mockCreateProductionInstance.mockReset();
       mockCreateProductionInstance.mockRejectedValueOnce(
         new PlapiError(
-          409,
+          400,
           JSON.stringify({ errors: [{ code: "production_instance_exists", message: "exists" }] }),
         ),
       );
       // First fetchApplication call (during resolveDeployContext) sees no production
-      // instance, so the wizard takes the startNewDeploy path and hits the 409.
+      // instance, so the wizard takes the startNewDeploy path and hits the 400.
       mockFetchApplication.mockResolvedValueOnce({
         application_id: "app_xyz789",
         name: "my-saas-app",
@@ -3067,7 +3067,7 @@ describe("deploy", () => {
         mockCreateProductionInstance.mockReset();
         mockCreateProductionInstance.mockRejectedValueOnce(
           new PlapiError(
-            409,
+            400,
             JSON.stringify({ errors: [{ code: "production_instance_exists", message: "exists" }] }),
           ),
         );
