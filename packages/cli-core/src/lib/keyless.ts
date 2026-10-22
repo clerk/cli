@@ -2,7 +2,7 @@ import { join } from "node:path";
 import { mkdir, unlink } from "node:fs/promises";
 import { getBapiBaseUrl } from "./environment.ts";
 import { detectPublishableKeyName, detectSecretKeyName, detectEnvFile } from "./framework.ts";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
+import { detectLineEnding, parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
 import { BapiError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { ensureGitignoreEntry } from "./git.ts";
@@ -98,7 +98,7 @@ export async function writeKeysToEnvFile(
     [secretKeyName]: keys.secretKey,
   });
 
-  await Bun.write(targetFile, serializeEnvFile(merged));
+  await Bun.write(targetFile, serializeEnvFile(merged, detectLineEnding(existingContent)));
   log.info(`Environment variables written to ${envFile}`);
 }
 

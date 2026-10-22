@@ -2,6 +2,7 @@ import { resolve, join, basename } from "node:path";
 import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
 import {
+  detectLineEnding,
   ENV_FILE_CANDIDATES,
   parseEnvFile,
   mergeEnvVars,
@@ -200,7 +201,13 @@ async function mergeKeysIntoEnvFile(
   const file = Bun.file(targetFile);
   const existingContent = (await file.exists()) ? await file.text() : "";
 
-  await Bun.write(targetFile, serializeEnvFile(mergeEnvVars(parseEnvFile(existingContent), vars)));
+  await Bun.write(
+    targetFile,
+    serializeEnvFile(
+      mergeEnvVars(parseEnvFile(existingContent), vars),
+      detectLineEnding(existingContent),
+    ),
+  );
 }
 
 /**

@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
+import { detectLineEnding, parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
 
 describe("parseEnvFile", () => {
   test("returns empty array for empty string", () => {
@@ -143,9 +143,17 @@ describe("a file with CRLF line endings", () => {
     ]);
   });
 
-  test("round-trips without modification", () => {
-    const input = "# Header\r\nFOO=bar\r\nBAZ=qux\r\n";
-    expect(serializeEnvFile(parseEnvFile(input))).toBe(input);
+  test("round-trips without modification, with its own line ending", () => {
+    const input = "# Header\r\nFOO=bar\r\n\r\nBAZ=qux\r\n";
+    expect(serializeEnvFile(parseEnvFile(input), detectLineEnding(input))).toBe(input);
+  });
+
+  test("a merge writes CRLF throughout, for updated and appended lines too", () => {
+    const input = "FOO=old\r\nBAR=keep\r\n";
+    const merged = mergeEnvVars(parseEnvFile(input), { FOO: "new", BAZ: "added" });
+    expect(serializeEnvFile(merged, detectLineEnding(input))).toBe(
+      "FOO=new\r\nBAR=keep\r\nBAZ=added\r\n",
+    );
   });
 });
 

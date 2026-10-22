@@ -55,12 +55,12 @@ export function parseEnvFile(content: string): EnvLine[] {
   if (!content) return [];
   const raw = content.endsWith("\n") ? content.slice(0, -1) : content;
   return raw.split("\n").map((rawLine): EnvLine => {
-    // A CRLF file's "\r" isn't part of the value; `raw` keeps it, so an
-    // untouched line is written back as it was.
+    // A CRLF file's "\r" isn't part of the line; `serializeEnvFile` writes the
+    // file's own ending back (`detectLineEnding`).
     const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.trim() === "") return { type: "blank" };
     const match = line.match(ENTRY_RE);
-    if (!match) return { type: "comment", raw: rawLine };
+    if (!match) return { type: "comment", raw: line };
     const key = match[2]!;
     let value = match[3]!;
     // Strip surrounding quotes
@@ -70,8 +70,14 @@ export function parseEnvFile(content: string): EnvLine[] {
     ) {
       value = value.slice(1, -1);
     }
-    return { type: "entry", key, value, raw: rawLine };
+    return { type: "entry", key, value, raw: line };
   });
+}
+
+/** The line ending `content` uses: its first line's, or "\n" when it has none. */
+export function detectLineEnding(content: string): "\n" | "\r\n" {
+  const newline = content.indexOf("\n");
+  return newline > 0 && content[newline - 1] === "\r" ? "\r\n" : "\n";
 }
 
 export function mergeEnvVars(lines: EnvLine[], vars: Record<string, string>): EnvLine[] {
@@ -100,13 +106,14 @@ export function mergeEnvVars(lines: EnvLine[], vars: Record<string, string>): En
   return result;
 }
 
-export function serializeEnvFile(lines: EnvLine[]): string {
+/** The file's text, each line ending in `lineEnding`: the original file's (`detectLineEnding`). */
+export function serializeEnvFile(lines: EnvLine[], lineEnding: "\n" | "\r\n" = "\n"): string {
   const out = lines
     .map((line) => {
       if (line.type === "blank") return "";
       if (line.type === "comment") return line.raw;
       return line.raw;
     })
-    .join("\n");
-  return out + "\n";
+    .join(lineEnding);
+  return out + lineEnding;
 }
