@@ -158,6 +158,17 @@ describe("validateSource", () => {
     expect(validateSource(valid, "f.ts").key).toBe("myplatform");
   });
 
+  // The old migration-tool's docs say nothing about this file, and an agent
+  // with only the CLI learns the format from wherever the error points.
+  test("points a rejection at how to write a source", () => {
+    try {
+      validateSource(null, "f.ts");
+      throw new Error("expected a rejection");
+    } catch (error) {
+      expect((error as CliError).docsUrl).toContain("README.md#custom-sources");
+    }
+  });
+
   test.each([
     ["a null default export", null, /is null, not an object/],
     ["a number default export", 42, /is number, not an object/],
