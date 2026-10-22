@@ -321,6 +321,15 @@ describe("users open", () => {
       expect(error.code).toBe(ERROR_CODE.NOT_LINKED);
       expect(mockPickUser).not.toHaveBeenCalled();
     });
+
+    // `--instance` skips the claim check, but `--app` is still missing.
+    test("with --instance, refuses before the picker with the usage error", async () => {
+      await expect(open({ secretKey: "sk_test_loose", instance: "dev" })).rejects.toThrow(
+        /Cannot build a dashboard URL from --secret-key alone/,
+      );
+      expect(mockKeyAccess).not.toHaveBeenCalled();
+      expect(mockPickUser).not.toHaveBeenCalled();
+    });
   });
 
   test("forwards --app and --instance to the resolver", async () => {

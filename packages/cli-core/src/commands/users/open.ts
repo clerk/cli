@@ -191,9 +191,20 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     instance: options.instance,
   });
 
-  // Refuse before the picker, not after a user is chosen: with no app ID there
-  // is no dashboard link to build, whichever user is picked.
-  if (!target.appId) await assertNotKeyless(options, "<user-id>");
+  // Refuse before the picker, not after a user is chosen: with no app target
+  // there is no dashboard link to build, whichever user is picked.
+  if (!target.appId || !target.instanceId) {
+    if (!target.appId) await assertNotKeyless(options, "<user-id>");
+    if (options.secretKey) {
+      throwUsageError(
+        "Cannot build a dashboard URL from --secret-key alone when no app target can be resolved. Use --app <app-id> instead, or run `clerk link` to link this directory.",
+      );
+    }
+
+    throw new CliError("Internal: dashboard target missing appId/instanceId after resolution.", {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
+  }
 
   if (!target.secretKey) {
     throw new CliError("Internal: users open target is missing a secret key for pickUser.", {
@@ -205,18 +216,6 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     secretKey: target.secretKey,
     message: "Pick a user to open in the dashboard:",
   });
-
-  if (!target.appId || !target.instanceId) {
-    if (options.secretKey) {
-      throwUsageError(
-        "Cannot build a dashboard URL from --secret-key alone when no app target can be resolved. Use --app <app-id> instead, or run `clerk link` to link this directory.",
-      );
-    }
-
-    throw new CliError("Internal: dashboard target missing appId/instanceId after resolution.", {
-      code: ERROR_CODE.INSTANCE_NOT_FOUND,
-    });
-  }
 
   const subpath = `users/${userId}`;
   const url = buildDashboardUrl(target.appId, target.instanceId, subpath);
