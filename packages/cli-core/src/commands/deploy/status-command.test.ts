@@ -34,6 +34,10 @@ const { beginInterrupt, interruptedExitCode, _resetInterruptState } =
 const { deployStatus, humanNextAction } = await import("./status-command.ts");
 const { startCommandTelemetry, telemetryResultForSoftExit } =
   await import("../../lib/telemetry.ts");
+// The test process isn't a clerk install, so commands would start with bun
+// and the test runner. Tests that cover the prefix pass one explicitly.
+const { _setCliPrefix } = await import("../../lib/cli-invocation.ts");
+_setCliPrefix("clerk");
 
 /** What an in-flight request rejects with once Ctrl-C aborts the shared signal. */
 function abortError(): Error {
@@ -1258,7 +1262,13 @@ describe("humanNextAction", () => {
       oauthUnsupported: ["x"],
       instanceUrl: URL,
     },
-    { kind: "oauth_pending" as const, oauthPending: ["github"], oauthUnsupported: ["x"] },
+    {
+      kind: "oauth_pending" as const,
+      oauthPending: ["github"],
+      oauthUnsupported: ["x"],
+      setupFromFile: [],
+      setupCount: 1,
+    },
     ...(["records_available", "records_unavailable", "ssl_pending", "finalizing"] as const).map(
       (kind) => ({ kind, domain: "example.com", records: "DNS", domainsUrl: `${URL}/domains` }),
     ),

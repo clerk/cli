@@ -253,7 +253,7 @@ export function humanNextAction(step: DeployNextStep): string {
       // The id rather than `prod`, as in the agent's sentence.
       return (
         `Clerk's production setup for https://${step.domain} is verified. If you haven't already, ` +
-        `run \`${keyPullCommand(step.productionInstanceId)}\` and add ` +
+        `run \`${keyPullCommand("clerk", step.productionInstanceId)}\` and add ` +
         `the lines it prints to your host's production environment variables, with the other Clerk ` +
         `variables from your env file (it writes no local file, so localhost keeps its development ` +
         `keys), then redeploy and sign up at https://${step.domain} to confirm.` +

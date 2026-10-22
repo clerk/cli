@@ -104,6 +104,10 @@ type DeployOptions = {
   /** Skips the domain prompt. In agent mode, it is what allows creating the instance. */
   domain?: string;
   yes?: boolean;
+  /** Set by the wizard when `domain` came from its prompt, so messages don't call it --domain. */
+  domainEntered?: boolean;
+  /** Set by the wizard when its create found an instance another run made. */
+  resumingAfterCreate?: boolean;
 };
 
 export async function deploy(options: DeployOptions = {}) {
@@ -190,8 +194,13 @@ async function runAgentDeploy(options: DeployOptions): Promise<void> {
     ctx,
     state.kind === "active" ? state.snapshot.productionInstanceId : state.productionInstanceId,
   );
-  if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
-  else if (!created) throw uncheckedDomainError(domain);
+  // An application has one production instance, so this run's own create is
+  // on the requested domain however Clerk spells it back. Only a run that
+  // found the instance has a domain to check.
+  if (!created) {
+    if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
+    else throw uncheckedDomainError(domain);
+  }
   log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
 }
 
@@ -263,13 +272,21 @@ async function rememberProductionInstance(
  * deploy on another domain as if the request had been honored would send the
  * caller off to add DNS records for a domain they did not ask for.
  */
-function assertRequestedDomain(requested: string, existing: string): void {
+function assertRequestedDomain(requested: string, existing: string, entered = false): void {
   if (comparableDomain(existing) === comparableDomain(requested)) return;
+  // A rerun resumes the existing instance; only the flag has to be dropped.
+  const rerun = entered ? "Run `clerk deploy` again" : "Run `clerk deploy` without --domain";
   throw new CliError(
-    `This application already has a production instance on ${existing}, so --domain ${requested} was not applied. ` +
-      `Run \`clerk deploy\` without --domain to continue with ${existing}, or change the domain in the Clerk Dashboard.`,
+    `This application already has a production instance on ${existing}, so ` +
+      `${requestedDomainPhrase(requested, entered)} was not applied. ` +
+      `${rerun} to continue with ${existing}, or change the domain in the Clerk Dashboard.`,
     { code: ERROR_CODE.PRODUCTION_INSTANCE_EXISTS },
   );
+}
+
+/** How a message names the requested domain: as the flag, or as what the person typed. */
+function requestedDomainPhrase(requested: string, entered: boolean): string {
+  return entered ? `the domain you entered, ${requested},` : `--domain ${requested}`;
 }
 
 /** A domain as DNS compares it: case-insensitive, with or without the root's trailing dot. */
@@ -283,12 +300,12 @@ function comparableDomain(domain: string): string {
  * the requested domain; any other run can't tell, and once Clerk returns the
  * domain the report would send the caller to add records for it.
  */
-function uncheckedDomainError(requested: string): CliError {
+function uncheckedDomainError(requested: string, entered = false): CliError {
   // Only called when this run created nothing; its own profile write (the
   // instance id) is local, hence "in Clerk".
   return new CliError(
     `This application already has a production instance, but Clerk hasn't returned its domain yet, ` +
-      `so --domain ${requested} could not be checked against it. ` +
+      `so ${requestedDomainPhrase(requested, entered)} could not be checked against it. ` +
       "This run did not change the instance's domain. Nothing was changed in Clerk. " +
       "Run `clerk deploy status` to see its domain once Clerk returns it.",
     { code: ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED },
@@ -334,6 +351,7 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   }
 
   bar();
+  const domainEntered = options.domain === undefined;
   const domain = options.domain ?? (await collectCustomDomain());
   const shouldCreateProductionInstance = await confirmProductionInstanceCreation(
     domain,
@@ -346,18 +364,20 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     // `not_started` is now false and the resume has not read anything yet, so
     // the run sends no stage unless the resume below observes one.
     setTelemetryStage(null);
-    log.blank();
-    log.info(
-      "A production instance already exists for this application. Resuming the existing deploy.",
-    );
-    log.blank();
     const refreshed = await withSpinner("Refreshing application state...", async () =>
       resolveLiveApplicationContext(ctx.profile),
     );
     // Nothing to resume or to check --domain against, so this run can't
     // report success.
     if (!refreshed.productionInstanceId) throw unreturnedInstanceError();
-    await reconcileExistingDeploy(ctx, refreshed.productionInstanceId, options);
+    // The domain the person typed counts like --domain: a race lost to an
+    // instance on another domain must not carry on into that domain's setup.
+    await reconcileExistingDeploy(ctx, refreshed.productionInstanceId, {
+      ...options,
+      domain,
+      domainEntered,
+      resumingAfterCreate: true,
+    });
     return;
   }
   const production = productionOrExists;
@@ -453,7 +473,7 @@ async function reconcileExistingDeploy(
     recordDeployStage("domain_provisioning");
     // Same as agent mode: nothing to check --domain against, so it is refused
     // rather than reported as if it had been applied.
-    if (options.domain) throw uncheckedDomainError(options.domain);
+    if (options.domain) throw uncheckedDomainError(options.domain, options.domainEntered);
     log.blank();
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");
@@ -464,7 +484,16 @@ async function reconcileExistingDeploy(
   // substituted; a later poll that succeeds will. OAuth is recorded either
   // way, since the configuration read succeeded.
   recordDeployObservation({ kind: "active", snapshot });
-  if (options.domain) assertRequestedDomain(options.domain, snapshot.domain);
+  if (options.domain) {
+    assertRequestedDomain(options.domain, snapshot.domain, options.domainEntered);
+  }
+  // Only once the domain check passed, so it never comes right before a refusal.
+  if (options.resumingAfterCreate) {
+    log.blank();
+    log.info(
+      "A production instance already exists for this application. Resuming the existing deploy.",
+    );
+  }
 
   log.blank();
   for (const line of printPlan(ctx.appLabel, buildLiveDeployPlan(snapshot))) {

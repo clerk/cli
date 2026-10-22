@@ -11,7 +11,7 @@ import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
 import { keylessRefusal } from "../../lib/unlinked-folder.ts";
 import { credentialPlaceholder, credentialPlaceholderPaths } from "../../lib/oauth-config.ts";
 import type { KeylessWriteVerification } from "./keyless.ts";
-import { redactSecrets } from "./redact.ts";
+import { REDACTED, redactSecrets, redactedSecretPaths } from "./redact.ts";
 import {
   assertPayloadWritable,
   LOCAL_DRY_RUN_MESSAGE,
@@ -75,6 +75,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
 
   const configPayload = parsePayload(await readInput(options));
   assertNoCredentialPlaceholders(configPayload);
+  assertNoRedactedSecrets(configPayload);
   assertPayloadWritable(target, configPayload);
 
   const shouldWrap = !isInsideGutter();
@@ -172,6 +173,24 @@ function assertNoCredentialPlaceholders(payload: Record<string, unknown>): void 
           "Replace it with the real value, then run the command again."
       : `Nothing was saved: ${new Intl.ListFormat("en", { type: "conjunction" }).format(paths)} ` +
           `still hold their placeholders (${placeholders.join(", ")}). ` +
+          "Replace them with the real values, then run the command again.",
+  );
+}
+
+/**
+ * `patch` and `put` print secret-named values as `[REDACTED]`. That output fed
+ * back in would save the text over the real secret, so it is refused before
+ * any config read or write, dry runs included.
+ */
+function assertNoRedactedSecrets(payload: Record<string, unknown>): void {
+  const paths = redactedSecretPaths(payload);
+  if (paths.length === 0) return;
+  throwUsageError(
+    paths.length === 1
+      ? `Nothing was saved: ${paths[0]} holds ${REDACTED}, which \`clerk config\` prints in place ` +
+          "of a secret. Replace it with the real value, then run the command again."
+      : `Nothing was saved: ${new Intl.ListFormat("en", { type: "conjunction" }).format(paths)} ` +
+          `hold ${REDACTED}, which \`clerk config\` prints in place of a secret. ` +
           "Replace them with the real values, then run the command again.",
   );
 }

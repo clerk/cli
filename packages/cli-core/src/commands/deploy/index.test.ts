@@ -81,6 +81,10 @@ const { deploy } = await import("./index.ts");
 const { deployStatus } = await import("./status-command.ts");
 const { providerSetupIntro, showOAuthWalkthrough } = await import("./providers.ts");
 const { collectCustomDomain } = await import("./prompts.ts");
+// The test process isn't a clerk install, so commands would start with bun
+// and the test runner. Tests that cover the prefix pass one explicitly.
+const { _setCliPrefix } = await import("../../lib/cli-invocation.ts");
+_setCliPrefix("clerk");
 
 function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");
@@ -881,6 +885,41 @@ describe("deploy", () => {
       expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
     });
 
+    // An application has one production instance, so a create that succeeded
+    // is on the requested domain, however Clerk then spells it.
+    test("--domain reports its own create without comparing the domain Clerk returns", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      const create = mockCreateProductionInstance.getMockImplementation() as (
+        appId: string,
+        params: { domain: string },
+      ) => unknown;
+      mockCreateProductionInstance.mockImplementation(
+        (appId: string, params: { domain: string }) => {
+          mockLiveProduction({ domain: "www.example.com" });
+          return create(appId, params);
+        },
+      );
+
+      await runDeploy({ domain: "example.com" });
+
+      const payload = JSON.parse(captured.out);
+      expect(payload.productionInstanceId).toBe("ins_prod_mock");
+      expect(payload.domain).toBe("www.example.com");
+    });
+
+    // A resume still compares, ignoring only case and a trailing dot.
+    test("--domain resumes an existing instance whose domain Clerk spells differently", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockLiveProduction({ domain: "Example.COM." });
+
+      await runDeploy({ domain: "example.com" });
+
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(JSON.parse(captured.out).productionInstanceId).toBe("ins_prod_mock");
+    });
+
     // A case or trailing-dot difference in how Clerk spells the domain is
     // still the domain this run asked for.
     test.each(["example.com.", "Example.COM."])(
@@ -1132,6 +1171,73 @@ describe("deploy", () => {
       mockInput.mockResolvedValueOnce("fake-client-id-12345");
       mockPassword.mockResolvedValueOnce("fake-secret");
     }
+
+    // A domain typed at the prompt is checked like --domain when the create
+    // loses a race: the wizard must not carry on into another domain's setup.
+    function typedDomainLosesRace(existingDomain: { provisioning: boolean }, typed = "other.com") {
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce(typed);
+      mockCreateProductionInstance.mockImplementation(() => {
+        mockLiveProduction({ domain: "example.com" });
+        if (existingDomain.provisioning) {
+          mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+        }
+        return Promise.reject(
+          new PlapiError(
+            409,
+            JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+            "https://x",
+          ),
+        );
+      });
+    }
+
+    test("a typed domain that loses a create race to another domain is refused", async () => {
+      await linkedProject();
+      typedDomainLosesRace({ provisioning: false });
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.PRODUCTION_INSTANCE_EXISTS);
+      expect((error as CliError).message).toBe(
+        "This application already has a production instance on example.com, so the domain you " +
+          "entered, other.com, was not applied. Run `clerk deploy` again to continue with " +
+          "example.com, or change the domain in the Clerk Dashboard.",
+      );
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+      // Refused, so it never says it is resuming.
+      expect(stripAnsi(captured.err)).not.toContain("Resuming the existing deploy");
+    });
+
+    test("a typed domain that matches the instance another run made resumes it", async () => {
+      await linkedProject();
+      typedDomainLosesRace({ provisioning: false }, "example.com");
+      mockSelect.mockResolvedValueOnce("skip");
+
+      await runDeployUntilPause({});
+
+      expect(stripAnsi(captured.err)).toContain(
+        "A production instance already exists for this application. Resuming the existing deploy.",
+      );
+    });
+
+    test("a typed domain can't be checked while the winning instance's domain provisions", async () => {
+      await linkedProject();
+      typedDomainLosesRace({ provisioning: true });
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED);
+      expect((error as CliError).message).toBe(
+        "This application already has a production instance, but Clerk hasn't returned its domain " +
+          "yet, so the domain you entered, other.com, could not be checked against it. " +
+          "This run did not change the instance's domain. Nothing was changed in Clerk. " +
+          "Run `clerk deploy status` to see its domain once Clerk returns it.",
+      );
+      expect(stripAnsi(captured.err)).not.toContain("Resuming the existing deploy");
+    });
 
     // A create that loses a race to another one but whose refresh can't find
     // that instance knows nothing about it, so it can't report success or

@@ -8,6 +8,7 @@ import {
 } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { credentialPlaceholder } from "../../lib/oauth-config.ts";
+import { currentCliPrefix } from "../../lib/cli-invocation.ts";
 import {
   fetchApplication,
   fetchInstanceConfig,
@@ -201,9 +202,9 @@ export type DeployNextStep =
       oauthUnsupported: readonly string[];
       nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
       /** Labels of `oauth.setup` entries with a field that takes a file's contents. */
-      setupFromFile?: readonly string[];
+      setupFromFile: readonly string[];
       /** How many entries `oauth.setup` has, those included. */
-      setupCount?: number;
+      setupCount: number;
     }
   | {
       kind: "records_available" | "records_unavailable" | "ssl_pending" | "finalizing";
@@ -607,22 +608,25 @@ function domainComponentState(value: boolean): DomainComponentState {
   return value ? "complete" : "pending";
 }
 
+/** `cli` starts every command the report hands over to run as given. */
 export function buildDeployStatusReport(
   state: DeployState,
   outcome: DeployStatusOutcome | null,
+  cli: string = currentCliPrefix(),
 ): DeployStatusReport {
-  return withNextAction(buildDeployStatusFacts(state, outcome));
+  return withNextAction(buildDeployStatusFacts(state, outcome, cli), cli);
 }
 
 type DeployStatusFacts = Omit<DeployStatusReport, "nextAction">;
 
-function withNextAction(facts: DeployStatusFacts): DeployStatusReport {
-  return { ...facts, nextAction: agentNextAction(deployNextStep(facts)) };
+function withNextAction(facts: DeployStatusFacts, cli: string): DeployStatusReport {
+  return { ...facts, nextAction: agentNextAction(deployNextStep(facts), cli) };
 }
 
 function buildDeployStatusFacts(
   state: DeployState,
   outcome: DeployStatusOutcome | null,
+  cli: string,
 ): DeployStatusFacts {
   if (state.kind === "not_started") {
     return {
@@ -684,19 +688,20 @@ function buildDeployStatusFacts(
       configured: [...snapshot.completedOAuthProviders],
       pending: oauthPending,
       unsupported: [...snapshot.unsupportedOAuthProviders],
-      setup: oauthSetupGuides(snapshot, oauthPending),
+      setup: oauthSetupGuides(snapshot, oauthPending, cli),
     },
     nativeAppleReadinessIssue: snapshot.nativeAppleReadinessIssue,
     urls: snapshot.productionInstanceId
       ? dashboardUrls(snapshot.appId, snapshot.productionInstanceId)
       : null,
-    hostSetup: complete ? hostSetupEntries(snapshot.productionInstanceId ?? null) : [],
+    hostSetup: complete ? hostSetupEntries(snapshot.productionInstanceId ?? null, cli) : [],
   };
 }
 
 function oauthSetupGuides(
   snapshot: LiveDeploySnapshot,
   pending: readonly string[],
+  cli: string,
 ): OAuthSetupGuide[] {
   const urls = oauthWalkthroughUrls(snapshot.domain, snapshot.frontendApiUrl);
   // The id, not `prod`: that alias reads the local profile, which has no
@@ -733,7 +738,7 @@ function oauthSetupGuides(
           ),
         },
       },
-      command: `clerk config patch --instance ${instance} --file <file> --yes`,
+      command: `${cli} config patch --instance ${instance} --file <file> --yes`,
     }));
 }
 
@@ -760,6 +765,12 @@ function oauthSetupGuides(
  * long listing, and `pipefail` would turn that into a failure. The parentheses
  * keep `pipefail`, `exit`, and `allow_shared` out of the agent's shell.
  * `${name}` has braces because zsh reads `$name[` as an array subscript.
+ * `set +x` comes first: a caller with `set -x` on would otherwise trace every
+ * line that holds a key to stderr, which the agent reads.
+ * The shared check is an `if`, not `grep ... && echo`: with no shared key the
+ * `&&` form ends the loop with grep's 1, which `pipefail` carries into
+ * `shared=$(...)`, and a caller with `set -e` on would exit there, silently,
+ * before uploading anything.
  * Each key line is split at its first `=` by parameter expansion rather than
  * `IFS='=' read -r key value`: bash's `read` drops a single trailing `=` from
  * the last field (zsh keeps it), which would upload a truncated value and
@@ -767,12 +778,12 @@ function oauthSetupGuides(
  */
 function vercelKeyCopyCommand(pull: string): string {
   return (
-    `( allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
+    `( set +x; allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
     `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || { printf '%s\\n' "$vars" >&2; exit 1; }; ` +
     `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
     `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
     `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
-    `printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null && echo "$name"; done); ` +
+    `if printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null; then echo "$name"; fi; done); ` +
     `if [ -n "$shared" ] && [ "$allow_shared" != 1 ]; then ` +
     `echo "Also set for an environment other than Production: $shared" >&2; exit 3; fi; ` +
     `printf '%s\\n' "$keys" | while IFS= read -r line; do key=\${line%%=*}; value=\${line#*=}; ` +
@@ -781,13 +792,13 @@ function vercelKeyCopyCommand(pull: string): string {
 }
 
 /** The `hostSetup` entries at `complete`: one per host the CLI has a recipe for. */
-function hostSetupEntries(productionInstanceId: string | null): HostSetupEntry[] {
+function hostSetupEntries(productionInstanceId: string | null, cli: string): HostSetupEntry[] {
   return [
     {
       host: "vercel",
       label: "Vercel",
       shells: ["bash", "zsh"],
-      command: vercelKeyCopyCommand(keyPullCommand(productionInstanceId)),
+      command: vercelKeyCopyCommand(keyPullCommand(cli, productionInstanceId)),
     },
   ];
 }
@@ -808,18 +819,23 @@ function dashboardUrls(appId: string, productionInstanceId: string): DeployStatu
  * "unknown" instead, so an agent parsing stdout gets a well-formed document
  * rather than the empty output this path used to produce.
  */
-export function buildInterruptedDeployStatusReport(): DeployStatusReport {
-  return withNextAction({
-    complete: false,
-    state: "interrupted",
-    domain: null,
-    productionInstanceId: null,
-    domainStatus: null,
-    pendingDnsRecords: [],
-    oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
-    urls: null,
-    hostSetup: [],
-  });
+export function buildInterruptedDeployStatusReport(
+  cli: string = currentCliPrefix(),
+): DeployStatusReport {
+  return withNextAction(
+    {
+      complete: false,
+      state: "interrupted",
+      domain: null,
+      productionInstanceId: null,
+      domainStatus: null,
+      pendingDnsRecords: [],
+      oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
+      urls: null,
+      hostSetup: [],
+    },
+    cli,
+  );
 }
 
 /**
@@ -877,7 +893,7 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
 }
 
 /** The `nextAction` sentence: written for an agent that will relay it to a person. */
-export function agentNextAction(step: DeployNextStep): string {
+export function agentNextAction(step: DeployNextStep, cli: string): string {
   // In development Clerk supplies shared OAuth credentials; in production it
   // doesn't, so a provider the CLI couldn't configure has a sign-in button
   // that fails for real users. `oauth.complete` only covers what the CLI
@@ -972,7 +988,7 @@ export function agentNextAction(step: DeployNextStep): string {
         "deploy. Run `clerk deploy status` again to check it."
       );
     case "complete": {
-      const pull = keyPullCommand(step.productionInstanceId);
+      const pull = keyPullCommand(cli, step.productionInstanceId);
       // Complete on Clerk's side only. The app keeps running on development
       // keys until the production keys reach the host, and the report can't
       // tell whether that already happened — hence "if you haven't already".
@@ -993,7 +1009,7 @@ export function agentNextAction(step: DeployNextStep): string {
         `with exit 1 if it can't read that list. If a key is already set as a production variable that also ` +
         `targets another environment (Preview, Development, or a custom one), it stops with exit 3 and names ` +
         `it: ask the user before replacing it, because \`--force\` may rewrite that shared variable and put ` +
-        `the production secret key in those deployments. If they agree, run the command again with its leading \`allow_shared=0\` changed to ` +
+        `the production secret key in those deployments. If they agree, run the command again with its \`allow_shared=0\` changed to ` +
         `\`allow_shared=1\`. Otherwise it replaces the production values and exits non-zero if the pull or ` +
         `any upload fails; redeploy only after it exits 0. ` +
         `For a host without a CLI, ask the user to run \`${pull}\` in a separate terminal, not through ` +
@@ -1008,7 +1024,7 @@ export function agentNextAction(step: DeployNextStep): string {
       );
     }
     case "oauth_pending": {
-      const fromFile = step.setupFromFile ?? [];
+      const fromFile = step.setupFromFile;
       if (step.nativeAppleReadinessIssue) {
         const hostedPending = step.oauthPending.filter((provider) => provider !== "apple");
         // Apple has no `oauth.setup` entry here; the others still do. No
@@ -1017,7 +1033,7 @@ export function agentNextAction(step: DeployNextStep): string {
         const hostedAction =
           hostedPending.length > 0
             ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}. ` +
-              oauthSetupSteps(fromFile, step.setupCount ?? hostedPending.length)
+              oauthSetupSteps(fromFile, step.setupCount)
             : "";
         return (
           `Domain verified, but setup is incomplete.${nativeApple}` +
@@ -1026,7 +1042,7 @@ export function agentNextAction(step: DeployNextStep): string {
           unsupported(step.oauthUnsupported)
         );
       }
-      const entryCount = step.setupCount ?? step.oauthPending.length;
+      const entryCount = step.setupCount;
       // The domain is verified, so there is nothing to monitor on the Domains
       // page. With every entry already sent to the wizard, offering it again
       // would only repeat the sentence before.

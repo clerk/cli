@@ -26,6 +26,10 @@ import type { Example } from "../../lib/help.ts";
 import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../lib/clerk-key-env.ts";
 
 const h = useIntegrationTestHarness();
+// The test process isn't a clerk install, so commands would start with bun
+// and the test runner. The prefix rule has its own tests.
+const { _setCliPrefix } = await import("../../lib/cli-invocation.ts");
+_setCliPrefix("clerk");
 
 const APP = "/v1/platform/applications/app_1";
 const PROFILE_KEY = "github.com/test/project";

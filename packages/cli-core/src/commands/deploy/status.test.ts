@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PlapiError } from "../../lib/errors.ts";
@@ -41,6 +41,10 @@ const { recordDeployObservation, recordDeployPoll } = await import("./telemetry.
 const { setTelemetryStage } = await import("../../lib/telemetry.ts");
 const { _setConfigDir } = await import("../../lib/config.ts");
 const { beginInterrupt, _resetInterruptState } = await import("../../lib/signals.ts");
+// The test process isn't a clerk install, so commands would start with bun
+// and the test runner. Tests that cover the prefix pass one explicitly.
+const { _setCliPrefix } = await import("../../lib/cli-invocation.ts");
+_setCliPrefix("clerk");
 
 const ctx = {
   profileKey: "/tmp/x",
@@ -752,6 +756,13 @@ describe("resolveLiveDeploySnapshot records each read as it succeeds", () => {
 });
 
 describe("buildDeployStatusReport", () => {
+  // A CLI prefix as the report writes one when `clerk` on PATH isn't this
+  // install: the running CLI's absolute path, single-quoted.
+  const quoted = (path: string): string => `'${path.replaceAll("'", "'\\''")}'`;
+  const pathPrefix = quoted("/opt/clerk cli/bin/clerk");
+  // `clerk` run as a command word, rather than as part of a path.
+  const bareClerk = /(^|[\s(;$`])clerk\s/;
+
   const activeSnapshot = {
     appId: "app_1",
     developmentInstanceId: "ins_dev",
@@ -990,6 +1001,7 @@ describe("buildDeployStatusReport", () => {
     });
     const oauthPendingReport = (
       descriptors: LiveDeploySnapshot["oauthProviderDescriptors"],
+      cli = "clerk",
     ): ReturnType<typeof buildDeployStatusReport> =>
       buildDeployStatusReport(
         {
@@ -1002,6 +1014,7 @@ describe("buildDeployStatusReport", () => {
           },
         },
         { verified: true, status: { dns: true, ssl: true, mail: true } },
+        cli,
       );
 
     test("the agent writes the placeholders and the user replaces them", () => {
@@ -1047,6 +1060,57 @@ describe("buildDeployStatusReport", () => {
       } finally {
         await rm(dir, { recursive: true, force: true });
       }
+    });
+
+    // With no `clerk` on PATH, the entry's command names the CLI by its quoted
+    // path, and the wrapper still keeps its exit code and removes the file.
+    test("the cleanup wrapper runs the entry's command by the CLI's quoted path", async () => {
+      const dir = await mkdtemp(join(tmpdir(), "clerk-oauth-cli-"));
+      const stub = join(dir, "clerk stub's dir", "clerk");
+      await mkdir(join(dir, "clerk stub's dir"));
+      await Bun.write(stub, '#!/bin/sh\nprintf \'%s\\n\' "$*" > "$ARGS"\nexit 7\n');
+      await chmod(stub, 0o755);
+      const file = join(dir, "payload.json");
+      await Bun.write(file, "{}");
+      const report = oauthPendingReport([descriptor("github", "GitHub", false)], quoted(stub));
+      const wrapper = /`(\( rc=0; [^`]+\))`/.exec(report.nextAction)?.[1];
+      const command = report.oauth.setup[0]!.command.replace("<file>", () => file);
+      try {
+        expect(Bun.which("clerk", { PATH: "/usr/bin:/bin" })).toBeNull();
+        const proc = Bun.spawn(
+          [
+            "bash",
+            "-c",
+            wrapper!.replace("<command>", () => command).replace("<path>", () => file),
+          ],
+          {
+            env: { PATH: "/usr/bin:/bin", ARGS: join(dir, "args") },
+            stdout: "pipe",
+            stderr: "pipe",
+          },
+        );
+
+        expect(await proc.exited).toBe(7);
+        expect(await Bun.file(file).exists()).toBe(false);
+        expect((await Bun.file(join(dir, "args")).text()).trim()).toBe(
+          `config patch --instance ins_prod --file ${file} --yes`,
+        );
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+    });
+
+    test("oauth.setup commands start with the CLI prefix", () => {
+      const report = oauthPendingReport(
+        [descriptor("github", "GitHub", false), descriptor("google", "Google", false)],
+        pathPrefix,
+      );
+
+      expect(report.oauth.setup.map((entry) => entry.command)).toEqual([
+        `${pathPrefix} config patch --instance ins_prod --file <file> --yes`,
+        `${pathPrefix} config patch --instance ins_prod --file <file> --yes`,
+      ]);
+      for (const entry of report.oauth.setup) expect(entry.command).not.toMatch(bareClerk);
     });
 
     test("an entry holding a file's contents sends the user to the wizard first", () => {
@@ -1192,7 +1256,7 @@ describe("buildDeployStatusReport", () => {
         "(Preview, Development, or a custom one), it stops with exit 3 and names it: ask the user " +
         "before replacing it, because `--force` may rewrite that shared variable and put the " +
         "production secret key in those deployments. " +
-        "If they agree, run the command again with its leading `allow_shared=0` changed to " +
+        "If they agree, run the command again with its `allow_shared=0` changed to " +
         "`allow_shared=1`.",
     );
     expect(report.nextAction).toContain("it stops with exit 1 if it can't read that list");
@@ -1226,10 +1290,34 @@ describe("buildDeployStatusReport", () => {
     ]);
     const command = report.hostSetup[0]!.command;
     expect(command).toStartWith(
-      "( allow_shared=0; set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; ",
+      "( set +x; allow_shared=0; set -o pipefail; keys=$(clerk env pull --instance ins_prod --print) || exit 1; ",
     );
     expect(command).toContain("FORCE_COLOR=0 vercel env ls --no-color");
     expect(command).toEndWith('vercel env add "$key" production --force || exit 1; done )');
+  });
+
+  test("hostSetup and the no-CLI pull name the CLI by the prefix", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: { ...activeSnapshot, completedOAuthProviders: ["google", "github"] },
+      },
+      { verified: true, status: { dns: true, ssl: true, mail: true } },
+      pathPrefix,
+    );
+
+    const command = report.hostSetup[0]!.command;
+    expect(command).toContain(
+      `keys=$(${pathPrefix} env pull --instance ins_prod --print) || exit 1;`,
+    );
+    expect(command).not.toMatch(bareClerk);
+    expect(report.nextAction).toContain(
+      `ask the user to run \`${pathPrefix} env pull --instance ins_prod --print\` in a separate terminal`,
+    );
+    expect(report.nextAction).toContain(
+      `\`${pathPrefix} env pull --instance ins_prod --print | pbcopy\``,
+    );
+    expect(report.nextAction).not.toContain("clerk env pull");
   });
 
   test.each([
@@ -1267,7 +1355,7 @@ describe("buildDeployStatusReport", () => {
     // Skipped only off CI: the CI workflow installs zsh, so a missing shell
     // there fails these tests instead of silently skipping them.
     const installed = Bun.which(shell) !== null || Boolean(process.env.CI);
-    const stubs = `
+    const clerkStub = `
 clerk() {
   case "$SCENARIO" in
     pull_fails) echo "error: not signed in" >&2; return 1 ;;
@@ -1276,6 +1364,8 @@ clerk() {
     *) printf '%s\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE' 'CLERK_SECRET_KEY=sk_live_FAKE=with=equals' ;;
   esac
 }
+`;
+    const vercelStub = `
 vercel() {
   if [ "$1 $2" = "env ls" ]; then
     echo "FORCE_COLOR=$FORCE_COLOR $*" >> "$RECEIVED.ls"
@@ -1315,13 +1405,14 @@ vercel() {
 }
 `;
 
-    function keyCopyCommand(): string {
+    function keyCopyCommand(cli = "clerk"): string {
       const report = buildDeployStatusReport(
         {
           kind: "active",
           snapshot: { ...activeSnapshot, completedOAuthProviders: ["google", "github"] },
         },
         { verified: true, status: { dns: true, ssl: true, mail: true } },
+        cli,
       );
       const entry = report.hostSetup.find((candidate) => candidate.host === "vercel");
       if (!entry)
@@ -1331,13 +1422,21 @@ vercel() {
 
     async function run(
       scenario: string,
-      options: { command?: string; env?: Record<string, string> } = {},
+      options: {
+        command?: string;
+        env?: Record<string, string>;
+        errexit?: boolean;
+        xtrace?: boolean;
+        /** No `clerk` function, and a PATH that holds no `clerk` either. */
+        withoutClerk?: boolean;
+      } = {},
     ): Promise<{
       exitCode: number;
       output: string;
       stderr: string;
       uploads: string[];
       listings: string[];
+      pulls: string[];
     }> {
       const dir = await mkdtemp(join(tmpdir(), "clerk-key-copy-"));
       const received = join(dir, "received");
@@ -1347,10 +1446,14 @@ vercel() {
       };
       try {
         // `-f` keeps zsh from reading the developer's startup files.
-        const args = shell === "zsh" ? ["zsh", "-f", "-c"] : ["bash", "-c"];
+        // `-e` and `-x`: the caller's shell may have `set -e` or `set -x` on,
+        // which the command inherits.
+        const flags = [...(options.errexit ? ["-e"] : []), ...(options.xtrace ? ["-x"] : [])];
+        const args = shell === "zsh" ? ["zsh", "-f", ...flags, "-c"] : ["bash", ...flags, "-c"];
+        const stubs = options.withoutClerk ? vercelStub : clerkStub + vercelStub;
         const proc = Bun.spawn([...args, `${stubs}\n${options.command ?? keyCopyCommand()}`], {
           env: {
-            PATH: process.env.PATH ?? "",
+            PATH: options.withoutClerk ? "/usr/bin:/bin" : (process.env.PATH ?? ""),
             SCENARIO: scenario,
             RECEIVED: received,
             ...options.env,
@@ -1369,6 +1472,7 @@ vercel() {
           stderr,
           uploads: await lines(received),
           listings: await lines(`${received}.ls`),
+          pulls: await lines(`${received}.pulls`),
         };
       } finally {
         await rm(dir, { recursive: true, force: true });
@@ -1379,6 +1483,45 @@ vercel() {
       "env add NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY production --force|pk_live_FAKE",
       "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=with=equals",
     ];
+
+    // An agent that ran the CLI through npx has no `clerk` on PATH, so the
+    // report names the running CLI by its quoted path, spaces and quotes
+    // included.
+    test.skipIf(!installed).each([
+      { label: "no flags", errexit: false, xtrace: false },
+      { label: "set -e", errexit: true, xtrace: false },
+      { label: "set -x", errexit: false, xtrace: true },
+    ])(
+      "with no clerk on PATH, runs the CLI by its quoted path ($label)",
+      async ({ errexit, xtrace }) => {
+        const dir = await mkdtemp(join(tmpdir(), "clerk-cli-"));
+        const stub = join(dir, "clerk stub's dir", "clerk");
+        await mkdir(join(dir, "clerk stub's dir"));
+        await Bun.write(
+          stub,
+          "#!/bin/sh\n" +
+            'printf \'%s\\n\' "$*" >> "$RECEIVED.pulls"\n' +
+            "printf '%s\\n' 'NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_live_FAKE' 'CLERK_SECRET_KEY=sk_live_FAKE=with=equals'\n",
+        );
+        await chmod(stub, 0o755);
+        try {
+          expect(Bun.which("clerk", { PATH: "/usr/bin:/bin" })).toBeNull();
+          const result = await run("none", {
+            command: keyCopyCommand(quoted(stub)),
+            withoutClerk: true,
+            errexit,
+            xtrace,
+          });
+
+          expect(result.exitCode).toBe(0);
+          expect(result.pulls).toEqual(["env pull --instance ins_prod --print"]);
+          expect(result.uploads).toEqual(bothUploaded);
+          expect(result.output).not.toContain("FAKE");
+        } finally {
+          await rm(dir, { recursive: true, force: true });
+        }
+      },
+    );
 
     // A Preview or Development-only variable has no production target for
     // `--force` to rewrite, so it doesn't need the user.
@@ -1407,6 +1550,51 @@ vercel() {
         "env add CLERK_SECRET_KEY production --force|sk_live_FAKE=",
       ]);
       expect(result.output).not.toContain("FAKE");
+    });
+
+    // An agent may run the command from a shell with `set -e` on. Each run has
+    // to end the way the command decides, not at a check that found nothing.
+    test
+      .skipIf(!installed)
+      .each([
+        "none",
+        "unrelated",
+        "trailing_equals",
+        "shared",
+        "unrecognized",
+        "pull_fails",
+        "ls_fails",
+        "first_upload_fails",
+      ])("under set -e, %s ends as it does without it", async (scenario) => {
+      const without = await run(scenario);
+      const withErrexit = await run(scenario, { errexit: true });
+
+      expect(withErrexit.exitCode).toBe(without.exitCode);
+      expect(withErrexit.uploads).toEqual(without.uploads);
+      expect(withErrexit.output).toBe(without.output);
+    });
+
+    // With `set -x` on, the shell would trace every line that holds a key to
+    // stderr, which the agent reads.
+    test
+      .skipIf(!installed)
+      .each(["none", "trailing_equals", "shared", "ls_fails", "first_upload_fails"])(
+      "under set -x, %s prints no key and ends as it does without it",
+      async (scenario) => {
+        const without = await run(scenario);
+        const traced = await run(scenario, { xtrace: true });
+
+        expect(traced.output).not.toContain("FAKE");
+        expect(traced.exitCode).toBe(without.exitCode);
+        expect(traced.uploads).toEqual(without.uploads);
+      },
+    );
+
+    test.skipIf(!installed)("under set -e, replaces both production keys and exits 0", async () => {
+      const result = await run("none", { errexit: true });
+
+      expect(result.exitCode).toBe(0);
+      expect(result.uploads).toEqual(bothUploaded);
     });
 
     test.skipIf(!installed)("lists the variables with color turned off", async () => {
@@ -1441,7 +1629,7 @@ vercel() {
     // Consent lives in the command the user sees, for that one run.
     test.skipIf(!installed)("replaces a shared key when rerun with allow_shared=1", async () => {
       const command = keyCopyCommand();
-      expect(command).toStartWith("( allow_shared=0; ");
+      expect(command).toStartWith("( set +x; allow_shared=0; ");
 
       const result = await run("shared", {
         command: command.replace("allow_shared=0", "allow_shared=1"),
@@ -1762,6 +1950,6 @@ describe("deployNextStep", () => {
 
   test("the agent sentence is rendered from the step the report classifies", () => {
     const report = buildDeployStatusReport({ kind: "not_started" }, null);
-    expect(report.nextAction).toBe(agentNextAction(deployNextStep(report)));
+    expect(report.nextAction).toBe(agentNextAction(deployNextStep(report), "clerk"));
   });
 });
