@@ -11,6 +11,7 @@
 import { bold, cyan, dim, green, red, yellow } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
 import { exportPlatforms } from "../export/registry.ts";
+import { SCHEMA_FIELDS } from "../lib/transform.ts";
 import type { Carry, CarryLevel, SourceEntry } from "../types.ts";
 import { CUSTOM_SOURCES_URL } from "./load-custom.ts";
 import { ACCOUNT_LINKING_NOTE, resolveSource, sources as builtIns } from "./registry.ts";
@@ -147,7 +148,16 @@ function printDetail(entry: SourceEntry, width: number, custom?: string): void {
   const fromWidth = Math.max(...fields.map(([from]) => from.length)) + 2;
   log.blank();
   log.info(bold("Where each field lands"));
-  for (const [from, to] of fields) log.info(`  ${from.padEnd(fromWidth)}→ ${to}`);
+  for (const [from, to] of fields) {
+    // A built-in maps some columns to keys its postTransform consumes. In a
+    // source you wrote, the same is a column Clerk drops unless yours moves it.
+    const note = SCHEMA_FIELDS.has(to)
+      ? ""
+      : custom
+        ? yellow("  not a Clerk field: Clerk won't store it unless postTransform moves it")
+        : dim("  not a Clerk field; the source moves it");
+    log.info(`  ${from.padEnd(fromWidth)}→ ${to}${note}`);
+  }
   if (entry.defaults) {
     for (const [field, value] of Object.entries(entry.defaults)) {
       log.info(dim(`  ${field} is always ${JSON.stringify(value)}`));
