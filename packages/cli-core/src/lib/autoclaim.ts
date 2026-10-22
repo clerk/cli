@@ -207,8 +207,9 @@ async function checkFolder(
   const judged = await judgeFolderKeys(cwd, fetcher);
   switch (judged.kind) {
     case "unreadable":
-      // An SDK keyless file that names no app: whatever the folder runs on,
-      // the CLI can't tell, and can't risk replacing it.
+      // An env file the CLI can't read, or an SDK keyless file that names no
+      // app: whatever the folder runs on, the CLI can't tell, and can't risk
+      // replacing it.
       return leave(UNVERIFIED);
     case "no_keys":
       // A folder with no keys is what a claim should set up.

@@ -38,9 +38,9 @@ async function chooseBapiKeySource(options: ResolveBapiSecretKeyOptions): Promis
   if (options.app) return { kind: "app", app: options.app };
 
   // An exported CLERK_SECRET_KEY wins over everything below, a linked profile
-  // included. Routed through resolveKeylessTarget, it would stand down in a
-  // linked directory and refuse --instance, which has always been a no-op next
-  // to a key that addresses exactly one instance.
+  // included, and makes --instance a no-op: the key addresses exactly one
+  // instance. Not through resolveKeylessTarget, which stands down in a linked
+  // directory and refuses --instance.
   const exported = process.env.CLERK_SECRET_KEY;
   if (exported) return { kind: "exported", secretKey: exported };
 
@@ -128,8 +128,8 @@ async function profileSecretKey(options: ResolveBapiSecretKeyOptions): Promise<s
     });
   } catch (error) {
     if (error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) {
-      // The shared not-linked error already gives the folder's step; this site
-      // keeps its own code and exit 2.
+      // The shared not-linked error gives the folder's step; this site's code
+      // is `no_secret_key`, exit 2.
       throwUsageError(
         `${error.message} Or pass a secret key with \`--secret-key <key>\` or \`CLERK_SECRET_KEY\`.`,
         "https://clerk.com/docs/guides/development/clerk-environment-variables",

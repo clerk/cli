@@ -34,8 +34,8 @@ async function resolveInstance(options: ResolveOptions): Promise<ApplicationInst
     ctx = await resolveAppContext({ app: options.app, instance: options.instance });
   } catch (error) {
     if (error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) {
-      // The shared not-linked error already gives the folder's step; this site
-      // has always exited 2.
+      // The shared not-linked error gives the folder's step; this site is a
+      // usage error, exit 2.
       throwUsageError(
         error.message,
         "https://clerk.com/docs/guides/development/managing-environments",
