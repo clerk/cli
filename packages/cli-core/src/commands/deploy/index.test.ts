@@ -78,6 +78,10 @@ const { deploy } = await import("./index.ts");
 const { deployStatus } = await import("./status-command.ts");
 const { providerSetupIntro, showOAuthWalkthrough } = await import("./providers.ts");
 const { collectCustomDomain } = await import("./prompts.ts");
+// The test process isn't a clerk install, so commands would start with bun
+// and the test runner. Tests that cover the prefix pass one explicitly.
+const { _setCliPrefix } = await import("../../lib/cli-invocation.ts");
+_setCliPrefix("clerk");
 
 function stripAnsi(value: string): string {
   return value.replace(new RegExp(`${String.fromCharCode(27)}\\[[0-9;]*m`, "g"), "");

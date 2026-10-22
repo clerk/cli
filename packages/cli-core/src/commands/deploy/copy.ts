@@ -547,10 +547,13 @@ export function productionSummary(
  * Prints the production keys as `KEY=value` lines and writes no file: a bare
  * `env pull` writes them over the development keys in the local env file,
  * which breaks localhost. Names the instance by id when known, since `prod`
- * reads the local profile.
+ * reads the local profile. `cli` is the command's first words.
  */
-export function keyPullCommand(productionInstanceId: string | null | undefined): string {
-  return `clerk env pull --instance ${productionInstanceId ?? "prod"} --print`;
+export function keyPullCommand(
+  cli: string,
+  productionInstanceId: string | null | undefined,
+): string {
+  return `${cli} env pull --instance ${productionInstanceId ?? "prod"} --print`;
 }
 
 export function nextStepsBody(
@@ -573,7 +576,7 @@ export function nextStepsBody(
   ).join("\n");
   return `
   1. Print the production keys
-       ${keyPullCommand(productionInstanceId)}
+       ${keyPullCommand("clerk", productionInstanceId)}
 
      This prints the pk_live_... and sk_live_... lines and writes no file,
      so your env file keeps its pk_test_... and sk_test_... keys.

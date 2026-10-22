@@ -8,6 +8,7 @@ import {
 } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
 import { credentialPlaceholder } from "../../lib/oauth-config.ts";
+import { currentCliPrefix } from "../../lib/cli-invocation.ts";
 import {
   fetchApplication,
   fetchInstanceConfig,
@@ -607,22 +608,25 @@ function domainComponentState(value: boolean): DomainComponentState {
   return value ? "complete" : "pending";
 }
 
+/** `cli` starts every command the report hands over to run as given. */
 export function buildDeployStatusReport(
   state: DeployState,
   outcome: DeployStatusOutcome | null,
+  cli: string = currentCliPrefix(),
 ): DeployStatusReport {
-  return withNextAction(buildDeployStatusFacts(state, outcome));
+  return withNextAction(buildDeployStatusFacts(state, outcome, cli), cli);
 }
 
 type DeployStatusFacts = Omit<DeployStatusReport, "nextAction">;
 
-function withNextAction(facts: DeployStatusFacts): DeployStatusReport {
-  return { ...facts, nextAction: agentNextAction(deployNextStep(facts)) };
+function withNextAction(facts: DeployStatusFacts, cli: string): DeployStatusReport {
+  return { ...facts, nextAction: agentNextAction(deployNextStep(facts), cli) };
 }
 
 function buildDeployStatusFacts(
   state: DeployState,
   outcome: DeployStatusOutcome | null,
+  cli: string,
 ): DeployStatusFacts {
   if (state.kind === "not_started") {
     return {
@@ -684,19 +688,20 @@ function buildDeployStatusFacts(
       configured: [...snapshot.completedOAuthProviders],
       pending: oauthPending,
       unsupported: [...snapshot.unsupportedOAuthProviders],
-      setup: oauthSetupGuides(snapshot, oauthPending),
+      setup: oauthSetupGuides(snapshot, oauthPending, cli),
     },
     nativeAppleReadinessIssue: snapshot.nativeAppleReadinessIssue,
     urls: snapshot.productionInstanceId
       ? dashboardUrls(snapshot.appId, snapshot.productionInstanceId)
       : null,
-    hostSetup: complete ? hostSetupEntries(snapshot.productionInstanceId ?? null) : [],
+    hostSetup: complete ? hostSetupEntries(snapshot.productionInstanceId ?? null, cli) : [],
   };
 }
 
 function oauthSetupGuides(
   snapshot: LiveDeploySnapshot,
   pending: readonly string[],
+  cli: string,
 ): OAuthSetupGuide[] {
   const urls = oauthWalkthroughUrls(snapshot.domain, snapshot.frontendApiUrl);
   // The id, not `prod`: that alias reads the local profile, which has no
@@ -733,7 +738,7 @@ function oauthSetupGuides(
           ),
         },
       },
-      command: `clerk config patch --instance ${instance} --file <file> --yes`,
+      command: `${cli} config patch --instance ${instance} --file <file> --yes`,
     }));
 }
 
@@ -787,13 +792,13 @@ function vercelKeyCopyCommand(pull: string): string {
 }
 
 /** The `hostSetup` entries at `complete`: one per host the CLI has a recipe for. */
-function hostSetupEntries(productionInstanceId: string | null): HostSetupEntry[] {
+function hostSetupEntries(productionInstanceId: string | null, cli: string): HostSetupEntry[] {
   return [
     {
       host: "vercel",
       label: "Vercel",
       shells: ["bash", "zsh"],
-      command: vercelKeyCopyCommand(keyPullCommand(productionInstanceId)),
+      command: vercelKeyCopyCommand(keyPullCommand(cli, productionInstanceId)),
     },
   ];
 }
@@ -814,18 +819,23 @@ function dashboardUrls(appId: string, productionInstanceId: string): DeployStatu
  * "unknown" instead, so an agent parsing stdout gets a well-formed document
  * rather than the empty output this path used to produce.
  */
-export function buildInterruptedDeployStatusReport(): DeployStatusReport {
-  return withNextAction({
-    complete: false,
-    state: "interrupted",
-    domain: null,
-    productionInstanceId: null,
-    domainStatus: null,
-    pendingDnsRecords: [],
-    oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
-    urls: null,
-    hostSetup: [],
-  });
+export function buildInterruptedDeployStatusReport(
+  cli: string = currentCliPrefix(),
+): DeployStatusReport {
+  return withNextAction(
+    {
+      complete: false,
+      state: "interrupted",
+      domain: null,
+      productionInstanceId: null,
+      domainStatus: null,
+      pendingDnsRecords: [],
+      oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
+      urls: null,
+      hostSetup: [],
+    },
+    cli,
+  );
 }
 
 /**
@@ -883,7 +893,7 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
 }
 
 /** The `nextAction` sentence: written for an agent that will relay it to a person. */
-export function agentNextAction(step: DeployNextStep): string {
+export function agentNextAction(step: DeployNextStep, cli: string): string {
   // In development Clerk supplies shared OAuth credentials; in production it
   // doesn't, so a provider the CLI couldn't configure has a sign-in button
   // that fails for real users. `oauth.complete` only covers what the CLI
@@ -978,7 +988,7 @@ export function agentNextAction(step: DeployNextStep): string {
         "deploy. Run `clerk deploy status` again to check it."
       );
     case "complete": {
-      const pull = keyPullCommand(step.productionInstanceId);
+      const pull = keyPullCommand(cli, step.productionInstanceId);
       // Complete on Clerk's side only. The app keeps running on development
       // keys until the production keys reach the host, and the report can't
       // tell whether that already happened — hence "if you haven't already".
