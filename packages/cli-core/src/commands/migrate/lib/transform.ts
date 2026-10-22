@@ -295,7 +295,7 @@ export function consolidateClerkIdentifiers(user: Record<string, unknown>): void
 // --- Validation ------------------------------------------------------------
 
 /** Every field the import schema declares; anything else is stripped. */
-const SCHEMA_FIELDS: ReadonlySet<string> = new Set(Object.keys(userSchema.shape));
+export const SCHEMA_FIELDS: ReadonlySet<string> = new Set(Object.keys(userSchema.shape));
 
 /**
  * Validates prepared users, dropping each failure from the run and returning

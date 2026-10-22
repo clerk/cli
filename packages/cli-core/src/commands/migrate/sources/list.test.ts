@@ -25,7 +25,7 @@ beforeAll(() => {
       key: "myplatform",
       label: "My Platform",
       description: "Exports from My Platform.",
-      transformer: { account_ref: "userId", mail: "email" },
+      transformer: { account_ref: "userId", mail: "email", full_name: "name" },
       carries: {
         passwords: { level: "partial", note: "Only for accounts made after 2020." },
         mfa: { level: "no", note: "None." },
@@ -100,6 +100,20 @@ describe("sources <source>", () => {
     expect(plain()).toContain("myplatform My Platform (custom — ./custom.ts)");
     expect(plain()).toContain("mail → email");
     expect(plain()).toContain("Only for accounts made after 2020.");
+  });
+
+  // `name` reads like a Clerk field and isn't one: copied from a built-in into
+  // a source you wrote, it was dropped with no word until the import's checks.
+  test("marks a target that isn't a Clerk field", async () => {
+    await list("authjs");
+    expect(plain()).toContain("name → name not a Clerk field; the source moves it");
+    expect(plain()).not.toContain("email → email not a Clerk field");
+
+    captured.clear();
+    await list("./custom.ts");
+    expect(plain()).toContain(
+      "full_name → name not a Clerk field: Clerk won't store it unless postTransform moves it",
+    );
   });
 
   test("--json returns the detail on stdout", async () => {
