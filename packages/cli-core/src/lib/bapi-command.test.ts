@@ -41,9 +41,10 @@ describe("bapi-command", () => {
     validateKeyPrefixSpy = spyOn(plapiModule, "validateKeyPrefix");
     // Defaults to "no keyless project here" so existing account-path tests are
     // unaffected; individual tests override this to exercise the keyless path.
-    resolveKeylessTargetSpy = spyOn(keylessTargetModule, "resolveKeylessTarget").mockResolvedValue(
-      undefined,
-    );
+    resolveKeylessTargetSpy = spyOn(
+      keylessTargetModule,
+      "resolveKeylessTargetAndRead",
+    ).mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -274,8 +275,8 @@ describe("bapi-command", () => {
 
   test("falls back to the shared keyless resolution when no explicit app or secret key is provided", async () => {
     resolveKeylessTargetSpy.mockResolvedValue({
-      secretKey: "sk_keyless_123",
-      source: ".env.local",
+      target: { secretKey: "sk_keyless_123", source: ".env.local" },
+      read: {},
     });
 
     await expect(resolveBapiSecretKey({ instance: "dev" })).resolves.toBe("sk_keyless_123");
@@ -287,8 +288,8 @@ describe("bapi-command", () => {
 
   test("prefers an explicit app over the keyless project's own key", async () => {
     resolveKeylessTargetSpy.mockResolvedValue({
-      secretKey: "sk_keyless_123",
-      source: ".env.local",
+      target: { secretKey: "sk_keyless_123", source: ".env.local" },
+      read: {},
     });
     fetchApplicationSpy.mockResolvedValue({
       application_id: "app_123",
@@ -310,8 +311,8 @@ describe("bapi-command", () => {
 
   test("prefers keyless resolution over the account-linked fallback", async () => {
     resolveKeylessTargetSpy.mockResolvedValue({
-      secretKey: "sk_keyless_123",
-      source: ".env.local",
+      target: { secretKey: "sk_keyless_123", source: ".env.local" },
+      read: {},
     });
 
     await expect(resolveBapiSecretKey({})).resolves.toBe("sk_keyless_123");
@@ -396,7 +397,10 @@ describe("bapi-command", () => {
   ] as { kind: string; folder: UnlinkedFolder; label: string }[])(
     "describes a keyless target without querying the account: $kind",
     async ({ folder, label }) => {
-      resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_123", source: ".env.local" });
+      resolveKeylessTargetSpy.mockResolvedValue({
+        target: { secretKey: "sk_test_123", source: ".env.local" },
+        read: {},
+      });
       readUnlinkedFolderSpy.mockResolvedValue(folder);
 
       await expect(describeBapiTarget({})).resolves.toBe(label);
@@ -405,6 +409,19 @@ describe("bapi-command", () => {
     },
   );
 
+  // The wording comes from the read that found the secret key.
+  test("classifies the folder from the keys the keyless resolution read", async () => {
+    const read = { secretKey: { value: "sk_test_123", name: "CLERK_SECRET_KEY", source: ".env" } };
+    resolveKeylessTargetSpy.mockResolvedValue({
+      target: { secretKey: "sk_test_123", source: ".env" },
+      read,
+    });
+
+    await describeBapiTarget({});
+
+    expect(readUnlinkedFolderSpy).toHaveBeenLastCalledWith(process.cwd(), read);
+  });
+
   // An exported key may belong to any app, so the description names none, as
   // for --secret-key. E.g. a Nuxt folder whose `.env` holds
   // NUXT_CLERK_SECRET_KEY, which the folder reader takes first.
@@ -412,7 +429,10 @@ describe("bapi-command", () => {
     {
       other: "the folder's own key",
       setUp: () =>
-        resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_disk", source: ".env" }),
+        resolveKeylessTargetSpy.mockResolvedValue({
+          target: { secretKey: "sk_test_disk", source: ".env" },
+          read: {},
+        }),
     },
     {
       other: "a linked profile",
@@ -436,7 +456,10 @@ describe("bapi-command", () => {
   );
 
   test("an explicit --secret-key wins over a keyless target on disk, matching resolveBapiSecretKey", async () => {
-    resolveKeylessTargetSpy.mockResolvedValue({ secretKey: "sk_test_disk", source: ".env.local" });
+    resolveKeylessTargetSpy.mockResolvedValue({
+      target: { secretKey: "sk_test_disk", source: ".env.local" },
+      read: {},
+    });
 
     await expect(describeBapiTarget({ secretKey: "sk_test_explicit" })).resolves.toBeUndefined();
 

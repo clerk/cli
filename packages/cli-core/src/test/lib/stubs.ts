@@ -198,6 +198,7 @@ export const configStubs = {
 // the file under test actually exercises.
 export const keylessTargetStubs = {
   resolveKeylessTarget: noop,
+  resolveKeylessTargetAndRead: noop,
   resolveInstanceTarget: noop,
   findLocalSecretKey: noop,
   findLocalPublishableKey: noop,

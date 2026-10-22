@@ -12,6 +12,7 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { join } from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
+import * as localKeys from "../../lib/local-keys.ts";
 import * as unlinkedFolder from "../../lib/unlinked-folder.ts";
 import {
   clerk,
@@ -411,6 +412,20 @@ describe("config pull's progress line", () => {
     const text = Bun.stripANSI((await run("config", "pull")).stderr);
 
     expect(text).toContain(label);
+  });
+
+  // The wording comes from the read that found the secret key.
+  test("stored session, plain keys: reads the folder's keys once", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await FOLDERS.plainKeys();
+    const reads = spyOn(localKeys, "readFolderKeys");
+    try {
+      await run("config", "pull");
+
+      expect(reads).toHaveBeenCalledTimes(1);
+    } finally {
+      reads.mockRestore();
+    }
   });
 });
 

@@ -72,6 +72,14 @@ export interface FolderKeys {
   sdkFile?: SdkKeylessFile;
 }
 
+/**
+ * A read of the folder's keys (`readFolderKeys`) a caller already made, or why
+ * it failed, as a clause. Passed on so one run decides from one read: a
+ * second read could combine facts from different moments, e.g. after
+ * `next dev` writes the SDK keyless file.
+ */
+export type FolderRead = FolderKeys | { readError: string };
+
 /** Every Clerk key a folder holds, wherever the app or `clerk env pull` could use it. */
 export interface AllFolderKeys {
   publishableKeys: LocatedKey[];

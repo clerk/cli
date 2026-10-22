@@ -1,6 +1,7 @@
 import { resolveAppContext, resolveFetchedApplicationInstance } from "./config.ts";
 import { BapiError, CliError, ERROR_CODE, throwUsageError, withApiContext } from "./errors.ts";
-import { resolveKeylessTarget, type KeylessTarget } from "./keyless-target.ts";
+import { resolveKeylessTargetAndRead, type KeylessTarget } from "./keyless-target.ts";
+import type { FolderRead } from "./local-keys.ts";
 import { log } from "./log.ts";
 import { keylessAppLabel, readUnlinkedFolder } from "./unlinked-folder.ts";
 import { fetchApplication, validateKeyPrefix } from "./plapi.ts";
@@ -29,7 +30,7 @@ type BapiKeySource =
   | { kind: "flag"; secretKey: string }
   | { kind: "app"; app: string }
   | { kind: "exported"; secretKey: string }
-  | { kind: "folder"; keyless: KeylessTarget }
+  | { kind: "folder"; keyless: KeylessTarget; read: FolderRead }
   | { kind: "profile" };
 
 async function chooseBapiKeySource(options: ResolveBapiSecretKeyOptions): Promise<BapiKeySource> {
@@ -48,8 +49,11 @@ async function chooseBapiKeySource(options: ResolveBapiSecretKeyOptions): Promis
   // compiled with --no-compile-autoload-dotenv, so without this every
   // `users`/`api` command would report "no secret key" on a live keyless
   // project the moment it wasn't run via `bun run`.
-  const keyless = await resolveKeylessTarget({ instance: options.instance, cwd: options.cwd });
-  if (keyless) return { kind: "folder", keyless };
+  const found = await resolveKeylessTargetAndRead({
+    instance: options.instance,
+    cwd: options.cwd,
+  });
+  if (found) return { kind: "folder", keyless: found.target, read: found.read };
 
   return { kind: "profile" };
 }
@@ -65,7 +69,7 @@ export async function describeBapiTarget(
       return undefined;
     case "folder":
       return keylessAppLabel(
-        await readUnlinkedFolder(options.cwd ?? process.cwd()),
+        await readUnlinkedFolder(options.cwd ?? process.cwd(), source.read),
         source.keyless.source,
       );
     case "app":

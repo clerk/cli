@@ -30,6 +30,7 @@ import {
   secretKeysDisagreeReason,
   unreadableFolderReason,
   type FolderKeys,
+  type FolderRead,
   type LocatedKey,
 } from "./local-keys.ts";
 import { log } from "./log.ts";
@@ -169,12 +170,14 @@ function isSignedIn(credential: Credential): boolean {
  * package below the folder with the keys, it's `no_app`. Never throws, and
  * changes nothing: a malformed token file is left in place, and a credential
  * read failure (a sandboxed keychain, say) counts as no credential, which only
- * adds a sign-in step to the advice.
+ * adds a sign-in step to the advice. `read` is the folder's keys a caller
+ * already read; without it, they're read here.
  */
-export async function readUnlinkedFolder(cwd: string): Promise<UnlinkedFolder> {
+export async function readUnlinkedFolder(cwd: string, read?: FolderRead): Promise<UnlinkedFolder> {
   const [token, keys, credential] = await Promise.all([
     peekKeylessBreadcrumb(cwd),
-    readFolderKeys(cwd).catch((error: unknown) => ({ readError: unreadableFolderReason(error) })),
+    read ??
+      readFolderKeys(cwd).catch((error: unknown) => ({ readError: unreadableFolderReason(error) })),
     readCredential(),
   ]);
   const folder = classifyUnlinkedFolder({

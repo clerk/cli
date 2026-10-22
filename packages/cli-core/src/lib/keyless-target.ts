@@ -18,7 +18,9 @@ import {
   readFolderKeys,
   readSdkKeylessApp,
   SDK_KEYLESS_SOURCE,
+  unreadableFolderReason,
   type FolderKeys,
+  type FolderRead,
   type LocatedKey,
 } from "./local-keys.ts";
 import { log } from "./log.ts";
@@ -69,19 +71,30 @@ export async function findLocalSecretKey(
   cwd: string,
   keys?: FolderKeys,
 ): Promise<KeylessTarget | undefined> {
-  const secretKey = await (keys ? Promise.resolve(keys) : readFolderKeys(cwd)).then(
-    (keys) => keys.secretKey,
-    async (error: unknown) => {
-      // An exported key is the one the app loads, so an env file that can't be
-      // read doesn't stop a command that needs only that key.
-      const exported = await exportedFolderKey(cwd, "secret");
-      if (!exported) throw error;
-      return exported;
-    },
-  );
-  if (!secretKey) return undefined;
+  return (await readSecretKey(cwd, keys)).target;
+}
+
+/** `findLocalSecretKey`, and the read of the folder's keys it made. */
+async function readSecretKey(
+  cwd: string,
+  keys: FolderKeys | undefined,
+): Promise<{ target?: KeylessTarget; read: FolderRead }> {
+  let read: FolderRead;
+  let secretKey: LocatedKey | undefined;
+  try {
+    const folderKeys = keys ?? (await readFolderKeys(cwd));
+    read = folderKeys;
+    secretKey = folderKeys.secretKey;
+  } catch (error) {
+    // An exported key is the one the app loads, so an env file that can't be
+    // read doesn't stop a command that needs only that key.
+    secretKey = await exportedFolderKey(cwd, "secret");
+    if (!secretKey) throw error;
+    read = { readError: unreadableFolderReason(error) };
+  }
+  if (!secretKey) return { read };
   log.debug(`accountless: secret key from ${secretKey.source}`);
-  return { secretKey: secretKey.value, source: secretKey.source };
+  return { target: { secretKey: secretKey.value, source: secretKey.source }, read };
 }
 
 /** The publishable key the folder's app loads, and where, read as `findLocalSecretKey` reads it. */
@@ -152,7 +165,13 @@ export async function hasKeyPairMismatch(
  * destination — `--app` or a linked profile — because that names an application
  * the secret key on disk may not even belong to.
  */
-export async function resolveKeylessTarget(options: {
+export async function resolveKeylessTarget(
+  options: KeylessTargetOptions,
+): Promise<KeylessTarget | undefined> {
+  return (await resolveKeylessTargetAndRead(options))?.target;
+}
+
+interface KeylessTargetOptions {
   app?: string;
   instance?: string;
   cwd?: string;
@@ -161,13 +180,21 @@ export async function resolveKeylessTarget(options: {
    * Not `keys`: `config pull` and `config schema` pass their `--keys` here.
    */
   folderKeys?: FolderKeys;
-}): Promise<KeylessTarget | undefined> {
+}
+
+/**
+ * `resolveKeylessTarget`, and the read of the folder's keys that found the
+ * key, for a caller that also words the folder (`readUnlinkedFolder`).
+ */
+export async function resolveKeylessTargetAndRead(
+  options: KeylessTargetOptions,
+): Promise<{ target: KeylessTarget; read: FolderRead } | undefined> {
   if (options.app) return undefined;
 
   const cwd = options.cwd ?? process.cwd();
   if (await resolveProfile(cwd)) return undefined;
 
-  const target = await findLocalSecretKey(cwd, options.folderKeys);
+  const { target, read } = await readSecretKey(cwd, options.folderKeys);
   if (!target) return undefined;
 
   if (!target.secretKey.startsWith("sk_")) {
@@ -180,7 +207,7 @@ export async function resolveKeylessTarget(options: {
   // The secret key addresses exactly one instance — its own — so there is no
   // instance to choose between.
   if (options.instance) {
-    const refusal = keylessRefusal(await readUnlinkedFolder(cwd), target.source);
+    const refusal = keylessRefusal(await readUnlinkedFolder(cwd, read), target.source);
     throwUsageError(
       keylessCopy.instanceFlagNeedsLinkedApplication(refusal.subject, refusal.step),
       undefined,
@@ -189,7 +216,7 @@ export async function resolveKeylessTarget(options: {
     );
   }
 
-  return target;
+  return { target, read };
 }
 
 /**
@@ -249,9 +276,10 @@ export async function resolveInstanceTarget(options: {
    */
   refusesKeyless?: boolean;
 }): Promise<InstanceTarget> {
-  const keyless = await resolveKeylessTarget(options);
-  if (keyless) {
-    const folder = await readUnlinkedFolder(options.cwd ?? process.cwd());
+  const found = await resolveKeylessTargetAndRead(options);
+  if (found) {
+    const { target: keyless, read } = found;
+    const folder = await readUnlinkedFolder(options.cwd ?? process.cwd(), read);
     if (!options.refusesKeyless) await warnKeylessCoversLess(keyless.source, folder);
     return {
       kind: "keyless",

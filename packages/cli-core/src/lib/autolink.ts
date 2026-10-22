@@ -8,6 +8,7 @@ import {
   SDK_KEYLESS_SOURCE,
   unreadableFolderReason,
   type FolderKeys,
+  type FolderRead,
   type LocatedKey,
 } from "./local-keys.ts";
 import { dim, cyan } from "./color.ts";
@@ -18,12 +19,7 @@ interface DetectedKey {
   source: string;
 }
 
-/**
- * A read of the folder's keys a caller already made (`readFolderKeys`), or why
- * it failed, so one run matches on one read: a second read could combine facts
- * from different moments, e.g. after `next dev` writes the SDK keyless file.
- */
-export type FolderRead = FolderKeys | { readError: string };
+export type { FolderRead };
 
 /** The publishable key `clerk link` matches the folder by, or why there isn't one. */
 export type LinkKey =
