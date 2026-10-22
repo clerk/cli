@@ -1,4 +1,4 @@
-import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
+import { test, expect, describe, afterAll, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
 import { configStubs, keylessTargetStubs, useCaptureLog } from "../../test/lib/stubs.ts";
@@ -36,6 +36,16 @@ mock.module("./keyless-claim.ts", () => ({
 }));
 
 const { openDashboard, buildDashboardUrl } = await import("./index.ts");
+const unlinkedFolder = await import("../../lib/unlinked-folder.ts");
+type UnlinkedFolder = import("../../lib/unlinked-folder.ts").UnlinkedFolder;
+
+// What the folder holds, for the advice when there's no claim link: never the
+// real working directory or credential store.
+const readUnlinkedFolderSpy = spyOn(unlinkedFolder, "readUnlinkedFolder");
+beforeEach(() => {
+  readUnlinkedFolderSpy.mockResolvedValue({ kind: "no_app", credential: "session" });
+});
+afterAll(() => readUnlinkedFolderSpy.mockRestore());
 
 const PROFILE = {
   path: "/test/project",
@@ -236,6 +246,13 @@ describe("openDashboard: unclaimed keyless application", () => {
     source: ".clerk/keyless.json",
   };
 
+  const PLAIN_KEYS: UnlinkedFolder = {
+    kind: "unknown_owner",
+    credential: "session",
+    publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
+    secretKey: { name: "CLERK_SECRET_KEY", source: ".env.local" },
+  };
+
   beforeEach(() => {
     setMode("human");
     setCurrentEnv("production");
@@ -326,11 +343,17 @@ describe("openDashboard: unclaimed keyless application", () => {
     expect(message).not.toMatch(/clerk link/);
   });
 
-  test("no claim link found, but a secret key is on disk: doesn't blindly say `clerk link`", async () => {
+  // `clerk init --accountless` would create a new app and overwrite the keys.
+  test("no claim link found, but plain keys are on disk: finds the app by key, never `init --accountless`", async () => {
     mockFindKeylessClaimUrl.mockResolvedValue(undefined);
     mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env.local" });
+    readUnlinkedFolderSpy.mockResolvedValue(PLAIN_KEYS);
 
-    await expect(openDashboard(undefined)).rejects.toThrow(/clerk init --accountless/);
+    await expect(openDashboard(undefined)).rejects.toMatchObject({
+      code: "not_linked",
+      message:
+        "Found a secret key (from .env.local) but no claim link on disk, so there's no dashboard page to open yet. This folder's Clerk publishable key is `CLERK_PUBLISHABLE_KEY` in .env.local. Run `clerk link`: it finds the app in your account by that key. If none uses it, link one with `clerk link --app <app_id>`.",
+    });
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 

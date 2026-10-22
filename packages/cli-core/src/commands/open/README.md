@@ -44,10 +44,10 @@ no dashboard pages beyond the claim link. Run `clerk open` (no subpath) to
 claim it, then retry the subpath once it's linked.
 ```
 
-When **no** claim link can be found at all, the error differs depending on what is on disk, and deliberately does not send the user solely to `clerk link` (a dead end for a genuinely unclaimed app):
+When **no** claim link can be found at all, `open` fails with `not_linked`. The lead depends on whether a secret key is on disk, and the advice after it is the step for what the folder holds, from [`lib/unlinked-folder.ts`](../../lib/unlinked-folder.ts), as every not-linked message gives (in agent mode, its commands come as `examples`):
 
-- A secret key exists locally but no claim source does (e.g. `CLERK_SECRET_KEY` set by hand with no `.clerk` files) — names both possibilities: the key may belong to an already-claimed app (`clerk link` / `--app <app_id>`) or the claim breadcrumb was lost (`clerk init --accountless` regenerates one).
-- Nothing at all is found — the original message, pointing at both `clerk link` (if an application already exists in your account) and `clerk init` (to create one).
+- A secret key exists locally but no claim source does (e.g. Dashboard keys pasted into `.env`) — "Found a secret key (from `<source>`) but no claim link on disk, so there's no dashboard page to open yet." For plain keys the step is `clerk link`, which finds the app in your account by the publishable key. It never suggests `clerk init --accountless`: that creates a new app and overwrites the folder's keys.
+- Nothing at all is found — "No Clerk project linked to this directory, and no accountless application was found either.", then `clerk link` to choose one of your apps, or `clerk init` to create one.
 
 | Method | Endpoint       | Description                                                                                                                              |
 | ------ | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
