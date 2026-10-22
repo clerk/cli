@@ -410,6 +410,12 @@ export class ApiError extends Error {
   public longMessage: string | null;
   public meta: Record<string, unknown> | null;
   public clerkTraceId: string | null;
+  /**
+   * What to run next, set by a caller that knows (`withNextStep`). Printed
+   * after Clerk's message, with its commands as examples. An API error without
+   * one prints exactly as it always has.
+   */
+  public nextStep?: NextStepAdvice;
 
   constructor(
     public status: number,
@@ -424,6 +430,31 @@ export class ApiError extends Error {
     this.meta = parsed.meta;
     this.clerkTraceId = parsed.clerkTraceId;
   }
+}
+
+/** A next step for an error: the text to print after its message, and the commands it names. */
+export interface NextStepAdvice {
+  text: string;
+  /** The commands `text` names, in order. Sites attach them to the error in agent mode only. */
+  examples: Example[];
+}
+
+/**
+ * Adds what to run next to an error that is rethrown as it is, keeping its
+ * class, code, and exit code. A CLI error gains the step in its message and
+ * its commands in its examples. An API error carries the step beside Clerk's
+ * own message and structured errors, which stay untouched.
+ */
+export function withNextStep<E extends Error>(error: E, step: NextStepAdvice): E {
+  if (error instanceof ApiError) {
+    error.nextStep = step;
+  } else if (error instanceof CliError) {
+    // Some of the CLI's own messages end without a period.
+    const ended = /[.!?]$/.test(error.message) ? error.message : `${error.message}.`;
+    error.message = `${ended}\n${step.text}`;
+    error.examples = [...(error.examples ?? []), ...step.examples];
+  }
+  return error;
 }
 
 /**

@@ -10,6 +10,8 @@ import {
   AuthError,
   AUTH_ERROR_REASON,
   isCredentialRefused,
+  withNextStep,
+  EXIT_CODE,
 } from "./errors.ts";
 
 describe("ApiError envelope parsing (via PlapiError.fromBody)", () => {
@@ -213,5 +215,46 @@ describe("isCredentialRefused", () => {
     { what: "another CLI error", error: new CliError("the application list wasn't a list") },
   ])("$what: not refused", ({ error }) => {
     expect(isCredentialRefused(error)).toBe(false);
+  });
+});
+
+// A refused credential's error is rethrown as it is, with what to run next.
+describe("withNextStep", () => {
+  const STEP = {
+    text: "Run `clerk auth login`, then run `clerk link` again.",
+    examples: [{ command: "clerk auth login", description: "Sign in" }],
+  };
+
+  test("an API error carries the step and keeps Clerk's message, code, and status", () => {
+    const error = new PlapiError(
+      401,
+      JSON.stringify({ errors: [{ code: "authentication_invalid", message: "Unauthorized" }] }),
+    );
+
+    expect(withNextStep(error, STEP)).toBe(error);
+    expect(error.nextStep).toEqual(STEP);
+    expect(error.message).toBe("Unauthorized");
+    expect(error.code).toBe("authentication_invalid");
+    expect(error.status).toBe(401);
+  });
+
+  test("a CLI error gains the step in its message and examples, keeping its class, code, and exit code", () => {
+    const error = new AuthError({ reason: AUTH_ERROR_REASON.SESSION_EXPIRED });
+    const message = error.message;
+
+    expect(withNextStep(error, STEP)).toBe(error);
+    expect(error).toBeInstanceOf(AuthError);
+    // Its own advice ends with a period, and the step starts a new line.
+    expect(error.message).toBe(`${message}.\n${STEP.text}`);
+    expect(error.examples).toEqual(STEP.examples);
+    expect(error.code).toBe(ERROR_CODE.AUTH_REQUIRED);
+    expect(error.exitCode).toBe(EXIT_CODE.GENERAL);
+  });
+
+  test("any other error is returned unchanged", () => {
+    const error = new Error("socket hang up");
+
+    expect(withNextStep(error, STEP)).toBe(error);
+    expect(error.message).toBe("socket hang up");
   });
 });
