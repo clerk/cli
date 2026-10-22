@@ -52,6 +52,14 @@ describe("initRerun", () => {
     },
   );
 
+  // The new project already holds its Bundle ID; passing it again would mask
+  // what Xcode reports.
+  test("inside a project `--starter` just created, leaves out `--bundle-id`", () => {
+    expect(initRerun(IOS, { from: "/work", projectDir: "/work/MyApp" }).command).toBe(
+      "clerk init --json --xcode-project 'My App.xcodeproj' --xcode-target MyApp --apple-sdk ui --sign-in-with-apple",
+    );
+  });
+
   test("leaves out flags that never reach the stop, or would scaffold again", () => {
     expect(
       initRerun({

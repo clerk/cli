@@ -25,6 +25,9 @@ export function initRerun(
   where?: { from: string; projectDir: string },
 ): Rerun {
   const flags = RERUN_FLAGS.flatMap(([key, flag]): string[] => {
+    // A project this run just created already holds its Bundle ID; passing it
+    // again would mask what Xcode reports.
+    if (key === "bundleId" && where) return [];
     const value = options[key];
     if (key === "skills") return value === false ? [flag] : [];
     if (value === undefined || value === false) return [];
