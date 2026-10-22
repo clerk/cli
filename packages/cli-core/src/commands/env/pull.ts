@@ -34,6 +34,7 @@ import { keylessCopy } from "../../lib/copy.ts";
 import {
   appInNoAccount,
   readUnlinkedFolder,
+  unlinkedFolderError,
   unlinkedFolderNextStep,
   type Rerun,
 } from "../../lib/unlinked-folder.ts";
@@ -196,7 +197,14 @@ async function pullKeylessKeys(
   const [publishableKeyName, secretKeyName, publishableKey] = await Promise.all([
     detectPublishableKeyName(cwd),
     detectSecretKeyName(cwd),
-    findLocalPublishableKey(cwd),
+    // An exported secret key is found without the env files; with one the CLI
+    // can't read, which publishable key the app loads is untold.
+    findLocalPublishableKey(cwd).catch(async () => {
+      throw unlinkedFolderError(await readUnlinkedFolder(cwd), {
+        lead: "No Clerk project linked to this directory.",
+        rerun: envPullRerun(options),
+      });
+    }),
   ]);
 
   // The secret and publishable key were found independently and may not name

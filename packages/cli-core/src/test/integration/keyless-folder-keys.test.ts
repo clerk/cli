@@ -259,6 +259,19 @@ describe("a Next.js folder whose .env.development.local can't be read", () => {
     (localKeys.readFolderKeys as unknown as { mockRestore: () => void }).mockRestore();
   });
 
+  // The exported secret key is found without the files; the publishable key isn't.
+  test("env pull with the secret key exported: not_linked, naming the unreadable file", async () => {
+    process.env.CLERK_SECRET_KEY = SECRET_KEY;
+
+    const error = agentError(await run("--mode", "agent", "env", "pull"));
+
+    expect(error.code).toBe("not_linked");
+    expect(error.message).toStartWith(
+      "No Clerk project linked to this directory. The CLI couldn't read this folder's env files (EACCES: permission denied, open '.env.development.local').",
+    );
+    expect(error.message).toEndWith("Then run `clerk env pull` again.");
+  });
+
   test("doctor: no check crashes, and the not-linked check names the unreadable file", async () => {
     const result = await run("doctor", "--json");
     const checks = JSON.parse(result.stdout) as {
