@@ -1,4 +1,9 @@
-/** Dispatch a stable CLI release event after publishing. */
+/**
+ * Dispatch a stable CLI release event after publishing.
+ *
+ * Usage:
+ *   CLERK_CLI_VERSION=1.2.3 CLERK_CLI_DISPATCH_TOKEN="$DISPATCH_TOKEN" bun scripts/dispatch-cli-released.ts
+ */
 
 type Fetch = (input: string, init?: RequestInit) => Promise<Response>;
 
