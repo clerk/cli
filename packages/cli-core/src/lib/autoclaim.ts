@@ -182,21 +182,8 @@ async function checkFolder(
   // the folder needs, the app is fetched once, and the fetched copy is used
   // from then on, so the link and the printed Dashboard URL use the same
   // complete app the comparison did.
-  let app = claimed;
-  let fetchSucceeded: boolean | undefined;
-  const fetchOnce = async (): Promise<boolean> => {
-    if (fetchSucceeded !== undefined) return fetchSucceeded;
-    log.debug(`autoclaim: fetching ${claimed.application_id}; the claim response is incomplete`);
-    try {
-      app = await fetchApplication(claimed.application_id);
-      fetchSucceeded = true;
-    } catch (error) {
-      log.debug(`autoclaim: fetching the claimed app failed — ${errorMessage(error)}`);
-      fetchSucceeded = false;
-    }
-    return fetchSucceeded;
-  };
-  const leave = (reason: FolderUnchanged) => ({ app, leave: reason });
+  const fetcher = appFetcher(claimed, "the claim response is incomplete");
+  const leave = (reason: FolderUnchanged) => ({ app: fetcher.current(), leave: reason });
 
   let linked: Awaited<ReturnType<typeof resolveProfile>>;
   try {
@@ -215,54 +202,44 @@ async function checkFolder(
   }
 
   // Linking needs the instances whatever the folder holds.
-  if (!hasInstances(app)) await fetchOnce();
+  if (!hasInstances(fetcher.current())) await fetcher.fetchOnce();
 
-  const comparison = await compareFolderKeys(cwd, () => app, fetchOnce);
-  if (comparison.kind === "unreadable_folder") return leave(UNVERIFIED);
-  if (comparison.kind === "unusable_sdk_file") {
-    // The SDK keyless file is there but names no app, so whatever the folder
-    // runs on, the CLI can't tell, and can't risk replacing it.
-    log.debug("autoclaim: the SDK keyless file is unreadable or holds no key");
-    return leave(UNVERIFIED);
+  const judged = await judgeFolderKeys(cwd, fetcher);
+  switch (judged.kind) {
+    case "unreadable":
+      // An SDK keyless file that names no app: whatever the folder runs on,
+      // the CLI can't tell, and can't risk replacing it.
+      return leave(UNVERIFIED);
+    case "no_keys":
+      // A folder with no keys is what a claim should set up.
+      log.debug("autoclaim: folder holds no Clerk keys; setting it up for the claimed app");
+      return { app: fetcher.current() };
+    case "mismatch": {
+      const { mismatch, mixed, effective } = judged;
+      log.debug(`autoclaim: ${mismatch.name} from ${mismatch.source} isn't the claimed app's`);
+      return leave({
+        kind: "unchanged",
+        reason: "different_keys",
+        key: mismatch.key,
+        name: mismatch.name,
+        source: mismatch.source,
+        mixed,
+        linkCanTryKey:
+          !linked &&
+          !mixed &&
+          mismatch.key === "publishable" &&
+          effective !== undefined &&
+          effective.unreadableLines === undefined &&
+          isEffective(mismatch, effective),
+      });
+    }
+    case "uncompared":
+      log.debug(`autoclaim: couldn't compare ${judged.check.name} from ${judged.check.source}`);
+      return leave(UNVERIFIED);
+    case "match":
+      log.debug(`autoclaim: every key in the folder is ${claimed.application_id}'s; setting it up`);
+      return { app: fetcher.current() };
   }
-  if (comparison.kind === "no_keys") {
-    // A folder with no keys is what a claim should set up.
-    log.debug("autoclaim: folder holds no Clerk keys; setting it up for the claimed app");
-    return { app };
-  }
-  const { checks } = comparison;
-
-  // A key known to belong to another app settles it, even if another key
-  // couldn't be compared or read.
-  const mismatches = checks.filter(isMismatch);
-  if (mismatches.length > 0) {
-    const effective = await effectiveKeys(cwd);
-    const mismatch = mismatchToName(mismatches, effective);
-    const mixed = checks.some((check) => check.result === "match");
-    log.debug(`autoclaim: ${mismatch.name} from ${mismatch.source} isn't the claimed app's`);
-    return leave({
-      kind: "unchanged",
-      reason: "different_keys",
-      key: mismatch.key,
-      name: mismatch.name,
-      source: mismatch.source,
-      mixed,
-      linkCanTryKey:
-        !linked &&
-        !mixed &&
-        mismatch.key === "publishable" &&
-        effective !== undefined &&
-        effective.unreadableLines === undefined &&
-        isEffective(mismatch, effective),
-    });
-  }
-  const unknown = checks.find((check) => check.result !== "match");
-  if (unknown) {
-    log.debug(`autoclaim: couldn't compare ${unknown.name} from ${unknown.source}`);
-    return leave(UNVERIFIED);
-  }
-  log.debug(`autoclaim: every key in the folder is ${claimed.application_id}'s; setting it up`);
-  return { app };
 }
 
 /** Whether a folder's Clerk keys all belong to one app; see `folderKeysBelongTo`. */
@@ -288,43 +265,97 @@ export async function folderKeysBelongTo(
   app: Application,
   cwd: string,
 ): Promise<FolderKeysVerdict> {
+  const judged = await judgeFolderKeys(cwd, appFetcher(app, "its data lacks a key to compare"));
+  switch (judged.kind) {
+    case "no_keys":
+    case "match":
+      return { verdict: "match" };
+    case "unreadable":
+      return { verdict: "couldnt_tell" };
+    case "mismatch":
+      return {
+        verdict: "mismatch",
+        key: { name: judged.mismatch.name, source: judged.mismatch.source },
+      };
+    case "uncompared":
+      return {
+        verdict: "couldnt_tell",
+        key: { name: judged.check.name, source: judged.check.source },
+      };
+  }
+}
+
+/** `app`, fetched at most once, when its data lacks what a check needs; `current` is the latest copy. */
+interface AppFetcher {
+  current: () => Application;
+  fetchOnce: () => Promise<boolean>;
+}
+
+function appFetcher(app: Application, why: string): AppFetcher {
   let current = app;
   let fetched: boolean | undefined;
-  const fetchOnce = async (): Promise<boolean> => {
-    if (fetched !== undefined) return fetched;
-    try {
-      current = await fetchApplication(app.application_id);
-      fetched = true;
-    } catch (error) {
-      log.debug(`autoclaim: fetching ${app.application_id} failed — ${errorMessage(error)}`);
-      fetched = false;
-    }
-    return fetched;
+  return {
+    current: () => current,
+    fetchOnce: async () => {
+      if (fetched !== undefined) return fetched;
+      log.debug(`autoclaim: fetching ${app.application_id}; ${why}`);
+      try {
+        current = await fetchApplication(app.application_id);
+        fetched = true;
+      } catch (error) {
+        log.debug(`autoclaim: fetching ${app.application_id} failed — ${errorMessage(error)}`);
+        fetched = false;
+      }
+      return fetched;
+    },
   };
+}
 
-  const comparison = await compareFolderKeys(cwd, () => current, fetchOnce);
-  if (comparison.kind === "no_keys") return { verdict: "match" };
-  if (comparison.kind !== "compared") return { verdict: "couldnt_tell" };
+/**
+ * Whether every Clerk key the folder holds belongs to the app: the one verdict
+ * the claim check and `folderKeysBelongTo` both read, so they mean the same
+ * thing by it. A key known to belong to another app settles it, even if
+ * another couldn't be compared or read.
+ *
+ * - `unreadable`: an env file couldn't be read, or there's no plain key and an
+ *   SDK keyless file that names no app.
+ * - `uncompared`: a key that couldn't be compared or read, and no mismatch.
+ */
+type KeysJudgement =
+  | { kind: "unreadable" }
+  | { kind: "no_keys" }
+  | { kind: "mismatch"; mismatch: KeyCheck; mixed: boolean; effective: FolderKeys | undefined }
+  | { kind: "uncompared"; check: KeyCheck }
+  | { kind: "match" };
 
+async function judgeFolderKeys(cwd: string, fetcher: AppFetcher): Promise<KeysJudgement> {
+  const comparison = await compareFolderKeys(cwd, fetcher.current, fetcher.fetchOnce);
+  if (comparison.kind === "unreadable_folder") return { kind: "unreadable" };
+  if (comparison.kind === "unusable_sdk_file") {
+    log.debug("autoclaim: the SDK keyless file is unreadable or holds no key");
+    return { kind: "unreadable" };
+  }
+  if (comparison.kind === "no_keys") return { kind: "no_keys" };
   const { checks } = comparison;
   const mismatches = checks.filter(isMismatch);
   if (mismatches.length > 0) {
-    const mismatch = mismatchToName(mismatches, await effectiveKeys(cwd));
-    return { verdict: "mismatch", key: { name: mismatch.name, source: mismatch.source } };
+    const effective = await effectiveKeys(cwd);
+    return {
+      kind: "mismatch",
+      mismatch: mismatchToName(mismatches, effective),
+      mixed: checks.some((check) => check.result === "match"),
+      effective,
+    };
   }
-  const unknown = checks.find((check) => check.result !== "match");
-  if (unknown) {
-    return { verdict: "couldnt_tell", key: { name: unknown.name, source: unknown.source } };
-  }
-  return { verdict: "match" };
+  const uncompared = checks.find((check) => check.result !== "match");
+  return uncompared ? { kind: "uncompared", check: uncompared } : { kind: "match" };
 }
 
 /**
  * How every Clerk key the folder holds compares with `app()`'s, before any
- * verdict: shared by the claim check and `folderKeysBelongTo`, so both mean
- * the same thing by "this folder's keys belong to that app". Fetches the app
- * at most once, through `fetchOnce`, and only when its data lacks a key to
- * compare; `app()` returns the fetched copy after that.
+ * verdict (`judgeFolderKeys`). Fetches the app at most once, through
+ * `fetchOnce`, and only when its data lacks a key to compare; `app()` returns
+ * the fetched copy after that.
  *
  * - `unreadable_folder`: an env file couldn't be read.
  * - `unusable_sdk_file`: no plain key, and an SDK keyless file that names no app.

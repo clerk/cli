@@ -428,14 +428,13 @@ function decideNextStep(input: {
       }),
     };
   }
+  // Only what keeps every app from passing stops here: "couldn't tell" alone
+  // still allows a pick.
   if (keyCheck && folder.unreadable) {
-    // What keeps every app from passing comes first: "couldn't tell" alone
-    // would still allow a pick.
-    const why = folder.unreadable ?? folder.couldntTell;
     return {
       kind: "stop",
       error: new CliError(
-        `${capitalize(why)}, so no application can be confirmed to own this folder's keys, and it wasn't linked. Make the folder's Clerk keys readable and belong to one application, then run \`clerk init\` again.`,
+        `${capitalize(folder.unreadable)}, so no application can be confirmed to own this folder's keys, and it wasn't linked. Make the folder's Clerk keys readable and belong to one application, then run \`clerk init\` again.`,
         { code: ERROR_CODE.NOT_LINKED },
       ),
     };
