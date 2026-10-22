@@ -7,6 +7,7 @@ import { AuthError, errorMessage, withApiContext } from "../../lib/errors.ts";
 import { profileLabel, resolveProfile } from "../../lib/config.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 import { isAgent } from "../../mode.ts";
+import { readUnlinkedFolder, unlinkedFolderNextStep } from "../../lib/unlinked-folder.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import {
   findLocalPublishableKey,
@@ -57,7 +58,7 @@ export async function whoami(options: WhoamiOptions = {}) {
     return;
   }
 
-  render(identity);
+  await render(identity);
 }
 
 async function resolveIdentity(): Promise<Identity> {
@@ -196,16 +197,20 @@ function toJson(identity: Identity): Record<string, unknown> {
   };
 }
 
-function render(identity: Identity): void {
+async function render(identity: Identity): Promise<void> {
   if (identity.kind === "keyless") {
     log.data(identity.instanceId ?? "unknown instance");
+    // Only an app `clerk init` or a Clerk SDK created is called unclaimed:
+    // plain keys may belong to an app already in an account. The next step
+    // comes from the unlinked-folder module, so it's the same as every other
+    // command gives this folder.
+    const folder = await readUnlinkedFolder(process.cwd());
     log.info(
-      `Not logged in — running on an unclaimed accountless application (key from \`${identity.keySource}\`)`,
+      folder.kind === "init_app" || folder.kind === "sdk_app"
+        ? `Not logged in — running on an unclaimed accountless application (key from \`${identity.keySource}\`)`
+        : `Not logged in — this folder uses the secret key from \`${identity.keySource}\` and isn't linked`,
     );
-    // Not NEXT_STEPS.WHOAMI: `clerk link` needs an application in an account,
-    // which an unclaimed app by definition isn't — the same dead end
-    // `users open`, `doctor`, and `open` all refuse to point at.
-    printNextSteps(NEXT_STEPS.WHOAMI_KEYLESS);
+    printNextSteps([unlinkedFolderNextStep(folder, { agent: false }).text]);
     return;
   }
 

@@ -2,8 +2,8 @@
  * The not-linked messages outside `deploy` and `doctor` give the step for what
  * the folder holds, from the unlinked-folder module, so the same folder gets
  * the same advice from every command: the not-linked error account commands
- * share (run here through `clerk env pull`), `clerk open`, and the "covers
- * fewer settings" warning (through `clerk config pull`).
+ * share (run here through `clerk env pull`), `clerk open`, the "covers fewer
+ * settings" warning (through `clerk config pull`), and `whoami`.
  *
  * Each test names its credential; the harness sets both a stored session and
  * CLERK_PLATFORM_API_KEY by default. Every run goes through `run`, which fails
@@ -222,5 +222,37 @@ describe("the covers-fewer-settings warning", () => {
 
     expect(stderr(result)).toContain("covers fewer settings");
     expect(stderr(result)).toContain(FIND_BY_KEY);
+  });
+});
+
+// Plain keys may belong to an app already in an account.
+describe("whoami, signed out, with a secret key on disk", () => {
+  test("plain keys: says the folder uses the key and isn't linked, with `clerk link`'s step", async () => {
+    signOut();
+    await write(".env", KEYS);
+
+    const result = await run("whoami");
+
+    expect(result.exitCode).toBe(0);
+    expect(result.stdout).toBe("ins_folder");
+    expect(stderr(result)).toContain(
+      "Not logged in — this folder uses the secret key from `.env` and isn't linked",
+    );
+    expect(stderr(result)).toContain(FIND_BY_KEY);
+    expect(stderr(result)).not.toContain("unclaimed");
+    expect(stderr(result)).not.toContain("clerk open");
+  });
+
+  test("an init token: still unclaimed, with the claim step", async () => {
+    signOut();
+    await writeInitToken();
+    await write(".env", KEYS);
+
+    const result = await run("whoami");
+
+    expect(result.exitCode).toBe(0);
+    expect(stderr(result)).toContain("running on an unclaimed accountless application");
+    expect(stderr(result)).toContain(CLAIM_IT);
+    expect(stderr(result)).not.toContain("clerk open");
   });
 });
