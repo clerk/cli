@@ -9,7 +9,7 @@
 
 import { relative } from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
-import type { Rerun } from "../../lib/unlinked-folder.ts";
+import { rerunOf, type Rerun } from "../../lib/unlinked-folder.ts";
 import { RERUN_FLAGS } from "./flags.ts";
 import type { InitOptions } from "./index.ts";
 
@@ -30,12 +30,12 @@ export function initRerun(
     if (value === undefined || value === false) return [];
     return value === true ? [flag] : [flag, quoteArg(String(value))];
   });
-  const command = ["clerk init", ...flags].join(" ");
+  const rerun = rerunOf(["clerk init", ...flags]);
   const name = where ? relative(where.from, where.projectDir) : "";
-  if (!where || !name) return { clause: `run \`${command}\` again`, command };
+  if (!where || !name) return rerun;
   return {
-    clause: `run \`${command}\` again in \`${name}\``,
-    command,
+    clause: `run \`${rerun.command}\` again in \`${name}\``,
+    command: rerun.command,
     folder: { name, path: where.projectDir },
   };
 }

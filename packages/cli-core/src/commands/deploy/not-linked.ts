@@ -10,7 +10,12 @@
  */
 
 import type { CliError } from "../../lib/errors.ts";
-import { readUnlinkedFolder, unlinkedFolderError, type Rerun } from "../../lib/unlinked-folder.ts";
+import {
+  readUnlinkedFolder,
+  rerunOf,
+  unlinkedFolderError,
+  type Rerun,
+} from "../../lib/unlinked-folder.ts";
 
 const LEAD = "No Clerk project linked to this directory.";
 
@@ -36,9 +41,4 @@ export function deployRerun(options: { domain?: string; yes?: boolean }): Rerun 
 /** `clerk deploy status`, keeping `--wait`. */
 export function deployStatusRerun(options: { wait?: boolean }): Rerun {
   return rerunOf(["clerk deploy status", options.wait && "--wait"]);
-}
-
-function rerunOf(parts: (string | false | undefined)[]): Rerun {
-  const command = parts.filter(Boolean).join(" ");
-  return { clause: `run \`${command}\` again`, command };
 }

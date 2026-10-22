@@ -7,6 +7,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   afterRefusedCredential,
+  rerunOf,
   unlinkedFolderNextStep,
   type Credential,
   type LinkStop,
@@ -411,6 +412,15 @@ describe("every cell", () => {
       expect(examples.every((example) => example.description.length > 0)).toBe(true);
     },
   );
+});
+
+describe("rerunOf", () => {
+  test("joins the flags the run had, skipping the ones it didn't, into the clause and the command", () => {
+    expect(rerunOf(["clerk env pull", "--file 'a b.env'", false, undefined])).toEqual({
+      clause: "run `clerk env pull --file 'a b.env'` again",
+      command: "clerk env pull --file 'a b.env'",
+    });
+  });
 });
 
 describe("the rerun", () => {

@@ -2,7 +2,7 @@ import { bold, cyan, dim } from "../../lib/color.ts";
 import { resolveAppContext, resolveInstanceId, resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
-import { keylessRefusal, readUnlinkedFolder } from "../../lib/unlinked-folder.ts";
+import { keylessRefusal, readUnlinkedFolder, rerunOf } from "../../lib/unlinked-folder.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
@@ -80,11 +80,10 @@ async function assertNotKeyless(options: UsersOpenOptions, userId: string): Prom
   if (keyless) {
     // The user ID was validated as `user_<letters and digits>`, so it's safe to
     // echo; `--secret-key` never is.
-    const command = `clerk users open ${userId}${options.print ? " --print" : ""}`;
     const { subject, step, examples } = keylessRefusal(
       await readUnlinkedFolder(process.cwd()),
       keyless.source,
-      { clause: `run \`${command}\` again`, command },
+      rerunOf([`clerk users open ${userId}`, options.print && "--print"]),
     );
     throw new CliError(keylessCopy.userDashboardNeedsClaim(subject, userId, step), {
       code: ERROR_CODE.INSTANCE_NOT_FOUND,

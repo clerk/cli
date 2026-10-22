@@ -225,6 +225,15 @@ export interface Rerun {
   folder?: ProjectFolder;
 }
 
+/**
+ * Running `parts` again: the command and the flags the run had, each already
+ * safe to echo. A falsy part is a flag the run didn't have.
+ */
+export function rerunOf(parts: readonly (string | false | 0 | undefined)[]): Rerun {
+  const command = parts.filter(Boolean).join(" ");
+  return { clause: `run \`${command}\` again`, command };
+}
+
 export interface ProjectFolder {
   name: string;
   path: string;

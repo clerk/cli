@@ -34,6 +34,7 @@ import { keylessCopy } from "../../lib/copy.ts";
 import {
   appInNoAccount,
   readUnlinkedFolder,
+  rerunOf,
   unlinkedFolderError,
   unlinkedFolderNextStep,
   type Rerun,
@@ -295,8 +296,5 @@ function removeStrayPublishableKey(located: LocatedKey): string {
 
 /** `clerk env pull` with the run's own flags, shell-quoted; the keyless path takes no others. */
 function envPullRerun({ file, print }: Pick<EnvPullOptions, "file" | "print">): Rerun {
-  const command = ["clerk env pull", file && `--file ${quoteArg(file)}`, print && "--print"]
-    .filter(Boolean)
-    .join(" ");
-  return { clause: `run \`${command}\` again`, command };
+  return rerunOf(["clerk env pull", file && `--file ${quoteArg(file)}`, print && "--print"]);
 }
