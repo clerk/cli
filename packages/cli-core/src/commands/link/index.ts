@@ -29,7 +29,13 @@ import {
 } from "../../lib/plapi.ts";
 import { appLabel, fetchAppsTolerantly, pickOrCreateApp } from "../../lib/app-picker.ts";
 import { setProfile, resolveProfile, moveProfile } from "../../lib/config.ts";
-import { autolink, findLinkKey, matchKeyToApp, type AutolinkResult } from "../../lib/autolink.ts";
+import {
+  autolink,
+  findLinkKey,
+  matchKeyToApp,
+  type AutolinkResult,
+  type FolderRead,
+} from "../../lib/autolink.ts";
 import {
   couldntTellReason,
   describeKeyLocation,
@@ -156,8 +162,10 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
       : undefined;
 
   let step: NextStep | undefined;
+  let read: FolderRead | undefined;
   if (!existing && !options.app) {
     const folder = await inspectFolder(cwd);
+    read = folder.read;
 
     // After a claim that didn't link the folder, the token is gone, so a
     // folder whose only keys are the SDK's is SDK-only too.
@@ -177,7 +185,7 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
 
     const autolinked =
       options.skipIfLinked || agent
-        ? await autolink(cwd, { beforeLink: checkFolderKeys })
+        ? await autolink(cwd, { beforeLink: checkFolderKeys, read: folder.read })
         : undefined;
     if (autolinked?.status === "linked") {
       if (framed) await outro();
@@ -229,6 +237,7 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
           cwd,
           displayPath,
           step?.kind === "pick" ? step : { detect: !existing, allowCreate: true },
+          read,
         );
 
   await checkFolderKeys?.(app);
@@ -263,6 +272,8 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
 interface FolderFacts {
   /** The keys the folder's app loads; undefined when an env file it loads couldn't be read. */
   keys?: FolderKeys;
+  /** This read, for auto-link and detection to match on (`FolderRead`). */
+  read: FolderRead;
   /** Why the CLI can't tell which publishable key the app loads, as a clause. */
   couldntTell?: string;
   /** Why the folder's secret keys are undecided, as a clause. */
@@ -295,11 +306,18 @@ async function inspectFolder(cwd: string): Promise<FolderFacts> {
   const [loaded, every] = await Promise.allSettled([readFolderKeys(cwd), readAllFolderKeys(cwd)]);
   if (loaded.status === "rejected") {
     const reason = unreadableFolderReason(loaded.reason);
-    return { couldntTell: reason, readError: reason, unreadable: reason, holdsKeys: true };
+    return {
+      read: { readError: reason },
+      couldntTell: reason,
+      readError: reason,
+      unreadable: reason,
+      holdsKeys: true,
+    };
   }
   const keys = loaded.value;
   const facts = {
     keys,
+    read: keys,
     couldntTell: couldntTellReason(keys),
     secretsDisagree: secretKeysDisagreeReason(keys),
   };
@@ -678,8 +696,12 @@ async function handleExistingProfile(
   return confirm({ message: "Re-link to a different application?", default: false });
 }
 
-async function tryDetectApp(cwd: string, apps: Application[]): Promise<Application | undefined> {
-  const found = await findLinkKey(cwd);
+async function tryDetectApp(
+  cwd: string,
+  apps: Application[],
+  read: FolderRead | undefined,
+): Promise<Application | undefined> {
+  const found = await findLinkKey(cwd, read);
   if (found.status !== "found") return undefined;
 
   const match = matchKeyToApp([{ key: found.key.value, source: found.key.source }], apps);
@@ -694,6 +716,7 @@ async function resolveApp(
   cwd: string,
   displayPath: string,
   { detect, allowCreate, why }: { detect: boolean; allowCreate: boolean; why?: string },
+  read: FolderRead | undefined,
 ): Promise<Application> {
   // Said before the list, so a person whose account has no apps hears it too.
   if (why) log.info(`${capitalize(why)}, so choose the application this folder should use.`);
@@ -704,7 +727,7 @@ async function resolveApp(
     : await withApiContext(listApplications(), "Failed to fetch applications");
 
   if (apps.length > 0 && detect) {
-    const detected = await tryDetectApp(cwd, apps);
+    const detected = await tryDetectApp(cwd, apps, read);
     if (detected) return detected;
   }
 

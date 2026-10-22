@@ -18,6 +18,13 @@ interface DetectedKey {
   source: string;
 }
 
+/**
+ * A read of the folder's keys a caller already made (`readFolderKeys`), or why
+ * it failed, so one run matches on one read: a second read could combine facts
+ * from different moments, e.g. after `next dev` writes the SDK keyless file.
+ */
+export type FolderRead = FolderKeys | { readError: string };
+
 /** The publishable key `clerk link` matches the folder by, or why there isn't one. */
 export type LinkKey =
   | { status: "found"; key: LocatedKey }
@@ -36,10 +43,11 @@ export type LinkKey =
  * SDK-only folder has its own step in `clerk link`. `reason` reads as a
  * clause, for a message to build on.
  */
-export async function findLinkKey(cwd: string): Promise<LinkKey> {
+export async function findLinkKey(cwd: string, read?: FolderRead): Promise<LinkKey> {
+  if (read && "readError" in read) return { status: "couldnt_tell", reason: read.readError };
   let keys: FolderKeys;
   try {
-    keys = await readFolderKeys(cwd);
+    keys = read ?? (await readFolderKeys(cwd));
   } catch (error) {
     return { status: "couldnt_tell", reason: unreadableFolderReason(error) };
   }
@@ -115,13 +123,14 @@ export type AutolinkResult =
  * reports `list_failed` with the error, so each caller decides what that means.
  *
  * `beforeLink` runs on the matched app before the link is saved, and may throw
- * to stop the link with nothing saved.
+ * to stop the link with nothing saved. `read` is the caller's read of the
+ * folder's keys; without it, the folder is read here.
  */
 export async function autolink(
   cwd: string,
-  options: { beforeLink?: (app: Application) => Promise<void> } = {},
+  options: { beforeLink?: (app: Application) => Promise<void>; read?: FolderRead } = {},
 ): Promise<AutolinkResult> {
-  const found = await findLinkKey(cwd);
+  const found = await findLinkKey(cwd, options.read);
   if (found.status === "none") {
     log.debug("autolink: no clerk publishable key found in env or .env files");
     return { status: "no_key" };

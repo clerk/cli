@@ -68,6 +68,48 @@ async function linkedAppId(): Promise<string | undefined> {
   return (await readConfig()).profiles[PROFILE_KEY]?.appId;
 }
 
+// The first read of the folder's keys is the one auto-link and detection match
+// on: reading again could combine facts from different moments, e.g. after
+// `next dev` writes the SDK keyless file mid-run.
+describe("a run reads the folder's keys once", () => {
+  let readFolderKeys: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    readFolderKeys = spyOn(localKeys, "readFolderKeys");
+  });
+
+  afterEach(() => {
+    readFolderKeys.mockRestore();
+  });
+
+  test("agent: auto-link matches on the first read", async () => {
+    await useFramework("next");
+    await writeEnv(
+      ".env.local",
+      `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${APP_B.instances[0]!.publishable_key}`,
+    );
+
+    await clerk("--mode", "agent", "link");
+
+    expect(await linkedAppId()).toBe(APP_B.application_id);
+    expect(readFolderKeys).toHaveBeenCalledTimes(1);
+  });
+
+  test("person: detection matches on the first read", async () => {
+    await useFramework("next");
+    await writeEnv(
+      ".env.local",
+      `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=${APP_B.instances[0]!.publishable_key}`,
+    );
+    mockPrompts.confirm(true);
+
+    await clerk("link");
+
+    expect(await linkedAppId()).toBe(APP_B.application_id);
+    expect(readFolderKeys).toHaveBeenCalledTimes(1);
+  });
+});
+
 test("agent, Next.js: doesn't link .env's app when .env.local, which Next.js loads, holds a key no app has", async () => {
   await useFramework("next");
   await writeEnv(
