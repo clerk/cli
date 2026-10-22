@@ -2,7 +2,7 @@ import { readdirSync } from "node:fs";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
-import { CliError, ERROR_CODE, throwUserAbort } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../../lib/errors.ts";
 import { setTelemetryStage } from "../../../lib/telemetry.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.ts";
@@ -11,6 +11,7 @@ import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
 import { inspectSelectedProject } from "./xcode.ts";
+import { signedByPersonalTeam } from "./teams.ts";
 import { nonDefaultXcodeNote } from "./xcode-tools.ts";
 import { SelectionNeeded } from "./discovery.ts";
 import { IdentityRequired, describeIdentity } from "./identity.ts";
@@ -50,8 +51,26 @@ export function canSetUpXcode(): boolean {
 export const CLERK_SWIFT_MINIMUM_VERSION = "1.5.8";
 export const SWIFT_QUICKSTART = "https://clerk.com/docs/ios/getting-started/quickstart";
 
-export function setupNextSteps(result: ApplyResult): string[] {
+export function setupNextSteps(
+  result: ApplyResult,
+  starter?: StarterProjectSummary & { personalTeam: boolean },
+): string[] {
   const initialized = result.handoff.completed.some((item) => item.id === "initialize-clerk");
+  if (starter && initialized)
+    return [
+      `Open ${starter.projectName}/${starter.projectName}.xcodeproj in Xcode.`,
+      starter.platform === "ios"
+        ? "Choose an iPhone simulator and press Run, then test your sign-in flow."
+        : "Press Run, then test your sign-in flow.",
+      ...(starter.personalTeam
+        ? [
+            starter.platform === "ios"
+              ? "To run on a real device or enable Sign in with Apple, join the Apple Developer Program and choose that team in Xcode."
+              : "To use passkeys, password AutoFill, or Sign in with Apple, join the Apple Developer Program, choose that team in Xcode, and run clerk init again.",
+          ]
+        : []),
+      `Quickstart: ${SWIFT_QUICKSTART}`,
+    ];
   return [
     initialized
       ? "Build your app and test your sign-in flow."
@@ -83,6 +102,8 @@ export function printSetupPreview(preview: SetupPreview): void {
   }
   if (preview.appleRequested) log.info("  Configure native Sign in with Apple");
   if (preview.appleWarning) log.warn(preview.appleWarning);
+  if (preview.personalTeamNote) log.warn(preview.personalTeamNote);
+  for (const note of preview.personalTeamConflicts) log.warn(note);
   if (preview.dirtyFiles.length) log.info("  Existing edits will be preserved in backups.");
   if (preview.capabilities?.status === "manual")
     log.warn(preview.capabilities.reason ?? "Some capabilities need manual setup.");
@@ -94,7 +115,10 @@ export function printSetupPreview(preview: SetupPreview): void {
     log.info("  Swift integration remains: initialize Clerk and connect your sign-in flow.");
 }
 
-export function printSetupResult(result: ApplyResult): void {
+export function printSetupResult(
+  result: ApplyResult,
+  starter?: StarterProjectSummary & { personalTeam: boolean },
+): void {
   if (result.message) log.warn(result.message);
   const completed = result.handoff.completed;
   const summary = [
@@ -110,17 +134,20 @@ export function printSetupResult(result: ApplyResult): void {
   if (result.recovery?.needsReview.length)
     log.warn(`Review interrupted edits: ${result.recovery.needsReview.join(", ")}`);
   log.info("\nNext steps:");
-  for (const step of setupNextSteps(result)) log.info(`  • ${step}`);
+  for (const step of setupNextSteps(result, starter)) log.info(`  • ${step}`);
 }
 
-/** What an agent needs to do before native setup can run: choose a Clerk application. */
-export function applicationRequired() {
+/**
+ * What an agent needs to do before native setup can run: choose a Clerk application, then run
+ * `command`, which carries this run's setup options.
+ */
+export function applicationRequired(command = "clerk init --app <app_id> --json") {
   return {
     status: "application-required",
     appIntegrationComplete: false,
     next: [
       'Run `clerk apps list --json` and ask the user which application to use, or create one with `clerk apps create "<name>" --json`. If listing fails because you are not signed in, run `clerk auth login` first.',
-      "Then run `clerk init --app <app_id> --json` to link it, configure the Xcode project, and register the app with Clerk.",
+      `Then run \`${command}\` to link it, configure the Xcode project, and register the app with Clerk.`,
     ],
   };
 }
@@ -140,6 +167,13 @@ export interface AppleInitOptions {
   appIdPrefix?: string;
   signInWithApple?: boolean;
   prebuiltAuthUi?: boolean;
+  /** The app `clerk init --starter` just created, which needs no confirmation before setup. */
+  starterProject?: StarterProjectSummary;
+}
+
+export interface StarterProjectSummary {
+  projectName: string;
+  platform: "ios" | "macos";
 }
 
 /**
@@ -219,6 +253,18 @@ export async function runAppleInit(
     stopNativeProgress();
     setup.inspection = inspection;
     const starter = await isUnchangedStarter(inspection);
+    // The signing team decides what the app can use, on every run. A Personal Team can't use Sign
+    // in with Apple, and a Mac app has no simulator to fall back to, so it also can't keep
+    // Associated Domains. Xcode's account list says which teams are Personal Teams.
+    const personalTeam = signedByPersonalTeam(inspection, dependencies.xcodeTeams);
+    if (personalTeam) {
+      if (options.signInWithApple)
+        throwUsageError(
+          "Sign in with Apple needs a paid Apple Developer Program team, and this app is signed by a Personal Team. Choose a paid team in Xcode, or drop --sign-in-with-apple.",
+        );
+      setup.signInWithApple = false;
+      setup.personalTeam = true;
+    }
     let installedProducts: "core" | "ui" | undefined;
     if (!options.appleSdk && !options.prebuiltAuthUi) {
       for (const products of ["ui", "core"] as const) {
@@ -230,6 +276,18 @@ export async function runAppleInit(
         }
       }
     }
+    // A new starter has no screens of its own yet, so its sign-in screen defaults to on: --yes
+    // takes that default as the prompt below offers it. ClerkKit alone has no sign-in screen, and
+    // an agent still needs the user to ask for UI changes (see the handoff).
+    if (
+      options.starterProject &&
+      starter &&
+      !interactive &&
+      !options.agent &&
+      options.prebuiltAuthUi == null &&
+      setup.products === "ui"
+    )
+      setup.signInUI = true;
     if (interactive) {
       log.success(
         `Found ${inspection.input.selection.sdk === "macosx" ? "macOS" : "iOS"} app: ${inspection.input.selection.targetName}`,
@@ -245,9 +303,10 @@ export async function runAppleInit(
       if (options.prebuiltAuthUi == null && starter && setup.products === "ui")
         setup.signInUI = await confirm({
           message: "Add Clerk’s prebuilt sign-in screen?",
-          default: false,
+          // A new starter has no screens of its own yet.
+          default: options.starterProject != null,
         });
-      if (options.signInWithApple == null)
+      if (setup.signInWithApple == null)
         setup.signInWithApple = await confirm({
           message: "Enable native Sign in with Apple?",
           default: false,
@@ -294,13 +353,21 @@ export async function runAppleInit(
     });
     stopNativeProgress();
     if (!json) printSetupPreview(preview);
-    if (interactive && !(await confirm({ message: "Apply this setup?", default: true })))
+    if (
+      interactive &&
+      !options.starterProject &&
+      !(await confirm({ message: "Apply this setup?", default: true }))
+    )
       throwUserAbort();
     setTelemetryStage("ios_apply");
     const result = await applySetup(preview, dependencies, signal);
     stopNativeProgress();
     if (json) log.data(JSON.stringify(result, null, 2));
-    else printSetupResult(result);
+    else
+      printSetupResult(
+        result,
+        options.starterProject && { ...options.starterProject, personalTeam },
+      );
     if (result.status === "incomplete")
       throw new CliError(
         result.message ??
