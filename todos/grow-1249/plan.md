@@ -1003,7 +1003,8 @@ These items go into the GROW-1249 section of the one PR description, and close o
 - **READMEs:** `deploy`, `link`, `doctor`, `open`, `env`, and `whoami` (milestones 6 to 9), wherever they describe a changed message.
 - **Checks:** the commands in "Conventions both PRs share".
 - **The site inventory (shared rule 3).** Rerun the three searches and put the result in the PR description: every hit either fixed by this PR or listed with its reason. At `2133e7ea3`, these hits are expected to stay as they are, each for the reason given. Recheck each one against the code at the time; this list is a starting point, not a substitute for the search.
-  - `lib/bapi-command.ts:119` and `commands/api/fapi.ts:38`: they fire only when the folder has no local key, and those commands accept `--app`, so "`clerk link`, or pass `--app`" is right.
+  - `lib/bapi-command.ts:119`: it fires only when the folder has no local key, and those commands accept `--app`, so "`clerk link`, or pass `--app`" is right.
+  - `commands/api/fapi.ts:38` doesn't belong on this list. `clerk api --fapi` never reads the folder's keys, so it fires in every unlinked folder, and `--app` can't reach an init app or a claimable SDK app. Fixed in the wrap-up (below).
   - `commands/deploy/errors.ts:100`: the linked app no longer exists. "Re-link" is right for a person; for an agent a bare `clerk link` in a linked folder changes nothing. Out of scope, clerk/cli#568 (https://github.com/clerk/cli/issues/568), by Shane's decision of 2026-10-21, so it stays as it is.
   - `commands/doctor/checks.ts:297, 325, 371, 469`: no keys at all, or a linked app with a problem, so `clerk link` is right.
   - `commands/open/index.ts:41`: a linked profile without a development instance.
@@ -1014,6 +1015,10 @@ These items go into the GROW-1249 section of the one PR description, and close o
   - `commands/init/heuristics.ts:156`: printed right after `init` wrote an init token, so "`clerk auth login` claims it" is right.
   - `lib/next-steps.ts` entries for `LOGIN`, `LOGIN_LINKED`, `CREATE`, `AUTOCLAIM_*`, `WHOAMI`, and `WHOAMI_LINKED`: general next steps outside the unlinked-folder errors.
   - Code comments.
+- **Fixed in the wrap-up** (Shane's decision, 2026-10-22), from the site inventory and the proof run:
+  - `clerk api --fapi` drops "or pass --app <app_id>" for a folder whose app is in no account (an init app or a claimable SDK app), as the shared not-linked error does.
+  - `clerk init --fresh`'s help says it replaces this folder's existing accountless app, including an SDK app whose claim link can't be used, which may already be claimed. It no longer calls that app unclaimed.
+  - Commands that refuse every run on the folder's secret key (`enable billing`, `disable billing`, `config schema`, `config put`) skip the "covers fewer settings" warning, so the step prints once, in the refusal. `config patch` still prints both when it refuses a payload key, because the warning comes before the payload is read.
 - **Prove it works:**
   - Run the integration tests, including the follow-the-advice tests, and paste the per-command, per-kind output (JSON error and exit code) into the PR description.
   - Also run the real CLI from source for the signed-in agent column of `deploy` and `deploy status`. That path makes no API call, and `CLERK_PLATFORM_API_KEY` set to a fake value makes "signed in" deterministic without reading the keychain:
