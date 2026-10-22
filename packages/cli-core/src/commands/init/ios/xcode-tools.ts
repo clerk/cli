@@ -10,6 +10,22 @@ export function nonDefaultXcodeNote(): string | undefined {
   return note;
 }
 
+/** Why the selected Xcode can't run `xcodebuild` (an unaccepted license, say), or undefined when it runs. */
+export async function selectedXcodeFailure(): Promise<string | undefined> {
+  try {
+    const child = Bun.spawn(["xcodebuild", "-version"], {
+      stdout: "ignore",
+      stderr: "pipe",
+      stdin: "ignore",
+      timeout: 10_000,
+    });
+    const [error, code] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+    return code === 0 ? undefined : error.trim() || "`xcodebuild -version` failed.";
+  } catch {
+    return "`xcodebuild` couldn't run.";
+  }
+}
+
 /**
  * Choose an installed Xcode of at least `minimumMajor` without changing xcode-select:
  * Xcode 27 for JSON projects, or any full Xcode when xcode-select points at the
