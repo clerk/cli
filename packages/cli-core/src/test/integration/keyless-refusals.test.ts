@@ -308,6 +308,32 @@ test.each([
   },
 );
 
+// The check itself failed, so nothing says whether the pair matches; the
+// error names the key the way the other messages do.
+test.each([
+  {
+    kind: "an init token",
+    setUp: FOLDERS.initApp,
+    says: "Failed to verify the accountless secret key from `.env`",
+  },
+  {
+    kind: "plain keys",
+    setUp: FOLDERS.plainKeys,
+    says: "Failed to verify the secret key from `.env`",
+  },
+])("env pull, the key-pair check fails, stored session, $kind: $says", async ({ setUp, says }) => {
+  delete process.env.CLERK_PLATFORM_API_KEY;
+  await setUp();
+  http.stub(async () =>
+    Response.json({ errors: [{ message: "Internal server error" }] }, { status: 500 }),
+  );
+
+  const result = refusal(await run("--mode", "agent", "env", "pull"), true);
+
+  expect(result.exitCode).toBe(1);
+  expect(result.text).toStartWith(says);
+});
+
 // What `env pull` names after writing the keys.
 test.each([
   {

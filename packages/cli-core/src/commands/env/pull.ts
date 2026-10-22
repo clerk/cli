@@ -15,7 +15,13 @@ import {
   detectFramework,
   isNpmFramework,
 } from "../../lib/framework.ts";
-import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
+import {
+  ApiError,
+  CliError,
+  ERROR_CODE,
+  throwUsageError,
+  withApiContext,
+} from "../../lib/errors.ts";
 import {
   findLocalPublishableKey,
   hasKeyPairMismatch,
@@ -199,9 +205,15 @@ async function pullKeylessKeys(
   // hard to trace back to its cause, so this is the stricter of the two
   // checks — whoami only warns, this refuses to write.
   if (publishableKey) {
-    const mismatch = await withApiContext(
-      hasKeyPairMismatch(keyless, publishableKey.value),
-      `Failed to verify the accountless secret key from \`${keyless.source}\``,
+    const mismatch = await hasKeyPairMismatch(keyless, publishableKey.value).catch(
+      async (error: unknown) => {
+        // Read only now, so a `--print` run whose check passes doesn't read the folder.
+        if (error instanceof ApiError) {
+          const accountless = appInNoAccount(await readUnlinkedFolder(cwd)) ? "accountless " : "";
+          error.context = `Failed to verify the ${accountless}secret key from \`${keyless.source}\``;
+        }
+        throw error;
+      },
     );
     if (mismatch) {
       // No `clerk link` advice: it would find the app by this publishable key,
