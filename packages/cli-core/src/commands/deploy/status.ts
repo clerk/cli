@@ -754,9 +754,13 @@ function oauthSetupGuides(
  * (exit 3) until the user agrees. The consent is the command's own
  * `allow_shared=0`, changed for that one run, so it can't carry over to later
  * runs or another project. `vercel env ls` runs with color off (Vercel's color
- * check honors `--no-color` and `FORCE_COLOR=0`), escape codes are stripped
- * anyway, and output that is neither its table nor its "No Environment
- * Variables found" line stops it (exit 1) rather than reading as empty.
+ * check honors `--no-color` and `FORCE_COLOR=0`) and links off: `NETLIFY` or a
+ * non-zero `FORCE_HYPERLINK` turns Vercel's links on even in a pipe, and
+ * `FORCE_HYPERLINK=0` overrides both. A link's codes around an environment
+ * name hide the comma the shared check looks for. Color codes are stripped
+ * anyway, and any escape code left, or output that is neither its table nor
+ * its "No Environment Variables found" line, stops it (exit 1) rather than
+ * being misread.
  * When `vercel env ls` itself fails (not installed, not logged in, the
  * project not linked), its captured output is Vercel's error, so the command
  * prints it to stderr before exiting 1: it names the fix (`vercel login`,
@@ -779,7 +783,8 @@ function oauthSetupGuides(
 function vercelKeyCopyCommand(pull: string): string {
   return (
     `( set +x; allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
-    `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || { printf '%s\\n' "$vars" >&2; exit 1; }; ` +
+    `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 FORCE_HYPERLINK=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || { printf '%s\\n' "$vars" >&2; exit 1; }; ` +
+    `case "$vars" in *"$e"*) echo "vercel env ls printed escape codes this command can't read; check the project's variables before replacing any." >&2; exit 1 ;; esac; ` +
     `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
     `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
     `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
