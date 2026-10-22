@@ -259,30 +259,43 @@ describe("a Next.js folder whose .env.development.local can't be read", () => {
     (localKeys.readFolderKeys as unknown as { mockRestore: () => void }).mockRestore();
   });
 
-  // The exported secret key is found without the files; the publishable key isn't.
-  test("env pull with the secret key exported: not_linked, naming the unreadable file", async () => {
-    process.env.CLERK_SECRET_KEY = SECRET_KEY;
+  // The exported secret key is found without the files; the publishable key
+  // isn't. Nothing that matches or claims by the folder's keys works until the
+  // file is readable, so fixing it comes first, before the folder's step.
+  const READ_ERROR =
+    "No Clerk project linked to this directory. The CLI couldn't read this folder's env files (EACCES: permission denied, open '.env.development.local').";
 
-    const error = agentError(await run("--mode", "agent", "env", "pull"));
+  describe.each([
+    { command: "env pull", args: ["env", "pull"], setUp: () => {} },
+    { command: "whoami", args: ["whoami"], setUp: signOut },
+  ])("$command with the secret key exported", ({ command, args, setUp }) => {
+    beforeEach(() => {
+      setUp();
+      process.env.CLERK_SECRET_KEY = SECRET_KEY;
+    });
 
-    expect(error.code).toBe("not_linked");
-    expect(error.message).toStartWith(
-      "No Clerk project linked to this directory. The CLI couldn't read this folder's env files (EACCES: permission denied, open '.env.development.local').",
-    );
-    expect(error.message).toEndWith("Then run `clerk env pull` again.");
-  });
+    test("no init token: not_linked, naming the file, then fixing it and running again", async () => {
+      const error = agentError(await run("--mode", "agent", ...args));
 
-  test("whoami, signed out, with the secret key exported: not_linked, naming the unreadable file", async () => {
-    signOut();
-    process.env.CLERK_SECRET_KEY = SECRET_KEY;
+      expect(error.code).toBe("not_linked");
+      expect(error.message).toBe(
+        `${READ_ERROR} Make that file readable, then run \`clerk ${command}\` again.`,
+      );
+    });
 
-    const error = agentError(await run("--mode", "agent", "whoami"));
+    test("an init token: the file and its fix first, then the claim step", async () => {
+      await write(
+        ".clerk/keyless.json",
+        JSON.stringify({ claimToken: "claim_token_init", createdAt: new Date().toISOString() }),
+      );
 
-    expect(error.code).toBe("not_linked");
-    expect(error.message).toStartWith(
-      "No Clerk project linked to this directory. The CLI couldn't read this folder's env files (EACCES: permission denied, open '.env.development.local').",
-    );
-    expect(error.message).toEndWith("Then run `clerk whoami` again.");
+      const error = agentError(await run("--mode", "agent", ...args));
+
+      expect(error.code).toBe("not_linked");
+      expect(error.message).toStartWith(`${READ_ERROR} Make that file readable first.`);
+      expect(error.message).toContain("This folder's app was created by `clerk init`");
+      expect(error.message).toEndWith(`Then run \`clerk ${command}\` again.`);
+    });
   });
 
   // Signed in, whoami reports the account; the file can only change which

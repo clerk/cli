@@ -364,6 +364,39 @@ export function unlinkedFolderError(
   });
 }
 
+/**
+ * The `not_linked` error for a command that found the folder's secret key in
+ * the shell but couldn't read its env files. The read error and its fix come
+ * first: nothing that claims or matches by the folder's keys works until the
+ * file is readable. An init app's step follows; any other folder's step
+ * depends on what the file holds, so the advice is to run the command again.
+ */
+export async function unreadableEnvFilesError(
+  cwd: string,
+  error: unknown,
+  { lead, rerun }: { lead: string; rerun: Rerun },
+): Promise<CliError> {
+  const readError = unreadableFolderReason(error);
+  const folder = await readUnlinkedFolder(cwd, { readError });
+  const opening = `${lead} ${capitalize(readError)}.`;
+  if (folder.kind === "init_app") {
+    const step = stepInCurrentMode(folder, rerun);
+    return new CliError(`${opening} Make that file readable first. ${step.text}`, {
+      code: ERROR_CODE.NOT_LINKED,
+      examples: step.examples,
+    });
+  }
+  return new CliError(`${opening} Make that file readable, then ${rerun.clause}.`, {
+    code: ERROR_CODE.NOT_LINKED,
+    ...(isAgent() &&
+      rerun.command && {
+        examples: [
+          { command: rerun.command, description: "Run it again once the file is readable" },
+        ],
+      }),
+  });
+}
+
 /** The step for `folder`: the text to put after a site's own lead sentence, and its commands. */
 export function unlinkedFolderNextStep(folder: UnlinkedFolder, context: NextStepContext): NextStep {
   const { agent, rerun, linkStop } = context;

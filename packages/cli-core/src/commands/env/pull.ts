@@ -35,8 +35,8 @@ import {
   appInNoAccount,
   readUnlinkedFolder,
   rerunOf,
-  unlinkedFolderError,
   unlinkedFolderNextStep,
+  unreadableEnvFilesError,
   type Rerun,
 } from "../../lib/unlinked-folder.ts";
 import {
@@ -207,8 +207,8 @@ async function pullKeylessKeys(
     detectSecretKeyName(cwd),
     // An exported secret key is found without the env files; with one the CLI
     // can't read, which publishable key the app loads is untold.
-    findLocalPublishableKey(cwd).catch(async () => {
-      throw unlinkedFolderError(await readUnlinkedFolder(cwd), {
+    findLocalPublishableKey(cwd).catch(async (error: unknown) => {
+      throw await unreadableEnvFilesError(cwd, error, {
         lead: "No Clerk project linked to this directory.",
         rerun: envPullRerun(options),
       });

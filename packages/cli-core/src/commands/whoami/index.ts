@@ -11,8 +11,8 @@ import {
   appInNoAccount,
   readUnlinkedFolder,
   rerunOf,
-  unlinkedFolderError,
   unlinkedFolderNextStep,
+  unreadableEnvFilesError,
 } from "../../lib/unlinked-folder.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import {
@@ -143,8 +143,8 @@ async function describeKeyless(keyless: KeylessTarget, options: WhoamiOptions): 
 
   // An exported secret key is found without the env files; with one the CLI
   // can't read, which publishable key the app loads is untold.
-  const located = await findLocalPublishableKey(process.cwd()).catch(async () => {
-    throw unlinkedFolderError(await readUnlinkedFolder(process.cwd()), {
+  const located = await findLocalPublishableKey(process.cwd()).catch(async (error: unknown) => {
+    throw await unreadableEnvFilesError(process.cwd(), error, {
       lead: "No Clerk project linked to this directory.",
       rerun: rerunOf(["clerk whoami", options.json && "--json"]),
     });
