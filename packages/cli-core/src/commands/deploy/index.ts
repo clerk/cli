@@ -81,6 +81,7 @@ import {
   resolveDeployContext,
   resolveDeployState,
   resolveLiveApplicationContext,
+  inAppleProject,
   resolveLiveDeploySnapshot,
   resolveNativeAppleConfiguration,
   waitForDeployStatus,
@@ -1029,7 +1030,7 @@ async function finishDeploy(
     prefix: isInsideGutter() ? `${dim("│")}  ` : "",
     label: "Next steps",
     fallback: bold,
-    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain, dnsStatus))}\n`,
+    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain, dnsStatus, await inAppleProject()))}\n`,
   });
   // The closing word summarizes how the run ended. After a skipped DNS check
   // the status row four lines up says "DNS pending", and "Success" beneath it

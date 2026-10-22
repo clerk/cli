@@ -51,9 +51,12 @@ async function resolveRemote(input: RemoteInput, api: NativeAPI): Promise<Remote
   return { ...input, ...(await resolveInstance(input, api)) };
 }
 
+export type InstanceEnvironment = "development" | "production";
+
 export async function resolveInstance(
   input: Pick<RemoteInput, "applicationId" | "instanceId">,
   api: NativeAPI,
+  environment: InstanceEnvironment = "development",
 ) {
   const application = await api.fetchApplication(input.applicationId, { includeSecretKeys: false });
   if (application.application_id !== input.applicationId)
@@ -62,17 +65,17 @@ export async function resolveInstance(
     });
   const instances = application.instances.filter(
     (instance) =>
-      instance.environment_type === "development" &&
+      instance.environment_type === environment &&
       (!input.instanceId || instance.instance_id === input.instanceId),
   );
   if (instances.length !== 1 || !instances[0]!.instance_id)
-    throw new CliError("Select exactly one development instance for native setup.", {
+    throw new CliError(`Select exactly one ${environment} instance for native setup.`, {
       code: ERROR_CODE.IOS_SETUP_BLOCKED,
     });
   const instance = instances[0]!;
   const decoded = decodePublishableKey(instance.publishable_key);
-  if (decoded.instanceType !== "development")
-    throw new CliError("Native setup requires a development publishable key.", {
+  if (decoded.instanceType !== environment)
+    throw new CliError(`Native setup requires a ${environment} publishable key.`, {
       code: ERROR_CODE.IOS_SETUP_BLOCKED,
     });
   return {
@@ -84,7 +87,7 @@ export async function resolveInstance(
 }
 
 function matchingApplication(
-  context: RemoteContext,
+  context: RemoteInput,
   applications: plapi.IOSApplication[],
 ): plapi.IOSApplication | undefined {
   const matches = applications.filter((app) =>
@@ -106,15 +109,24 @@ function matchingApplication(
   return match;
 }
 
+/** What the instance still needs for this identity, from settings already read. Throws when registrations conflict. */
+export function remoteActions(
+  context: RemoteInput,
+  nativeEnabled: boolean,
+  applications: plapi.IOSApplication[],
+): RemoteAction[] {
+  const actions: RemoteAction[] = [];
+  if (!matchingApplication(context, applications)) actions.push("register-application");
+  if (!nativeEnabled) actions.push("enable-native-api");
+  return actions;
+}
+
 export async function auditRemote(context: RemoteContext, api: NativeAPI): Promise<RemotePlan> {
   const [native, applications] = await Promise.all([
     api.getNativeSettings(context.applicationId, context.instanceId),
     api.listIOSApplications(context.applicationId, context.instanceId),
   ]);
-  const actions: RemoteAction[] = [];
-  if (!matchingApplication(context, applications)) actions.push("register-application");
-  if (!native.api_enabled) actions.push("enable-native-api");
-  return { context, actions };
+  return { context, actions: remoteActions(context, native.api_enabled, applications) };
 }
 
 export async function revalidateRemote(plan: RemotePlan, api: NativeAPI): Promise<RemotePlan> {
