@@ -1,5 +1,22 @@
 import type { SourceEntry } from "../types.ts";
-import { routeByVerification, splitName } from "./shared.ts";
+import { parseDate, routeByVerification, splitName } from "./shared.ts";
+
+/**
+ * Whether an Auth.js `emailVerified` value is a verification: a real date.
+ * The epoch, as `0` or as a date string, is a default, not one, and text that
+ * isn't a date is none; digits alone are a stored integer timestamp. The export reads values by
+ * the same rule, so its coverage is what the import does.
+ */
+export function isAuthJsVerified(value: unknown): boolean {
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\d+$/.test(trimmed)) return Number(trimmed) !== 0;
+    const time = parseDate(trimmed).getTime();
+    return !Number.isNaN(time) && time !== 0;
+  }
+  return Boolean(value);
+}
 
 /**
  * Auth.js (formerly NextAuth) → Clerk transformer.
@@ -16,7 +33,18 @@ import { routeByVerification, splitName } from "./shared.ts";
  * No password default: Auth.js core stores no passwords, so users arrive
  * without a digest and are imported with `skip_password_requirement`. An app
  * using the Credentials provider keeps its own, which this does not read.
+ *
+ * `providers` is what `export authjs` reads from the account table: each
+ * user's OAuth providers, by Auth.js provider ID. They feed the readiness
+ * check, which offers to turn on any Clerk has off.
  */
+/** Auth.js provider IDs named differently from Clerk's provider key. */
+const AUTHJS_PROVIDER_KEYS: Record<string, string> = {
+  "azure-ad": "microsoft",
+  "microsoft-entra-id": "microsoft",
+  linkedin: "linkedin_oidc",
+};
+
 const authjsSource = {
   key: "authjs",
   label: "Auth.js (NextAuth)",
@@ -30,7 +58,7 @@ const authjsSource = {
     mfa: { level: "no", note: "Auth.js has no MFA of its own." },
     metadata: {
       level: "no",
-      note: "Only `id`, `name`, `email`, `email_verified` and `created_at` are read.",
+      note: "Only `id`, `name`, `email`, `email_verified`, `created_at` and the account table's OAuth providers are read.",
     },
   },
   transformer: {
@@ -39,21 +67,18 @@ const authjsSource = {
     email_verified: "emailVerified",
     name: "name",
     created_at: "createdAt",
+    providers: "socialProviders",
   },
   postTransform: (user) => {
-    const verified = user.emailVerified;
-    if (
-      verified === 0 ||
-      (typeof verified === "string" &&
-        (/^\d+$/.test(verified.trim())
-          ? Number(verified) === 0
-          : Number.isNaN(Date.parse(verified))))
-    ) {
+    if (user.emailVerified != null && !isAuthJsVerified(user.emailVerified)) {
       user.emailVerified = null;
     }
     routeByVerification(user, "email", "emailVerified", "timestamp");
     splitName(user);
   },
+
+  socialProviders: (user) =>
+    (user.socialProviders ?? []).map((provider) => AUTHJS_PROVIDER_KEYS[provider] ?? provider),
 } satisfies SourceEntry;
 
 export default authjsSource;

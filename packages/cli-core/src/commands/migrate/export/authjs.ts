@@ -16,7 +16,7 @@ import { log } from "../../../lib/log.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
 import { exportValue, withDbClient, type DbClient } from "../lib/db.ts";
-import { finishExport, startExportRun } from "./shared.ts";
+import { finishExport, startExportRun, type ExportSection } from "./shared.ts";
 import {
   promptDbUrl,
   resolveDbUrl,
@@ -24,6 +24,7 @@ import {
   type ResolveConfig,
 } from "./db-options.ts";
 import { withInputRetry } from "../lib/input-retry.ts";
+import { isAuthJsVerified } from "../sources/authjs.ts";
 
 /** Table names to try, in order. Prisma capitalizes; Drizzle does not. */
 const TABLE_CANDIDATES = ["User", "user", "users"] as const;
@@ -122,11 +123,14 @@ async function storedName(client: DbClient, table: string): Promise<string> {
  * must not hide Auth.js's. When nothing reads, the first column error is the
  * one thrown, since it names a table that was there.
  *
- * @returns The rows and the table they came from, so the run can say which.
+ * @returns The rows; `table`, the candidate that answered, which names the
+ *   account table beside it; and `storedName`, the table as the database
+ *   holds it, for the run to say which it read. They differ only in case, on
+ *   SQLite.
  */
 export async function fetchAuthJsUsers(
   client: DbClient,
-): Promise<{ rows: AuthJsRow[]; table: string }> {
+): Promise<{ rows: AuthJsRow[]; table: string; storedName: string }> {
   let lastError: unknown;
   let columnError: unknown;
 
@@ -137,7 +141,7 @@ export async function fetchAuthJsUsers(
         const rows = await client.query<AuthJsRow>(
           buildAuthJsQuery(client, table, verifiedColumn, createdAt),
         );
-        return { rows, table: await storedName(client, table) };
+        return { rows, table, storedName: await storedName(client, table) };
       } catch (error) {
         // The table is there: try the next shape of it.
         if (isMissingColumn(error)) {
@@ -157,9 +161,84 @@ export async function fetchAuthJsUsers(
     : new Error(`No Auth.js user table found. Tried ${candidates.join(", ")}.`);
 }
 
-export function buildAuthJsExport(rows: AuthJsRow[], record: (line: UserLine) => void = () => {}) {
+/**
+ * The account table beside each user table: the same adapter names both, so
+ * Prisma's `User` sits with `Account`, Drizzle's `user` with `account`.
+ */
+const ACCOUNT_TABLES: Record<string, string> = {
+  "next_auth.users": "next_auth.accounts",
+  User: "Account",
+  user: "account",
+  users: "accounts",
+};
+
+/** The current adapters' account columns, then the legacy NextAuth table's. */
+const ACCOUNT_COLUMNS = [
+  { userId: "userId", provider: "provider", type: "type" },
+  { userId: "user_id", provider: "provider_id", type: "provider_type" },
+] as const;
+
+/** Account types that are an OAuth sign-in; `email` and `credentials` are not. */
+const OAUTH_TYPES = new Set(["oauth", "oidc"]);
+
+/**
+ * Each user's OAuth providers, from the account table beside `userTable`, by
+ * Auth.js provider ID (`github`, `google`).
+ *
+ * @returns `undefined` when there is no account table to read: the export
+ *   then says it could not tell who signed in with OAuth.
+ */
+export async function fetchAuthJsAccounts(
+  client: DbClient,
+  userTable: string,
+): Promise<Map<string, string[]> | undefined> {
+  const table = ACCOUNT_TABLES[userTable];
+  if (!table) return undefined;
+  const q = (identifier: string) => client.quote(identifier);
+  const from = table.split(".").map(q).join(".");
+  for (const columns of ACCOUNT_COLUMNS) {
+    try {
+      // Qualified for the reason buildAuthJsQuery gives.
+      const rows = await client.query<{ user_id: unknown; provider: unknown; type: unknown }>(
+        `SELECT a.${q(columns.userId)} AS ${q("user_id")}, a.${q(columns.provider)} AS ${q("provider")}, ` +
+          `a.${q(columns.type)} AS ${q("type")} FROM ${from} a`,
+      );
+      const providers = new Map<string, string[]>();
+      for (const row of rows) {
+        if (typeof row.provider !== "string" || !OAUTH_TYPES.has(String(row.type))) continue;
+        const userId = String(row.user_id ?? "");
+        const own = providers.get(userId) ?? [];
+        if (!own.includes(row.provider)) own.push(row.provider);
+        providers.set(userId, own);
+      }
+      return providers;
+    } catch (error) {
+      if (isMissingColumn(error)) continue;
+      if (isMissingTable(error)) return undefined;
+      throw error;
+    }
+  }
+  return undefined;
+}
+
+export type AuthJsExportOptions = {
+  /** Each user's OAuth providers; absent when the account table could not be read. */
+  accounts?: Map<string, string[]>;
+  /** Mark the email of a user with an OAuth account verified. */
+  trustOauthEmails?: boolean;
+  /** The verification time written for a trusted email. */
+  now?: string;
+};
+
+export function buildAuthJsExport(
+  rows: AuthJsRow[],
+  record: (line: UserLine) => void = () => {},
+  options: AuthJsExportOptions = {},
+) {
   const users: Record<string, unknown>[] = [];
-  const counts = { email: 0, emailVerified: 0, name: 0 };
+  const counts = { email: 0, emailVerified: 0, name: 0, oauthUnverified: 0, trusted: 0 };
+  const byProvider = new Map<string, number>();
+  const now = options.now ?? new Date().toISOString();
 
   for (const row of rows) {
     const userId = String(row.id ?? "");
@@ -175,11 +254,29 @@ export function buildAuthJsExport(rows: AuthJsRow[], record: (line: UserLine) =>
     }
     // A nullable timestamp, not a boolean: the transformer reads presence.
     // A zero date is no verification, as a number or as a driver's Date.
-    const zeroDate = row.email_verified instanceof Date && row.email_verified.getTime() === 0;
-    const verified = row.email_verified && !zeroDate ? exportValue(row.email_verified) : undefined;
+    const exported = row.email_verified ? exportValue(row.email_verified) : undefined;
+    // As the import reads it: the epoch (a driver's zero Date serializes to
+    // it), "0" and text that isn't a date are no verification, so they are
+    // neither exported nor counted as one.
+    const verified = exported !== undefined && isAuthJsVerified(exported) ? exported : undefined;
+    const providers = options.accounts?.get(userId) ?? [];
+    if (providers.length > 0) {
+      user.providers = providers;
+      for (const provider of providers) {
+        byProvider.set(provider, (byProvider.get(provider) ?? 0) + 1);
+      }
+    }
     if (verified !== undefined) {
       user.email_verified = verified;
       counts.emailVerified++;
+    } else if (row.email && providers.length > 0) {
+      // Auth.js creates an OAuth user with `emailVerified: null`, so their
+      // address arrives unverified unless the operator trusts the provider.
+      if (options.trustOauthEmails) {
+        user.email_verified = now;
+        counts.emailVerified++;
+        counts.trusted++;
+      } else counts.oauthUnverified++;
     }
     // Only a legacy NextAuth table has one: Auth.js's own schemas don't.
     const created = row.created_at ? exportValue(row.created_at) : undefined;
@@ -189,6 +286,18 @@ export function buildAuthJsExport(rows: AuthJsRow[], record: (line: UserLine) =>
     record({ sourceId: userId, status: "exported" });
   }
 
+  const sections: ExportSection[] = options.accounts
+    ? [
+        {
+          title: "OAuth providers",
+          // Busiest first; alphabetical within a tie, so runs print alike.
+          items: [...byProvider]
+            .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+            .map(([label, count]) => ({ label, count })),
+        },
+      ]
+    : [];
+
   return {
     users,
     coverage: [
@@ -196,6 +305,9 @@ export function buildAuthJsExport(rows: AuthJsRow[], record: (line: UserLine) =>
       { label: "have a verified email", count: counts.emailVerified },
       { label: "have a name", count: counts.name },
     ],
+    sections: sections.filter((section) => section.items.length > 0),
+    oauthUnverified: counts.oauthUnverified,
+    trusted: counts.trusted,
   };
 }
 
@@ -206,33 +318,62 @@ const AUTHJS_DB = {
   hint: "Postgres, MySQL, libsql://… or a SQLite file — whichever your Auth.js adapter uses.",
 } as const satisfies ResolveConfig;
 
-export async function exportAuthJs(options: DbExportOptions): Promise<void> {
+export async function exportAuthJs(
+  options: DbExportOptions & { trustOauthEmails?: boolean },
+): Promise<void> {
   const dbUrl = await resolveDbUrl(options, AUTHJS_DB);
 
   await withGutter("Exporting users from Auth.js", async () => {
     if (!options.json) printTarget({ platform: "authjs" });
     const {
-      value: { rows, table },
+      value: { rows, table, storedName: tableName, accounts },
     } = await withInputRetry(
       dbUrl,
       async () => promptDbUrl(AUTHJS_DB),
       async (connectionString) =>
-        withSpinner("Reading the user table...", async () =>
-          withDbClient(connectionString, "authjs", fetchAuthJsUsers),
+        withSpinner("Reading the user and account tables...", async () =>
+          withDbClient(connectionString, "authjs", async (client) => {
+            const found = await fetchAuthJsUsers(client);
+            return { ...found, accounts: await fetchAuthJsAccounts(client, found.table) };
+          }),
         ),
       options,
     );
-    log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${table}.`);
+    log.info(`Read ${rows.length} row${rows.length === 1 ? "" : "s"} from ${tableName}.`);
 
     const run = await startExportRun(options, { platform: "authjs" });
-    const { users, coverage } = buildAuthJsExport(rows, run.append);
-    finishExport({ run, options, users, coverage });
+    const { users, coverage, sections, oauthUnverified, trusted } = buildAuthJsExport(
+      rows,
+      run.append,
+      { ...(accounts ? { accounts } : {}), trustOauthEmails: options.trustOauthEmails },
+    );
+    finishExport({ run, options, users, coverage, sections });
 
     if (users.length > 0) {
       log.warn(
-        "Auth.js core stores no passwords, so users arrive without one. That covers OAuth and email-link sign-in. " +
-          "If the app also uses the Credentials provider, its passwords live in the app's own tables and were not exported: " +
+        "Auth.js core stores no passwords, so users arrive without one, as OAuth and email-link users never had one. " +
+          "If the app also uses the Credentials provider, its passwords live wherever the app stores them, which the export does not read: " +
           "migrate them separately, or have those users reset their password.",
+      );
+    }
+    if (!accounts && users.length > 0) {
+      log.warn(
+        `No account table beside ${tableName}, so the export could not tell who signs in with OAuth. ` +
+          "Auth.js leaves an OAuth user's email unverified, and Clerk won't link a social sign-in to an unverified email.",
+      );
+    }
+    if (oauthUnverified > 0) {
+      log.warn(
+        `${oauthUnverified} user${oauthUnverified === 1 ? " signs" : "s sign"} in with OAuth and ${oauthUnverified === 1 ? "has" : "have"} an unverified email, ` +
+          "as Auth.js leaves it. An instance that requires an email rejects them, and on one that doesn't, Clerk won't link " +
+          "their social sign-in to the imported user, so it creates a second one. If every provider you use verifies " +
+          "addresses, export again with --trust-oauth-emails to mark them verified.",
+      );
+    }
+    if (trusted > 0) {
+      log.warn(
+        `Marked ${trusted} email${trusted === 1 ? "" : "s"} verified because the user signs in with OAuth (--trust-oauth-emails). ` +
+          "A provider that never verified an address lets whoever holds it claim that account in Clerk.",
       );
     }
   });

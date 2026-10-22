@@ -4,7 +4,13 @@ import os from "node:os";
 import path from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
-import { type RunRecord, sha256File, startRun, type StartRunInit } from "./lib/run-store.ts";
+import {
+  continueRun,
+  type RunRecord,
+  sha256File,
+  startRun,
+  type StartRunInit,
+} from "./lib/run-store.ts";
 import { runs } from "./runs.ts";
 
 const captured = useCaptureLog();
@@ -38,7 +44,12 @@ function partialImport(init: Partial<StartRunInit> = {}) {
   run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
   run.append({ sourceId: "b", status: "failed", error: "That email address is taken." });
   run.append({ sourceId: "c", status: "failed", error: "That email address is taken." });
-  run.append({ sourceId: "d", status: "skipped", reason: "no password (--require-password)" });
+  run.append({
+    sourceId: "d",
+    status: "skipped",
+    reason: "no password (--require-password)",
+    code: "no_password",
+  });
   return run.finish();
 }
 
@@ -126,6 +137,80 @@ describe("runs <id>", () => {
     });
   });
 
+  // The import counted these as failed, so `runs` lists them and why: a
+  // create no answer confirmed, and a user with an email left to attach.
+  test("shows creates no answer confirmed, and identifiers left to attach", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({ sourceId: "a", status: "creating" });
+    run.append({ sourceId: "a", status: "creating", error: "bad gateway (a re-run checks)" });
+    run.append({
+      sourceId: "b",
+      status: "created",
+      clerkId: "user_b",
+      pending: [{ kind: "email", value: "b2@x.dev", verified: true }],
+    });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      run: { state: "partial", counts: { creating: 1, pending: 1 } },
+      errors: [{ error: "bad gateway (a re-run checks)", count: 1 }],
+      unconfirmed: [{ sourceId: "a" }],
+    });
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain("1 created, 1 left to attach, 1 not confirmed");
+    expect(err).toContain("Not confirmed (Clerk may have created them; a continue checks) (1)");
+    expect(err).toContain("1 user: bad gateway (a re-run checks)");
+  });
+
+  // A stopped import's unsent users have no lines: only the count says so.
+  test("shows the users a stopped import never sent, in the list and the run", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+      flags: {},
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    const record = run.finish({ notSent: 9000 });
+
+    await runs(undefined, { runsDir });
+    expect(Bun.stripANSI(captured.err)).toContain("1 created, 9000 not sent");
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    expect(Bun.stripANSI(captured.err)).toContain("1 created, 9000 not sent");
+  });
+
+  // An unfinished run is counted from its lines, `pending` included.
+  test("counts identifiers left to attach on a run that never finished", async () => {
+    const record = partialImport();
+    const run = continueRun(runsDir, record);
+    run.append({
+      sourceId: "e",
+      status: "created",
+      clerkId: "user_e",
+      pending: [{ kind: "email", value: "e2@x.dev", verified: true }],
+    });
+    run.release();
+
+    await runs(record.id, { runsDir });
+
+    expect(Bun.stripANSI(captured.err)).toContain("interrupted");
+    expect(Bun.stripANSI(captured.err)).toContain("2 created, 1 left to attach");
+  });
+
   // The record says where the key came from, and which instance to reach
   // again. One row per key source, so none is left to drop its target.
   test.each([
@@ -135,11 +220,21 @@ describe("runs <id>", () => {
     [{ keySource: "linked profile", appId: "app_1" }, "--app app_1 --instance ins_1"],
     // Maybe no longer exported, and `--instance` is refused next to a `.env`.
     [{ keySource: "CLERK_SECRET_KEY env var" }, "--secret-key <key>"],
+    // A framework's own variable, exported the same way: without it, `.env`'s
+    // key would be read instead.
+    [{ keySource: "NUXT_CLERK_SECRET_KEY env var" }, "--secret-key <key>"],
     // Both refuse `--instance`, and the file names the key.
     [{ keySource: ".env" }, "--runs-dir"],
     [{ keySource: "accountless app (.clerk/.tmp/keyless.json)" }, "--runs-dir"],
-    // No `--instance` resolves a stand-in.
-    [{ keySource: "--app", appId: "app_1", instanceId: "key_abc" }, "--app app_1 --runs-dir"],
+    // No `--instance` resolves a stand-in, and a bare `--app` resolves development: the key.
+    [
+      { keySource: "--app", appId: "app_1", instanceId: "key_abc" },
+      "--secret-key <key> --runs-dir",
+    ],
+    [
+      { keySource: "linked profile", appId: "app_1", instanceId: "key_abc" },
+      "--secret-key <key> --runs-dir",
+    ],
   ])("the next command keeps the import's target from %o", async (target, expected) => {
     const record = partialImport();
     const file = path.join(runsDir, record.id, "run.json");
@@ -174,7 +269,9 @@ describe("runs <id>", () => {
     expect(next[0]).toContain(
       `clerk migrate import ${quoteArg(usersFile())} --source clerk --runs-dir ${quoteArg(runsDir)}`,
     );
-    expect(next[0]).toContain("to retry the users that failed or were skipped");
+    expect(next[0]).toContain("to retry the users it didn't finish");
+    // Run as printed, it goes ahead rather than asking for consent.
+    expect(next[0]).toContain(`--runs-dir ${quoteArg(runsDir)} --yes\``);
   });
 
   // An earlier build of this branch wrote none, or a string[]: a continue
@@ -199,6 +296,57 @@ describe("runs <id>", () => {
 
     const { next } = JSON.parse(captured.out) as { next: string[] };
     expect(next[0]).toContain("--source clerk --require-password --runs-dir");
+  });
+
+  // The continue carries --require-password, so it would leave them out again.
+  test("offers no continue when only --require-password skips are left", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+      flags: { requirePassword: true },
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    run.append({
+      sourceId: "d",
+      status: "skipped",
+      reason: "no password (--require-password)",
+      code: "no_password",
+    });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { run: shown, next } = JSON.parse(captured.out) as { run: RunRecord; next: string[] };
+    expect(shown.status).toBe("partial");
+    expect(next).toEqual([expect.stringContaining(`clerk migrate undo ${record.id}`)]);
+  });
+
+  // The continue reads the same file, so the checks skip them again.
+  test("offers no continue when only skips for the file's own data are left", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+      flags: { allowPartial: true },
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    run.append({
+      sourceId: "b",
+      status: "skipped",
+      reason: "invalid: Invalid email",
+      code: "in_file",
+    });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next).toEqual([expect.stringContaining(`clerk migrate undo ${record.id}`)]);
   });
 
   // Each of these would start another run, or refuse, rather than continue it.
@@ -255,7 +403,7 @@ describe("runs <id>", () => {
 
     const { next } = JSON.parse(captured.out) as { next: string[] };
     expect(next).toHaveLength(2);
-    expect(next[0]).toContain("to retry the users that failed or were skipped");
+    expect(next[0]).toContain("to retry the users it didn't finish");
   });
 
   // The record has the custom source's hash, not its path.
@@ -266,6 +414,7 @@ describe("runs <id>", () => {
 
     const { next } = JSON.parse(captured.out) as { next: string[] };
     expect(next[0]).toContain(`clerk migrate import ${quoteArg(usersFile())} --source SOURCE_FILE`);
+    expect(next[0]).toContain("with SOURCE_FILE replaced by the path to the source you wrote");
   });
 
   test("an unknown ID is a usage error", async () => {

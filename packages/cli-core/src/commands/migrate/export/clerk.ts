@@ -289,8 +289,7 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
         ? KEY_SOURCE.envVar
         : undefined;
     if (keyFrom) assertInstanceFlagMatches({ instance: options.instance }, keyFrom, identity);
-    // describeBapiTarget already names where the key came from, env key included.
-    const keySource = source.target ?? keyFrom;
+    const keySource = keyFrom ?? source.target;
     const target = {
       platform: "clerk",
       env: identity.env,

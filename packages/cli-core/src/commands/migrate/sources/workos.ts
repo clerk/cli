@@ -28,7 +28,7 @@ const workosSource = {
   carries: {
     passwords: {
       level: "no",
-      note: "WorkOS never returns password hashes. Users reset their password, or sign in with SSO.",
+      note: "WorkOS's API never returns password hashes. Users reset their password, or sign in with SSO.",
     },
     mfa: { level: "no", note: "WorkOS returns TOTP secrets at enrolment only." },
     metadata: {

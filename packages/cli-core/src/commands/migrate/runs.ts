@@ -13,7 +13,7 @@ import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
 import { tallyError } from "./lib/failures.ts";
 import {
-  countLines,
+  hasRetryableUsers,
   latestUserLines,
   listRuns,
   importsOfFile,
@@ -23,22 +23,24 @@ import {
   runDir,
   runState,
   sha256File,
+  type RunCounts,
   type RunRecord,
   type RunState,
   type UserLine,
   USERS_FILE,
   noRunMessage,
+  withLiveCounts,
 } from "./lib/run-store.ts";
 import { carryFlags, importFlags, undoCommand, withFlags } from "./lib/carry-flags.ts";
 import { plural } from "./lib/plural.ts";
-import { describeTarget, isStandInInstanceId, targetCarry } from "./lib/target.ts";
+import { describeTarget, isStandInInstanceId, laterCarry } from "./lib/target.ts";
 
 export type RunsOptions = {
   json?: boolean;
   runsDir?: string;
 };
 
-/** How many failed or skipped users `runs <id>` prints before pointing at the file. */
+/** How many users of each list `runs <id>` prints before pointing at the file. */
 const USER_LIST_LIMIT = 20;
 
 function formatDate(iso: string): string {
@@ -54,6 +56,13 @@ function colorState(state: RunState): string {
   return state;
 }
 
+// `creating`: a create no answer confirmed. Clerk may hold the user.
+const COUNT_LABELS: Partial<Record<keyof RunCounts, string>> = {
+  creating: "not confirmed",
+  pending: "left to attach",
+  notSent: "not sent",
+};
+
 /** The counts that matter for a run's kind, in the order they are read. */
 function formatCounts(record: RunRecord): string {
   const counts = record.counts;
@@ -62,10 +71,10 @@ function formatCounts(record: RunRecord): string {
       ? (["exported", "skipped"] as const)
       : record.kind === "undo"
         ? (["deleted", "failed"] as const)
-        : (["created", "failed", "skipped"] as const);
+        : (["created", "pending", "creating", "failed", "notSent", "skipped"] as const);
   const parts = order
     .filter((status) => (counts[status] ?? 0) > 0 || status === order[0])
-    .map((status) => `${counts[status] ?? 0} ${status}`);
+    .map((status) => `${counts[status] ?? 0} ${COUNT_LABELS[status] ?? status}`);
   return parts.join(", ");
 }
 
@@ -95,14 +104,17 @@ function pad(rows: string[][]): string[] {
 function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
   const counts = new Map<string, number>();
   for (const line of lines) {
-    if (line.status === "failed" && line.error) tallyError(counts, line.error);
+    if ((line.status === "failed" || line.status === "creating") && line.error) {
+      tallyError(counts, line.error);
+    }
   }
   return [...counts].map(([error, count]) => ({ error, count })).sort((a, b) => b.count - a.count);
 }
 
 /**
  * The import that continues this run: its file (or export run) and source,
- * with the flags that reach the same runs folder and instance.
+ * with the flags that reach the same runs folder and instance, ending in
+ * `--yes`. None when the run has no file, or flags this build can't read.
  */
 function continueCommand(record: RunRecord, carry: string[]): string | undefined {
   // Every import records its flags. None, or the string[] an earlier build
@@ -116,7 +128,7 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
   // not `<…>`: pasted as is, a shell reads `<file>` as a redirect.
   if (record.sourceHash) parts.push("--source", "SOURCE_FILE");
   else if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
-  return withFlags(parts.join(" "), [...importFlags(record.flags ?? {}), ...carry]);
+  return withFlags(parts.join(" "), [...importFlags(record.flags), ...carry, "--yes"]);
 }
 
 /**
@@ -159,17 +171,22 @@ function nextCommands(
   record: RunRecord,
   state: RunState,
   carry: string[],
+  latest: UserLine[],
 ): string[] {
   if (state === "running") return [];
   if (record.kind === "import" && state !== "undone") {
     const undo = `Run \`${undoCommand(record.id, carry)}\` to delete the users it created`;
     const again = continueCommand(record, carry);
     if (!again || state === "complete" || !continuesThisRun(runsDir, record)) return [undo];
+    if (state === "partial" && !hasRetryableUsers(record, latest)) return [undo];
     // Continuing is what a stopped run is for: the same file, source and
     // target pick it up where it left off.
-    const why =
-      state === "interrupted" ? "continue it" : "retry the users that failed or were skipped";
-    return [`Run \`${again}\` to ${why}`, undo];
+    const why = state === "interrupted" ? "continue it" : "retry the users it didn't finish";
+    // The record knows a source you wrote only by its hash.
+    const placeholder = record.sourceHash
+      ? ", with SOURCE_FILE replaced by the path to the source you wrote"
+      : "";
+    return [`Run \`${again}\` to ${why}${placeholder}`, undo];
   }
   if (record.kind === "undo" && state !== "complete" && record.undoes) {
     return [`Run \`${undoCommand(record.undoes, carry)}\` to retry the users that failed`];
@@ -210,16 +227,18 @@ function printList(runsDir: string, records: RunRecord[]): void {
   log.info(dim(plural(records.length, "run")));
 }
 
+/** One run in full: `--json` prints it, and `printRun` renders it. */
 function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const lines = [...latestUserLines(runsDir, record.id).values()];
   const state = runState(runsDir, record);
   return {
     runsDir,
     run: { ...record, state },
-    next: nextCommands(runsDir, record, state, carry),
+    next: nextCommands(runsDir, record, state, carry, lines),
     errors: errorBreakdown(lines),
     failed: lines.filter((line) => line.status === "failed"),
     skipped: lines.filter((line) => line.status === "skipped"),
+    unconfirmed: lines.filter((line) => line.status === "creating"),
   };
 }
 
@@ -237,17 +256,15 @@ function printUsers(title: string, lines: UserLine[], usersFile: string): void {
 }
 
 function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
-  const state = runState(runsDir, record);
-  const dir = runDir(runsDir, record.id);
-  const usersFile = path.join(dir, USERS_FILE);
-  const lines = [...latestUserLines(runsDir, record.id).values()];
+  const view = showJson(runsDir, record, carry);
+  const usersFile = path.join(runDir(runsDir, record.id), USERS_FILE);
 
   log.info(`Runs folder: ${runsDir}`);
   log.blank();
   const header: [string, string | undefined][] = [
     ["Run", record.id],
     ["Kind", record.kind],
-    ["Status", colorState(state)],
+    ["Status", colorState(view.run.state)],
     ["Started", formatDate(record.startedAt)],
     ["Finished", record.finishedAt ? formatDate(record.finishedAt) : undefined],
     ["Target", describeTarget(record.target)],
@@ -263,38 +280,25 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
   const width = Math.max(...shown.map(([label]) => label.length)) + 2;
   for (const [label, value] of shown) log.info(`${bold(label.padEnd(width))}${value}`);
 
-  const errors = errorBreakdown(lines);
-  if (errors.length > 0) {
+  if (view.errors.length > 0) {
     log.blank();
     log.info(bold("Error breakdown"));
-    for (const { error, count } of errors) {
+    for (const { error, count } of view.errors) {
       log.info(`  ${red(String(count))} ${count === 1 ? "user" : "users"}: ${error}`);
     }
   }
 
+  printUsers("Failed", view.failed, usersFile);
   printUsers(
-    "Failed",
-    lines.filter((line) => line.status === "failed"),
+    "Not confirmed (Clerk may have created them; a continue checks)",
+    view.unconfirmed,
     usersFile,
   );
-  printUsers(
-    "Skipped",
-    lines.filter((line) => line.status === "skipped"),
-    usersFile,
-  );
+  printUsers("Skipped", view.skipped, usersFile);
 
   log.blank();
   log.info(dim(`Every outcome: ${usersFile}`));
-  for (const step of nextCommands(runsDir, record, state, carry)) log.info(`  → ${step}`);
-}
-
-/**
- * Counts are written when a run finishes, so an interrupted one still holds
- * its start's zeros. Those are counted from its user lines instead.
- */
-function withLiveCounts(runsDir: string, record: RunRecord): RunRecord {
-  if (record.finishedAt) return record;
-  return { ...record, counts: countLines(latestUserLines(runsDir, record.id).values()) };
+  for (const step of view.next) log.info(`  → ${step}`);
 }
 
 export async function runs(id: string | undefined, options: RunsOptions = {}): Promise<void> {
@@ -313,7 +317,7 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
 
   // The record says where the import's key came from, and so which flags
   // reach that instance again.
-  const carry = carryFlags({ runsDir: options.runsDir, ...targetCarry(record.target) });
+  const carry = laterCarry(options.runsDir, record.target);
   if (options.json) log.data(JSON.stringify(showJson(runsDir, record, carry), null, 2));
   else printRun(runsDir, record, carry);
 }

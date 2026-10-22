@@ -1,9 +1,11 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+// Colour is on or off depending on the runner, so rows are compared bare.
+import { stripVTControlCharacters as stripAnsi } from "node:util";
 import type { UserLine } from "../lib/run-store.ts";
+import { formatSection } from "./shared.ts";
 import { CliError, EXIT_CODE } from "../../../lib/errors.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { setAssumeYes } from "../lib/assume-yes.ts";
@@ -25,15 +27,15 @@ const captured = useCaptureLog();
 
 const API_KEY = "sk_test";
 
-/** Colour is on or off depending on the runner, so rows are compared bare. */
-const stripAnsi = (value: string): string => value.replace(/\u001b\[[0-9;]*m/g, "");
-
 let workDir: string;
 let originalCwd: string;
 let originalFetch: typeof globalThis.fetch;
 let requests: string[];
 
+let originalMode: string | undefined;
+
 beforeAll(() => {
+  originalMode = process.env.CLERK_MODE;
   originalCwd = process.cwd();
   originalFetch = globalThis.fetch;
   workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-expworkos-")));
@@ -41,6 +43,8 @@ beforeAll(() => {
 });
 
 afterAll(() => {
+  if (originalMode === undefined) delete process.env.CLERK_MODE;
+  else process.env.CLERK_MODE = originalMode;
   globalThis.fetch = originalFetch;
   process.chdir(originalCwd);
   fs.rmSync(workDir, { recursive: true, force: true });
@@ -49,7 +53,7 @@ afterAll(() => {
 beforeEach(() => {
   // Tests that need a prompt set human mode themselves; without this a leaked
   // "human" from an earlier test stops a later one on the destination prompt.
-  setMode("agent");
+  process.env.CLERK_MODE = "agent";
   requests = [];
   fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
   fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
@@ -137,13 +141,8 @@ describe("resolveWorkOsApiKey", () => {
   });
 
   test("does not prompt under --json, even with a human at the TTY", async () => {
-    const originalMode = getMode();
-    setMode("human");
-    try {
-      await expect(resolveWorkOsApiKey({ json: true }, {})).rejects.toThrow(/cannot prompt here/);
-    } finally {
-      setMode(originalMode);
-    }
+    process.env.CLERK_MODE = "human";
+    await expect(resolveWorkOsApiKey({ json: true }, {})).rejects.toThrow(/cannot prompt here/);
   });
 
   // `-y` is "do not prompt", at a terminal too, as for every other export.
@@ -268,35 +267,23 @@ describe("resolveWithIdentities", () => {
   // One request per user, for nothing the import can use: `-y` takes the
   // prompt's default rather than committing to it unasked.
   test("is off under -y, which takes the prompt's default", async () => {
-    const originalMode = getMode();
-    setMode("human");
+    process.env.CLERK_MODE = "human";
     setAssumeYes(true);
     try {
       expect(await resolveWithIdentities({}, 10)).toBe(false);
     } finally {
       setAssumeYes(false);
-      setMode(originalMode);
     }
   });
 
   test("is off under --json, even with a human at the TTY", async () => {
-    const originalMode = getMode();
-    setMode("human");
-    try {
-      expect(await resolveWithIdentities({ json: true }, 10)).toBe(false);
-    } finally {
-      setMode(originalMode);
-    }
+    process.env.CLERK_MODE = "human";
+    expect(await resolveWithIdentities({ json: true }, 10)).toBe(false);
   });
 
   test("does not ask when there are no users to ask about", async () => {
-    const originalMode = getMode();
-    setMode("human");
-    try {
-      expect(await resolveWithIdentities({}, 0)).toBe(false);
-    } finally {
-      setMode(originalMode);
-    }
+    process.env.CLERK_MODE = "human";
+    expect(await resolveWithIdentities({}, 0)).toBe(false);
   });
 });
 
@@ -417,8 +404,8 @@ test("fetchAllWorkOsIdentities counts a user with no id as failed", async () => 
 });
 
 describe("buildIdentityReport", () => {
-  const rowsOf = (section: { rows: string[] }) =>
-    section.rows.map((row) => stripAnsi(row).trimEnd());
+  const rowsOf = (section: Parameters<typeof formatSection>[0]) =>
+    formatSection(section).map((row) => stripAnsi(row).trimEnd());
 
   test("ranks providers by use, and counts users with none", () => {
     const section = buildIdentityReport(
@@ -433,6 +420,12 @@ describe("buildIdentityReport", () => {
     );
 
     expect(section.title).toBe("OAuth providers");
+    // Plain values for --json; the terminal pads and dims them.
+    expect(section.items).toEqual([
+      { label: "GoogleOAuth", count: 2 },
+      { label: "MicrosoftOAuth", count: 1 },
+      { label: "no OAuth provider", count: 2 },
+    ]);
     expect(rowsOf(section)).toEqual([
       "  GoogleOAuth        2 users",
       "  MicrosoftOAuth     1 user",
@@ -583,15 +576,10 @@ describe("exportWorkOs", () => {
     stubWorkOs([[workosUser(0)]]);
     // The suggestion rides the gutter's Next steps block, which only renders
     // in human mode.
-    const originalMode = getMode();
-    setMode("human");
-    try {
-      // --output answers the destination prompt, and --with-identities answers
-      // the providers question, so human mode stops on neither.
-      await exportWorkOs({ apiKey: API_KEY, output: "exports/mine.json", withIdentities: true });
-    } finally {
-      setMode(originalMode);
-    }
+    process.env.CLERK_MODE = "human";
+    // --output answers the destination prompt, and --with-identities answers
+    // the providers question, so human mode stops on neither.
+    await exportWorkOs({ apiKey: API_KEY, output: "exports/mine.json", withIdentities: true });
     expect(captured.err).toMatch(/clerk migrate import \d{8}-\d{6}-[0-9a-f]{4}/);
   });
 

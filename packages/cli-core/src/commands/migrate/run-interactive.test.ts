@@ -28,10 +28,10 @@ const mockSelect = mock(async () => "clerk" as unknown);
 const mockText = mock(async () => "export.json" as unknown);
 const mockPassword = mock(async () => "" as unknown);
 let confirmAnswer = true;
-/** The answer to the reserved-identifiers question, apart from consent. */
-let reserveAnswer = true;
 /** User settings the instance serves, or none (the settings read fails). */
 let instanceSettings: Record<string, unknown> | undefined;
+/** The answer to the reserved-identifiers question, apart from consent. */
+let reserveAnswer = true;
 /** Every confirmation the run put up, in order — the wording is the assertion. */
 let confirmMessages: string[] = [];
 let originalMode: string | undefined;
@@ -103,8 +103,8 @@ beforeEach(() => {
   terminalAvailable.mockReturnValue(true);
   requests = [];
   confirmAnswer = true;
-  reserveAnswer = true;
   instanceSettings = undefined;
+  reserveAnswer = true;
   confirmMessages = [];
   mockSelect.mockReset();
   mockText.mockReset();
@@ -149,6 +149,25 @@ const created = () =>
   requests.filter((r) => r.method === "POST" && new URL(r.url).pathname === "/v1/users");
 
 const importOptions = { input: "export.json", source: "clerk", secretKey: "sk_test_x" };
+
+// A yes at the prompt is consent to this run, so the retry it suggests runs
+// as printed, like `runs <id>`'s continue.
+test("after a yes at the prompt, the suggested retry carries --yes", async () => {
+  const clerk = globalThis.fetch;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const body = typeof init?.body === "string" ? init.body : "";
+    return init?.method === "POST" && body.includes('"u2"')
+      ? Response.json(
+          { errors: [{ message: "taken", code: "form_identifier_exists" }] },
+          { status: 422 },
+        )
+      : clerk(input, init);
+  }) as typeof fetch;
+
+  await run(importOptions);
+
+  expect(Bun.stripANSI(captured.err)).toMatch(/--yes` to retry them/);
+});
 
 describe("prompts for what was not passed", () => {
   test("bare `clerk migrate import` asks for the file, then the source, then imports", async () => {
@@ -266,6 +285,113 @@ describe("consent", () => {
   });
 });
 
+describe("firebase hash parameters", () => {
+  // `-y` is "import without prompting", at a terminal too.
+  test("-y never asks for them, and names the flags instead", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify({
+        users: [{ localId: "fb1", email: "a@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" }],
+      }),
+    );
+
+    await expect(run({ ...importOptions, source: "firebase", yes: true })).rejects.toThrow(
+      /--firebase-signer-key --firebase-salt-separator --firebase-rounds --firebase-mem-cost/,
+    );
+    expect(mockPassword).not.toHaveBeenCalled();
+    expect(mockText).not.toHaveBeenCalled();
+    expect(created()).toHaveLength(0);
+  });
+
+  // The suggested retry runs with --yes, which never asks again.
+  test("parameters entered at the prompt go into the retry the import suggests", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify({
+        users: [
+          { localId: "fb1", email: "a@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" },
+          { localId: "fb2", email: "b@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" },
+        ],
+      }),
+    );
+    mockPassword.mockResolvedValueOnce("c2lnbmVy");
+    mockText.mockImplementation((async (prompt: { message: string }) =>
+      prompt.message.includes("salt separator")
+        ? "c2VwYXJhdG9y"
+        : prompt.message === "rounds"
+          ? "8"
+          : "14") as unknown as typeof mockText);
+
+    // fb2's create fails, so the run ends partial and suggests the retry.
+    const clerk = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      return init?.method === "POST" && body.includes('"fb2"')
+        ? Response.json(
+            { errors: [{ message: "taken", code: "form_identifier_exists" }] },
+            { status: 422 },
+          )
+        : clerk(input, init);
+    }) as typeof fetch;
+    await run({ ...importOptions, source: "firebase" });
+
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(
+      "--firebase-signer-key SIGNER_KEY --firebase-salt-separator SALT_SEPARATOR --firebase-rounds ROUNDS --firebase-mem-cost MEM_COST",
+    );
+    expect(err).not.toContain("c2lnbmVy");
+  });
+});
+
+describe("legal consent", () => {
+  beforeEach(() => {
+    instanceSettings = {
+      attributes: { email_address: { enabled: true } },
+      sign_up: { legal_consent_enabled: true },
+      // A way in besides a password, so users without one import.
+      enterprise_sso: { enabled: true },
+    };
+  });
+
+  test("asks, and a yes imports the users without it", async () => {
+    await run(importOptions);
+
+    expect(confirmMessages[0]).toContain("no legal acceptance on record");
+    expect(created()).toHaveLength(2);
+  });
+
+  // A rerun with --yes skips the prompt, so the command has to carry the answer.
+  test("a yes carries into the command the refusal suggests", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([
+        ...EXPORT,
+        {
+          id: "u3",
+          primary_email_address: "c@x.dev",
+          password_digest: "d",
+          password_hasher: "rot13",
+        },
+      ]),
+    );
+
+    const error = (await run(importOptions).catch((caught: unknown) => caught)) as {
+      examples?: { command: string }[];
+    };
+
+    expect(confirmMessages[0]).toContain("no legal acceptance on record");
+    expect(error.examples?.[0]?.command).toContain("--skip-legal-checks");
+  });
+
+  // `-y` is "import without prompting": the checks reject these users instead.
+  test("--yes does not ask, and the checks reject them", async () => {
+    await expect(run({ ...importOptions, yes: true })).rejects.toThrow(/2 users would be rejected/);
+
+    expect(confirmMessages).toEqual([]);
+    expect(created()).toHaveLength(0);
+  });
+});
+
 describe("unverified identifiers", () => {
   const withUnverified = [
     { id: "u1", primary_email_address: "a@x.dev" },
@@ -334,6 +460,8 @@ describe("unverified identifiers", () => {
     await run(importOptions);
 
     expect(confirmMessages.some((message) => message.includes("never verified"))).toBe(true);
+    // Recorded, so a later `-y` continue reserves the rest as this one did.
+    expect(listRuns(runsDir())[0]?.reserveUnverified).toBe(true);
   });
 
   test("a no keeps them unverified, attached after the user exists", async () => {
@@ -383,73 +511,5 @@ describe("unverified identifiers", () => {
 
     expect(confirmMessages).toEqual(["Import 2 users?"]);
     expect(statuses()).toEqual([undefined, ["verified", "reserved"]]);
-  });
-});
-
-describe("firebase hash parameters", () => {
-  // `-y` is "import without prompting", at a terminal too.
-  test("-y never asks for them, and names the flags instead", async () => {
-    fs.writeFileSync(
-      path.join(workDir, "export.json"),
-      JSON.stringify({
-        users: [{ localId: "fb1", email: "a@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" }],
-      }),
-    );
-
-    await expect(run({ ...importOptions, source: "firebase", yes: true })).rejects.toThrow(
-      /--firebase-signer-key --firebase-salt-separator --firebase-rounds --firebase-mem-cost/,
-    );
-    expect(mockPassword).not.toHaveBeenCalled();
-    expect(mockText).not.toHaveBeenCalled();
-    expect(created()).toHaveLength(0);
-  });
-});
-
-describe("legal consent", () => {
-  beforeEach(() => {
-    instanceSettings = {
-      attributes: { email_address: { enabled: true } },
-      sign_up: { legal_consent_enabled: true },
-      // A way in besides a password, so users without one import.
-      enterprise_sso: { enabled: true },
-    };
-  });
-
-  test("asks, and a yes imports the users without it", async () => {
-    await run(importOptions);
-
-    expect(confirmMessages[0]).toContain("no legal acceptance on record");
-    expect(created()).toHaveLength(2);
-  });
-
-  // A rerun with --yes skips the prompt, so the command has to carry the answer.
-  test("a yes carries into the command the refusal suggests", async () => {
-    fs.writeFileSync(
-      path.join(workDir, "export.json"),
-      JSON.stringify([
-        ...EXPORT,
-        {
-          id: "u3",
-          primary_email_address: "c@x.dev",
-          password_digest: "d",
-          password_hasher: "rot13",
-        },
-      ]),
-    );
-
-    const error = (await run(importOptions).catch((caught: unknown) => caught)) as {
-      examples?: { command: string }[];
-    };
-
-    expect(confirmMessages[0]).toContain("no legal acceptance on record");
-    expect(error.examples?.[0]?.command).toContain("--skip-legal-checks");
-  });
-
-  // `-y` is "import without prompting": the checks reject these users instead.
-  test("--yes does not ask, and the checks reject them", async () => {
-    await expect(run({ ...importOptions, yes: true })).rejects.toThrow(/2 users would be rejected/);
-
-    expect(confirmMessages).toEqual([]);
-    expect(created()).toHaveLength(0);
   });
 });

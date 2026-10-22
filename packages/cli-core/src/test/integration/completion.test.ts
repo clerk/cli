@@ -222,8 +222,15 @@ describe("generateCompletions", () => {
 
     test("completes --source with the built-in migrate sources", () => {
       const names = completionNames("migrate", "import", "--source", "");
-      expect(names).toContain("clerk");
-      expect(names).toContain("betterauth");
+      expect(names).toEqual([
+        "clerk",
+        "auth0",
+        "authjs",
+        "betterauth",
+        "firebase",
+        "supabase",
+        "workos",
+      ]);
     });
 
     test("returns empty for options with unknown values (file paths)", () => {

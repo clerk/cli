@@ -52,6 +52,11 @@ export type Reject = {
   reason: string;
   /** For a duplicate: the earlier user in the file that is kept instead. */
   keptSourceId?: string;
+  /**
+   * Caused by the file's own data, so the same file rejects it again: no
+   * setting or instance change lets it in on a continue.
+   */
+  inFile?: true;
 };
 
 export type ReasonCount = { reason: string; count: number };
@@ -81,6 +86,13 @@ export type ImportChecks = {
   /** Users that do not, each with the first reason that applies to them. */
   rejects: Reject[];
   rejectReasons: ReasonCount[];
+  /**
+   * Users their source asked to skip (a soft-deleted or anonymous account),
+   * with its reason. Left out like a reject, but never a reason to stop the
+   * import: nobody is meant to bring them across.
+   */
+  skipped: Reject[];
+  skippedReasons: ReasonCount[];
   warnings: string[];
   fixes: Fix[];
   quota?: Quota;
@@ -95,6 +107,8 @@ export type CheckInput = {
   unknownFields?: Record<string, number>;
   /** The raw Supabase rows, for the provider checks. Absent for any other source. */
   supabaseRows?: Record<string, unknown>[];
+  /** Another source's reading of each user's social providers, for the readiness check. */
+  socialProviders?: (user: User) => string[];
   settings: UserSettingsJSON | null;
   /** Users already in the instance, for the quota. Development instances only. */
   existingUsers?: number | null;
@@ -755,8 +769,10 @@ function findDisabledProviderRejects(input: CheckInput): Map<string, string> {
   const canSignInOtherwise = (id: string) => {
     const user = usersById.get(id);
     if (!user) return false;
-    // An email Clerk refuses is stripped before the create, so it is no way in.
-    const { emails, phones } = sentIdentifiers(dropRefusedEmails(user).user, reserves(user));
+    // An email Clerk refuses, or a phone not in E.164 form with numeric
+    // usernames on, is stripped before the create, so it is no way in.
+    const sent = dropLoosePhones(dropRefusedEmails(user).user, input.settings).user;
+    const { emails, phones } = sentIdentifiers(sent, reserves(user));
     return (
       (emails.length > 0 && (strategies.has("email_code") || strategies.has("email_link"))) ||
       (phones.length > 0 && strategies.has("phone_code"))
@@ -789,6 +805,18 @@ function rowsFor(input: CheckInput, users: User[]): Record<string, unknown>[] {
   return input.supabaseRows.filter((row) => ids.has(String(row.id)));
 }
 
+/** Users per social provider, from Supabase's rows or the source's own reading. */
+function socialCounts(input: CheckInput, users: User[]): Record<string, number> {
+  if (input.supabaseRows) return countSocialProviders(rowsFor(input, users));
+  const counts: Record<string, number> = {};
+  for (const user of users) {
+    for (const provider of input.socialProviders?.(user) ?? []) {
+      counts[provider] = (counts[provider] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
 /** Each readiness row's field, with its article: "an email", not "a email". */
 const FIELD_NOUNS: Record<string, string> = {
   email_address: "an email",
@@ -805,7 +833,7 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
     const report = buildReadinessReport({
       analysis: analyzeFields(importable),
       settings: input.settings,
-      providerCounts: countSocialProviders(rowsFor(input, importable)),
+      providerCounts: socialCounts(input, importable),
     });
     for (const item of report.blocking) {
       if (item.consequence === "stored") {
@@ -885,7 +913,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   const report = buildReadinessReport({
     analysis: analyzeFields(users),
     settings: input.settings,
-    providerCounts: countSocialProviders(rowsFor(input, users)),
+    providerCounts: socialCounts(input, users),
   });
 
   // An unverified email does not satisfy a required one, so a file of only
@@ -1044,9 +1072,11 @@ function placeholderWarning(count: number): string[] {
 export const ALREADY_IMPORTED = "already in the instance, with this source ID";
 
 export async function checkImport(input: CheckInput): Promise<ImportChecks> {
+  const skipped: Reject[] = [];
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
     reason: `invalid: ${failure.error}`,
+    inFile: true,
   }));
 
   const disabledProviders = findDisabledProviderRejects(input);
@@ -1076,6 +1106,15 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     if (phoned.dropped) loosePhoneUsers.add(original.userId);
     const user = phoned.user;
     const sent = dropDisabledIdentifiers(user, input.settings);
+    // The file's own data, which the same file brings back on a continue.
+    const refusedOnly =
+      refused.length > 0 && !phoned.dropped && !hasAnyIdentifier(user)
+        ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
+        : undefined;
+    const hashProblem =
+      user.password && user.passwordHasher
+        ? hashShapeProblem(user.password, user.passwordHasher)
+        : undefined;
     const reserve = reservesFor(input)(user);
     const reason = adopted(original)
       ? undefined
@@ -1083,9 +1122,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         (refused.length > 0 && phoned.dropped && !hasAnyIdentifier(user)
           ? "only has emails Clerk refuses and phones not in E.164 form (numeric usernames are on)"
           : undefined) ??
-        (refused.length > 0 && !hasAnyIdentifier(user)
-          ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
-          : undefined) ??
+        refusedOnly ??
         (phoned.dropped && !hasAnyIdentifier(user)
           ? "only has phones not in E.164 form, which this instance refuses (numeric usernames are on)"
           : undefined) ??
@@ -1110,12 +1147,13 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
           ? "no legal acceptance on record, which this instance requires (--skip-legal-checks imports them without it)"
           : undefined) ??
         usernameProblem(user, input.settings, loosePhones) ??
-        (user.password && user.passwordHasher
-          ? hashShapeProblem(user.password, user.passwordHasher)
-          : undefined) ??
+        hashProblem ??
         disabledProviders.get(user.userId));
-    if (reason) {
-      rejects.push({ sourceId: user.userId, reason });
+    if (reason && reason === original.skipReason) {
+      skipped.push({ sourceId: user.userId, reason, inFile: true });
+    } else if (reason) {
+      const inFile = reason === refusedOnly || reason === hashProblem;
+      rejects.push({ sourceId: user.userId, reason, ...(inFile ? { inFile: true as const } : {}) });
     } else {
       passed.push(sent);
       unstripped.set(sent, user);
@@ -1142,6 +1180,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         sourceId: user.userId,
         reason: "shares an email, phone or username with a user an earlier attempt already created",
         keptSourceId: holder,
+        inFile: true,
       });
       duplicates.add(originals.get(user) ?? user);
       continue;
@@ -1152,7 +1191,12 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const duplicate = fileDuplicates.get(user);
     const reason = adopted(user) && duplicate !== DUPLICATE_SOURCE_ID ? undefined : duplicate;
     if (reason) {
-      rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
+      rejects.push({
+        sourceId: user.userId,
+        reason,
+        ...(kept ? { keptSourceId: kept } : {}),
+        inFile: true,
+      });
       duplicates.add(originals.get(user) ?? user);
     } else candidates.push(user);
   }
@@ -1202,6 +1246,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     ),
     rejects,
     rejectReasons: countReasons(rejects),
+    skipped,
+    skippedReasons: countReasons(skipped),
     warnings: [
       ...buildWarnings(
         input,

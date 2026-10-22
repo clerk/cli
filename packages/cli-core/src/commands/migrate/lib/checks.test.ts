@@ -164,7 +164,9 @@ describe("rejects", () => {
     const checks = await checkImport(
       input({ failures: [{ userId: "bad", row: 0, error: "Invalid email", path: ["email"] }] }),
     );
-    expect(checks.rejects).toEqual([{ sourceId: "bad", reason: "invalid: Invalid email" }]);
+    expect(checks.rejects).toEqual([
+      { sourceId: "bad", reason: "invalid: Invalid email", inFile: true },
+    ]);
     expect(checks.total).toBe(1);
   });
 
@@ -290,6 +292,7 @@ describe("rejects", () => {
         sourceId: "auth0|1",
         reason: "email is also used by an earlier user in the file, which is kept",
         keptSourceId: "email|1",
+        inFile: true,
       },
     ]);
   });
@@ -387,7 +390,7 @@ describe("rejects", () => {
     const checks = await checkImport(input({ users: [user("a"), user("a")] }));
     expect(checks.importable.map((u) => u.userId)).toEqual(["a"]);
     expect(checks.rejects).toEqual([
-      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a" },
+      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a", inFile: true },
     ]);
   });
 
@@ -479,6 +482,26 @@ describe("rejects", () => {
     ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
   });
 
+  test("a phone not in E.164 form is no way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: {
+          ...settings({
+            phone_number: {
+              enabled: true,
+              used_for_first_factor: true,
+              first_factors: ["phone_code"],
+            },
+            username: { enabled: true },
+          }),
+          username_settings: { min_length: 4, max_length: 64, allow_numeric_usernames: true },
+        } as unknown as UserSettingsJSON,
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: undefined, username: "12345", phone: "(555) 123-4567" })],
+      }),
+    ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
   test("an unverified email is no way in for a supabase user on a disabled provider", async () => {
     expect(
       await reasonsOf({
@@ -534,6 +557,24 @@ describe("rejects", () => {
   });
 
   // Each reject names that user's providers, not every disabled one in the file.
+  // Counts only: Auth0 users are never rejected for a provider, but the run
+  // still says which providers to enable before they import.
+  test("a source's own provider reading offers the fix, and rejects no one", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings(
+          { email_address: { enabled: true } },
+          { oauth_google: { enabled: true } },
+        ),
+        socialProviders: (u) => (u.userId.startsWith("github|") ? ["github"] : ["google"]),
+        users: [user("github|1"), user("google-oauth2|2")],
+      }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.fixes.map((fix) => fix.label)).toContain("Enable GitHub sign-in");
+    expect(checks.fixes.map((fix) => fix.label)).not.toContain("Enable Google sign-in");
+  });
+
   test("a supabase reject names only that user's own providers", async () => {
     const rows = [
       { id: "discord", raw_app_meta_data: { providers: ["discord"] } },
@@ -620,6 +661,7 @@ describe("rejects", () => {
         sourceId: "early",
         reason: "shares an email, phone or username with a user an earlier attempt already created",
         keptSourceId: "late",
+        inFile: true,
       },
     ]);
   });
@@ -642,6 +684,7 @@ describe("rejects", () => {
         sourceId: "a",
         reason: "shares an email, phone or username with a user an earlier attempt already created",
         keptSourceId: "b",
+        inFile: true,
       },
     ]);
   });
@@ -655,7 +698,7 @@ describe("rejects", () => {
     );
     expect(checks.importable).toHaveLength(1);
     expect(checks.rejects).toEqual([
-      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a" },
+      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a", inFile: true },
     ]);
   });
 
@@ -679,11 +722,17 @@ describe("rejects", () => {
     }
   });
 
-  test("a user its source asked to skip, with the source's reason", async () => {
+  // Skipped, not rejected: a reject stops the import without --allow-partial,
+  // and nobody is meant to bring these users across.
+  test("a user its source asked to skip is skipped, with the source's reason", async () => {
     const checks = await checkImport(
       input({ users: [user("a", { skipReason: "anonymous Better Auth user" }), user("b")] }),
     );
-    expect(checks.rejects).toEqual([{ sourceId: "a", reason: "anonymous Better Auth user" }]);
+    expect(checks.rejects).toEqual([]);
+    expect(checks.skipped).toEqual([
+      { sourceId: "a", reason: "anonymous Better Auth user", inFile: true },
+    ]);
+    expect(checks.skippedReasons).toEqual([{ reason: "anonymous Better Auth user", count: 1 }]);
     expect(checks.importable.map((entry) => entry.userId)).toEqual(["b"]);
   });
 
@@ -698,6 +747,7 @@ describe("rejects", () => {
         {
           sourceId: "a",
           reason: "only has emails Clerk refuses (malformed, or a domain that can't receive mail)",
+          inFile: true,
         },
       ]);
     });

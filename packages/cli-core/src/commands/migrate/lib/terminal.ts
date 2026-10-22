@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { isAgent, isHuman } from "../../../mode.ts";
+import { isHuman } from "../../../mode.ts";
 
 /**
  * Whether a prompt has a terminal to read: stdin, or `/dev/tty` behind a piped
@@ -20,5 +20,6 @@ export const terminal = {
 
 /** Whether someone can answer a prompt: not an agent, a non-TTY run, or `--json`. */
 export function canPrompt(options: { json?: boolean }): boolean {
-  return !options.json && isHuman() && !isAgent() && terminal.available();
+  // A mode is human or agent, so isHuman() alone rules an agent out.
+  return !options.json && isHuman() && terminal.available();
 }

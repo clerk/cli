@@ -1,5 +1,8 @@
 /**
- * The three database-backed exports, driven against a real SQLite database.
+ * The database-backed exports, driven against a real SQLite database:
+ * resolving the connection string, the Supabase export's row mapping, the
+ * Auth.js export's table detection, the Better Auth export's schema
+ * detection, and connection failures.
  *
  * SQLite because it is the one engine that needs no container, and it
  * exercises the same client, the same query building and the same plugin
@@ -7,16 +10,21 @@
  * MySQL are covered by the manual matrix run recorded in the ticket.
  */
 
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CliError } from "../../../lib/errors.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { createDbClient, type DbClient } from "../lib/db.ts";
-import { buildAuthJsExport, buildAuthJsQuery, exportAuthJs, fetchAuthJsUsers } from "./authjs.ts";
+import {
+  buildAuthJsExport,
+  buildAuthJsQuery,
+  exportAuthJs,
+  fetchAuthJsAccounts,
+  fetchAuthJsUsers,
+} from "./authjs.ts";
 import {
   buildBetterAuthExport,
   buildBetterAuthQuery,
@@ -58,7 +66,6 @@ afterAll(() => {
 
 beforeEach(() => {
   fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
-  fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
 });
 
 /** Builds a fresh SQLite file so each test starts from a known schema. */
@@ -243,9 +250,9 @@ describe("authjs export", () => {
   test.each([["User"], ["user"], ["users"]])(
     "finds the %s table, by its own name",
     async (table) => {
-      const { rows, table: found } = await withClient(authJsDb(table), fetchAuthJsUsers);
+      const { rows, storedName } = await withClient(authJsDb(table), fetchAuthJsUsers);
       expect(rows).toHaveLength(2);
-      expect(found).toBe(table);
+      expect(storedName).toBe(table);
     },
   );
 
@@ -361,6 +368,144 @@ describe("authjs export", () => {
     expect(captured.err).toContain("Credentials provider");
   });
 });
+
+describe("authjs OAuth accounts", () => {
+  /** Prisma's `User` and `Account`, with aj2 signing in with GitHub and Google. */
+  const withAccounts = () =>
+    makeDb((db) => {
+      db.run(
+        `CREATE TABLE "User" (id TEXT PRIMARY KEY, name TEXT, email TEXT, "emailVerified" TEXT)`,
+      );
+      db.run(`INSERT INTO "User" VALUES (?,?,?,?)`, ["aj1", "Jane", "jane@x.dev", "2024-01-15"]);
+      db.run(`INSERT INTO "User" VALUES (?,?,?,?)`, ["aj2", "John", "john@x.dev", null]);
+      db.run(`INSERT INTO "User" VALUES (?,?,?,?)`, ["aj3", "Ann", "ann@x.dev", null]);
+      db.run(`CREATE TABLE "Account" ("userId" TEXT, type TEXT, provider TEXT)`);
+      for (const row of [
+        ["aj2", "oauth", "github"],
+        ["aj2", "oidc", "google"],
+        ["aj2", "oauth", "github"],
+        // An email-link or Credentials account is not an OAuth sign-in.
+        ["aj3", "email", "email"],
+        ["aj1", "credentials", "credentials"],
+      ]) {
+        db.run(`INSERT INTO "Account" VALUES (?,?,?)`, row);
+      }
+    });
+
+  test("reads each user's OAuth providers, once each", async () => {
+    const accounts = await withClient(withAccounts(), async (client) =>
+      fetchAuthJsAccounts(client, (await fetchAuthJsUsers(client)).table),
+    );
+    expect(Object.fromEntries(accounts ?? [])).toEqual({ aj2: ["github", "google"] });
+  });
+
+  test("reads a legacy NextAuth accounts table", async () => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE users (id TEXT PRIMARY KEY, name TEXT, email TEXT, email_verified TEXT)`,
+      );
+      db.run(`CREATE TABLE accounts (user_id TEXT, provider_type TEXT, provider_id TEXT)`);
+      db.run(`INSERT INTO accounts VALUES (?,?,?)`, ["n1", "oauth", "github"]);
+    });
+    const accounts = await withClient(file, async (client) => fetchAuthJsAccounts(client, "users"));
+    expect(Object.fromEntries(accounts ?? [])).toEqual({ n1: ["github"] });
+  });
+
+  test("says there is no account table rather than failing", async () => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE "User" (id TEXT PRIMARY KEY, name TEXT, email TEXT, "emailVerified" TEXT)`,
+      );
+    });
+    expect(
+      await withClient(file, async (client) => fetchAuthJsAccounts(client, "User")),
+    ).toBeUndefined();
+  });
+
+  const rows = [
+    { id: "aj1", email: "jane@x.dev", email_verified: "2024-01-15" },
+    { id: "aj2", email: "john@x.dev" },
+  ];
+  const accounts = new Map([["aj2", ["github"]]]);
+
+  // Auth.js leaves an OAuth user's email unverified, and Clerk then neither
+  // accepts it as a required email nor links a social sign-in to it.
+  test("counts OAuth users with an unverified email, and keeps it unverified", () => {
+    const result = buildAuthJsExport(rows, () => {}, { accounts });
+    expect(result.users[1]).toEqual({ id: "aj2", email: "john@x.dev", providers: ["github"] });
+    expect(result.oauthUnverified).toBe(1);
+    expect(result.trusted).toBe(0);
+    expect(result.sections).toEqual([
+      { title: "OAuth providers", items: [{ label: "github", count: 1 }] },
+    ]);
+  });
+
+  test("--trust-oauth-emails marks an OAuth user's email verified", () => {
+    const now = "2026-10-20T00:00:00.000Z";
+    const result = buildAuthJsExport(rows, () => {}, { accounts, trustOauthEmails: true, now });
+    expect(result.users[1]).toMatchObject({ email_verified: now, providers: ["github"] });
+    // A user already verified keeps their own date.
+    expect(result.users[0]).toMatchObject({ email_verified: "2024-01-15" });
+    expect(result.trusted).toBe(1);
+    expect(result.oauthUnverified).toBe(0);
+  });
+
+  test("warns how many OAuth users arrive unverified, and how to trust them", async () => {
+    await exportAuthJs({ dbUrl: withAccounts(), output: "oauth.json" });
+
+    const written = JSON.parse(fs.readFileSync(path.join(workDir, "oauth.json"), "utf-8"));
+    expect(written.users.find((u: { id: string }) => u.id === "aj2")).toMatchObject({
+      providers: ["github", "google"],
+    });
+    expect(captured.err).toContain("1 user signs in with OAuth and has an unverified email");
+    expect(captured.err).toContain("--trust-oauth-emails");
+  });
+
+  test("says which emails it trusted, and the risk", async () => {
+    await exportAuthJs({ dbUrl: withAccounts(), output: "trusted.json", trustOauthEmails: true });
+
+    const written = JSON.parse(fs.readFileSync(path.join(workDir, "trusted.json"), "utf-8"));
+    expect(written.users.find((u: { id: string }) => u.id === "aj2")?.email_verified).toBeString();
+    expect(captured.err).toContain("Marked 1 email verified because the user signs in with OAuth");
+  });
+
+  // SQLite matches `users` to a table stored as `Users`; the account table is
+  // found from the candidate that matched, not the stored casing.
+  test("finds the account table beside a user table stored in other casing", async () => {
+    const file = makeDb((db) => {
+      db.run(
+        `CREATE TABLE "Users" (id TEXT PRIMARY KEY, name TEXT, email TEXT, email_verified TEXT)`,
+      );
+      db.run(`INSERT INTO "Users" VALUES (?,?,?,?)`, ["n1", "Ann", "ann@x.dev", null]);
+      db.run(`CREATE TABLE "Accounts" (user_id TEXT, provider_type TEXT, provider_id TEXT)`);
+      db.run(`INSERT INTO "Accounts" VALUES (?,?,?)`, ["n1", "oauth", "github"]);
+    });
+
+    await exportAuthJs({ dbUrl: file, output: "cased.json", trustOauthEmails: true });
+
+    const written = JSON.parse(fs.readFileSync(path.join(workDir, "cased.json"), "utf-8"));
+    expect(written.users[0]).toMatchObject({ providers: ["github"] });
+    // The account table was read, so the flag has someone to trust.
+    expect(written.users[0].email_verified).toBeString();
+    expect(captured.err).toContain("Marked 1 email verified");
+    expect(captured.err).toContain("from Users.");
+    expect(captured.err).not.toContain("No account table");
+  });
+
+  test("warns when there is no account table to read", async () => {
+    await exportAuthJs({ dbUrl: authJsDbWithoutAccounts(), output: "plain.json" });
+    expect(captured.err).toContain("could not tell who signs in with OAuth");
+  });
+});
+
+function authJsDbWithoutAccounts(): string {
+  return makeDb((db) => {
+    db.run(
+      `CREATE TABLE "user" (id TEXT PRIMARY KEY, name TEXT, email TEXT, "emailVerified" TEXT)`,
+    );
+    db.run(`INSERT INTO "user" VALUES (?,?,?,?)`, ["aj1", "Jane", "jane@x.dev", null]);
+  });
+}
 
 describe("betterauth export", () => {
   test("detects only the plugin columns that exist", async () => {
@@ -699,6 +844,30 @@ describe("a date that holds no real date", () => {
     expect(users[0]).not.toHaveProperty("email_verified");
   });
 
+  // SQLite TEXT can hold these. The import reads them as unverified, so the
+  // export neither writes them nor counts them as verified.
+  test.each([["0"], ["not-a-date"], ["1970-01-01T00:00:00.000Z"]])(
+    "treats an Auth.js %p as unverified",
+    (value) => {
+      const { users, coverage } = buildAuthJsExport([
+        { id: "aj1", email: "a@x.dev", email_verified: value },
+      ]);
+      expect(users[0]).not.toHaveProperty("email_verified");
+      expect(coverage.find((c) => c.label === "have a verified email")?.count).toBe(0);
+    },
+  );
+
+  test('lets --trust-oauth-emails mark an OAuth user whose value was "0"', () => {
+    const now = "2026-10-21T00:00:00.000Z";
+    const { users, trusted } = buildAuthJsExport(
+      [{ id: "aj1", email: "a@x.dev", email_verified: "0" }],
+      () => {},
+      { accounts: new Map([["aj1", ["github"]]]), trustOauthEmails: true, now },
+    );
+    expect(users[0]).toMatchObject({ email_verified: now });
+    expect(trusted).toBe(1);
+  });
+
   // Counted from what is exported, so coverage agrees with the file.
   test.each([
     [
@@ -727,15 +896,6 @@ describe("a date that holds no real date", () => {
 });
 
 describe("connection failures", () => {
-  afterEach(() => {
-    fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
-  });
-
-  test("a missing SQLite file fails before anything is written", async () => {
-    await expect(exportAuthJs({ dbUrl: "./definitely-not-here.sqlite" })).rejects.toThrow(CliError);
-    expect(fs.existsSync(path.join(workDir, "exports"))).toBe(false);
-  });
-
   // Supabase is Postgres: anything else would connect and then fail.
   test.each([["mysql://u:p@127.0.0.1:1/db"], ["./definitely-not-here.sqlite"]])(
     "refuses %s before connecting or writing a run",
@@ -763,7 +923,7 @@ describe("connection failures", () => {
 
   test("the failure never contains the password", async () => {
     await expect(
-      exportBetterAuth({ dbUrl: "postgres://user:hunter2@127.0.0.1:1/db" }),
+      exportSupabase({ dbUrl: "postgres://user:hunter2@127.0.0.1:1/db" }),
     ).rejects.toThrow(
       expect.objectContaining({ message: expect.not.stringContaining("hunter2") }) as Error,
     );

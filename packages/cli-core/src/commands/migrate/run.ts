@@ -73,11 +73,17 @@ import {
   type Run,
   type RunRecord,
   type UserLine,
+  hasRetryableUsers,
+  NO_PASSWORD_CODE,
+  IN_FILE_CODE,
+  SOURCE_SKIP_CODE,
   unfinishedUndoMessage,
   inUseMessage,
   openUndoOf,
+  patchRun,
   importsOfFile,
   undosOf,
+  withAttempt,
 } from "./lib/run-store.ts";
 import { withProgress } from "./lib/progress.ts";
 import { createApiScheduler } from "./lib/scheduler.ts";
@@ -86,9 +92,9 @@ import {
   isClerkInstanceId,
   isStandInInstanceId,
   keyInstanceId,
+  laterCarry,
   printTarget,
   resolveClerkTarget,
-  targetCarry,
 } from "./lib/target.ts";
 import { findInFlight } from "./lib/user-lookup.ts";
 import {
@@ -97,7 +103,7 @@ import {
   loadUsersFromFile,
   resolveImportFilePath,
 } from "./lib/transform.ts";
-import { resolveSource, sourceKeys } from "./sources/registry.ts";
+import { getSource, resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
 import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
 import { login } from "../auth/login.ts";
@@ -303,6 +309,8 @@ async function resolveInput(options: MigrateRunOptions): Promise<{
   exportSha256?: string;
   /** The instance an export run read its users from. */
   exportInstanceId?: string;
+  /** The export run's source cut it short, so its file is not every user. */
+  exportTruncated?: true;
 }> {
   const value = options.input;
   if (!value) {
@@ -360,6 +368,7 @@ async function resolveInput(options: MigrateRunOptions): Promise<{
     fromExport: record.id,
     exportSha256: sha256,
     ...(record.target.instanceId ? { exportInstanceId: record.target.instanceId } : {}),
+    ...(record.truncated ? { exportTruncated: true as const } : {}),
   };
 }
 
@@ -502,14 +511,15 @@ type ResumeCase =
  *
  * - none, or undone: a new run
  * - interrupted: continue it, skipping the users it created
- * - partial: continue it, retrying the users that failed or were skipped
+ * - partial: continue it, retrying the users it didn't finish
  * - complete: nothing; the file is already in
  *
  * @throws UsageError when that run is still running in another process, or
  *   has an undo that never finished: some of its users are gone and some are
- *   not, so neither continuing it nor starting over is safe. Also when the
- *   latest run of this file was made with an earlier version of a custom
- *   source and was not undone.
+ *   not, so neither continuing it nor starting over is safe. Also when Clerk
+ *   did not confirm the instance and a run of this file names a real one, or
+ *   when the latest run of this file was made with an earlier version of a
+ *   custom source and was not undone.
  */
 function findResume(
   runsDir: string,
@@ -530,7 +540,8 @@ function findResume(
   const latest = importsOfFile(runs, match).find(
     (record) => sameFileAndInstance(record, match) && record.sourceHash === match.sourceHash,
   );
-  if (!latest) {
+  // An undone exact match starts a new run, so it checks the others too.
+  if (!latest || undoneInFull(runsDir, latest)) {
     // Another source's run of this file, or an earlier version of this one,
     // sent the same users: starting over beside it would reject every user it
     // created and leave it unfinished, so that takes --new-run. Any such run
@@ -541,9 +552,11 @@ function findResume(
     );
     if (earlier) {
       const how =
-        earlier.source === match.source
-          ? "with an earlier version of this source"
-          : `with the \`${earlier.source}\` source`;
+        earlier.source !== match.source
+          ? `with the \`${earlier.source}\` source`
+          : earlier.sourceHash !== match.sourceHash
+            ? "with an earlier version of this source"
+            : "too, and was not undone";
       throwUsageError(
         `Run ${earlier.id} imported this file into this instance ${how}, so the users it created would come back as conflicts. Nothing was imported.\n` +
           `Pass --new-run to start a new run beside it, or undo it first with \`${undoCommand(earlier.id, carry)}\`.`,
@@ -617,6 +630,13 @@ function printChecks(checks: ImportChecks): void {
     }
   }
 
+  if (checks.skipped.length > 0) {
+    log.info(`  ${dim("-")} ${plural(checks.skipped.length, "user")} skipped, as the source asked`);
+    for (const { reason, count } of checks.skippedReasons) {
+      log.info(`      ${count}: ${dim(reason)}`);
+    }
+  }
+
   if (checks.warnings.length > 0) {
     log.info(`  ${yellow("⚠")} ${yellow("Imported, but not everything comes across")}`);
     for (const warning of checks.warnings) log.info(`      ${dim(warning)}`);
@@ -646,6 +666,8 @@ function checksJson(checks: ImportChecks) {
     importable: checks.importable.length,
     rejects: checks.rejects,
     rejectReasons: checks.rejectReasons,
+    skipped: checks.skipped,
+    skippedReasons: checks.skippedReasons,
     warnings: checks.warnings,
     fixes: checks.fixes,
     ...(checks.quota ? { quota: checks.quota } : {}),
@@ -667,6 +689,10 @@ function formatSummary(
   if (skipped > 0) lines.push(`${yellow("Skipped:")} ${skipped}`);
   // The user quota stopped the run: these go out on a re-run.
   if (summary.notSent > 0) lines.push(`${yellow("Not sent:")} ${summary.notSent}`);
+  // Created, but an email or phone did not attach: a re-run attaches it.
+  const pending = record.counts.pending ?? 0;
+  if (pending > 0)
+    lines.push(`${yellow("Identifiers left to attach:")} ${plural(pending, "user")}`);
   // Printed here, after the progress bar, which would redraw over it mid-run.
   if (summary.stopReason) {
     lines.push(
@@ -739,8 +765,10 @@ export function cleanupLines(runsDir: string, record: RunRecord): string[] {
 // --- The import ------------------------------------------------------------
 
 /**
- * The exact command that would carry on from here, for the consent and
- * refusal messages. Every value is shell-quoted; secrets are placeholders.
+ * The exact command that would carry on from here. The consent and refusal
+ * messages, run straight away, use the live flags; the retry step after a run,
+ * run later, passes `carry` built from the run's target. Every value is
+ * shell-quoted; secrets are placeholders.
  */
 function commandFor(
   options: MigrateRunOptions,
@@ -783,30 +811,61 @@ function rejectSummary(checks: ImportChecks, json = false): string {
 }
 
 /**
- * The earlier import run, of this source into this instance, that created the
- * users the checks reject as already there, and how many of them: fixing a
- * skipped row changes the file, and the changed file's run meets them.
+ * The earlier import run into this instance, of any source, that created the
+ * users the checks reject as already there: how many of them, and whether it
+ * ran this same file. Fixing a skipped row changes the file, and the changed
+ * file's run meets them; so does the same file run with `--new-run`.
  */
 function earlierRunHolding(
   runsDir: string,
-  source: string,
   instanceId: string,
   checks: ImportChecks,
-): { id: string; count: number } | undefined {
+  sha256: string,
+): { id: string; count: number; sameFile: boolean } | undefined {
   const already = new Set(
     checks.rejects.filter((reject) => reject.reason === ALREADY_IMPORTED).map((r) => r.sourceId),
   );
   if (already.size === 0) return undefined;
   for (const record of listRuns(runsDir)) {
-    if (record.kind !== "import" || record.source !== source) continue;
+    // Any source: findResume and the import lock match on file and instance.
+    if (record.kind !== "import") continue;
     if (record.target.instanceId !== instanceId || runState(runsDir, record) === "undone") continue;
     let count = 0;
     for (const line of latestUserLines(runsDir, record.id).values()) {
       if (line.status === "created" && already.has(line.sourceId)) count++;
     }
-    if (count > 0) return { id: record.id, count };
+    if (count > 0) return { id: record.id, count, sameFile: record.file?.sha256 === sha256 };
   }
   return undefined;
+}
+
+/**
+ * The run the same import without `--new-run` would continue, when that is
+ * run `id` and it would import someone: `findResume` has to pick it, and it
+ * has to hold a user the continue retries. A `--require-password` skip is one
+ * when this import drops the flag.
+ */
+function continuesWithoutNewRun(
+  runsDir: string,
+  match: Parameters<typeof findResume>[1],
+  carry: string[],
+  id: string,
+  requirePassword: boolean | undefined,
+): RunRecord | undefined {
+  let resume: ResumeCase;
+  try {
+    resume = findResume(runsDir, match, carry);
+  } catch {
+    // It would refuse: see findResume's @throws.
+    return undefined;
+  }
+  if (resume.kind !== "continue" || resume.record.id !== id) return undefined;
+  const lines = [...latestUserLines(runsDir, id).values()];
+  const retries =
+    hasRetryableUsers(resume.record, lines) ||
+    (!requirePassword &&
+      lines.some((line) => line.status === "skipped" && line.code === NO_PASSWORD_CODE));
+  return retries ? resume.record : undefined;
 }
 
 /**
@@ -820,16 +879,21 @@ function continueWithExport(run: Run, fromExport: string | undefined): Run {
 }
 
 /**
- * Records the checks' rejects as skipped users, so the run says who they were.
- * The checks never reject an adopted user: it is created already.
+ * Records the checks' rejects, and the users their source skipped, as skipped
+ * users, so the run says who they were. The checks never reject an adopted
+ * user: it is created already.
  */
 function recordRejects(run: Run, checks: ImportChecks): void {
-  for (const { sourceId, reason, keptSourceId } of checks.rejects) {
+  for (const { sourceId, reason, keptSourceId, inFile } of checks.rejects) {
     run.append({
       sourceId,
       status: "skipped",
       reason: keptSourceId ? `${reason} (kept: ${keptSourceId})` : reason,
+      ...(inFile ? { code: IN_FILE_CODE } : {}),
     });
+  }
+  for (const { sourceId, reason } of checks.skipped) {
+    run.append({ sourceId, status: "skipped", reason, code: SOURCE_SKIP_CODE });
   }
 }
 
@@ -900,6 +964,16 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
   if (hashSource === "firebase" && !firebaseHashConfig && !options.yes && canPrompt(options)) {
     firebaseHashConfig = await promptForFirebaseHashConfig();
     configFrom = "the parameters entered";
+    // A suggested command runs with --yes, which never asks: it names the flags.
+    if (firebaseHashConfig) {
+      options = {
+        ...options,
+        firebaseSignerKey: firebaseHashConfig.base64_signer_key,
+        firebaseSaltSeparator: firebaseHashConfig.base64_salt_separator,
+        firebaseRounds: firebaseHashConfig.rounds,
+        firebaseMemCost: firebaseHashConfig.mem_cost,
+      };
+    }
   }
   // Wherever they came from, each goes into every password digest.
   const problem = firebaseHashConfig && firebaseHashConfigProblem(firebaseHashConfig);
@@ -957,19 +1031,16 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         instanceId: target.instanceId,
         keyInstanceId: keyInstanceId(secretKey),
       });
+      const match = {
+        sha256,
+        source,
+        ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
+        instanceId: target.instanceId,
+        keyInstanceId: keyInstanceId(secretKey),
+      };
       const resume: ResumeCase = options.newRun
         ? { kind: "new" }
-        : findResume(
-            runsDir,
-            {
-              sha256,
-              source,
-              ...(options.sourceHash ? { sourceHash: options.sourceHash } : {}),
-              instanceId: target.instanceId,
-              keyInstanceId: keyInstanceId(secretKey),
-            },
-            carry,
-          );
+        : findResume(runsDir, match, carry);
 
       // The users this run created carry digests built from its parameters, so
       // the rest must be built from the same ones. A run from before this was
@@ -989,12 +1060,19 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
 
       if (resume.kind === "complete") {
+        // Imported by path and named now by its export run ID: the record
+        // links the export, so the cleanup names the folder holding the data.
+        const record =
+          input.fromExport && resume.record.fromExport !== input.fromExport
+            ? (patchRun(runsDir, resume.record.id, { fromExport: input.fromExport }) ??
+              resume.record)
+            : resume.record;
         if (options.json) {
-          log.data(JSON.stringify({ target, run: resume.record, alreadyImported: true }, null, 2));
+          log.data(JSON.stringify({ target, run: record, alreadyImported: true }, null, 2));
         } else {
-          log.success(
-            `Already imported in run ${resume.record.id}. Pass --new-run to import it again.`,
-          );
+          log.success(`Already imported in run ${record.id}. Pass --new-run to import it again.`);
+          log.blank();
+          for (const line of cleanupLines(runsDir, record)) log.info(line);
         }
         return;
       }
@@ -1173,6 +1251,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),
+          socialProviders: getSource(source).socialProviders,
           settings,
           existingUsers,
           instanceType: limits.instanceType,
@@ -1186,11 +1265,23 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           spinner,
         }),
       );
+      // With the checks' warnings, so `--json` carries it too: an agent reads
+      // stdout, not the stderr a separate warning would go to.
+      if (input.exportTruncated) {
+        checks.warnings.unshift(
+          `Export run ${input.fromExport} did not get every user: the source cut it short. ` +
+            "Users it never reached are not in this import.",
+        );
+      }
 
       const refused = checks.rejects.length > 0 && !options.allowPartial;
       // The users --require-password left out never reach the checks, so the
       // JSON says how many, or `checks.total` would not add up to the file.
-      const leftOut = withoutPassword.length > 0 ? { withoutPassword: withoutPassword.length } : {};
+      // Attach-only users skip them too, and a consent refusal names them.
+      const leftOut = {
+        ...(withoutPassword.length > 0 ? { withoutPassword: withoutPassword.length } : {}),
+        ...(attachOnly.length > 0 ? { attachOnly: attachOnly.length } : {}),
+      };
       const preview = (extra: Record<string, unknown>) =>
         log.data(
           JSON.stringify(
@@ -1222,22 +1313,65 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       if (refused) {
         if (options.json) preview({ refused: true });
-        const earlier = earlierRunHolding(runsDir, source, target.instanceId, checks);
+        const earlier = earlierRunHolding(runsDir, target.instanceId, checks, sha256);
         const undoEarlier = earlier ? undoCommand(earlier.id, carry) : undefined;
+        const earlierRun =
+          options.newRun && earlier
+            ? continuesWithoutNewRun(runsDir, match, carry, earlier.id, options.requirePassword)
+            : undefined;
+        // The flags that got that run past its checks: without them its
+        // continue refuses the same users again.
+        const recorded =
+          earlierRun?.flags && !Array.isArray(earlierRun.flags) ? earlierRun.flags : {};
+        const continueEarlier = earlierRun
+          ? commandFor(
+              {
+                ...options,
+                newRun: false,
+                allowPartial: options.allowPartial || recorded.allowPartial,
+                skipLegalChecks: options.skipLegalChecks || recorded.skipLegalChecks,
+                // Its own mode: a continue refuses --reserve-unverified on a run
+                // that kept them unverified.
+                reserveUnverified: earlierRun.reserveUnverified ?? options.reserveUnverified,
+              },
+              input.fromExport,
+              ["--yes"],
+            )
+          : undefined;
+        // With every user rejected, --allow-partial would start a run that
+        // imports nobody, so it isn't offered.
+        const nonePass = checks.importable.length === 0 && attachOnly.length === 0;
+        const ways = earlier
+          ? [
+              ...(nonePass ? [] : ["pass --allow-partial to import the rest into a new run"]),
+              `undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again`,
+            ].join(", or ")
+          : "";
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
             `${rejectSummary(checks, options.json)} ` +
             (earlier
-              ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from an earlier version of this file. ` +
-                `Pass --allow-partial to import the rest into a new run, or undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again.`
-              : "Fix them, or pass --allow-partial to import the rest and record them as skipped."),
+              ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from ${earlier.sameFile ? "this file" : "an earlier version of this file"}. ` +
+                (continueEarlier
+                  ? `Drop --new-run to continue run ${earlier.id}. Or ${ways}.`
+                  : `${ways[0]!.toUpperCase()}${ways.slice(1)}.`)
+              : nonePass
+                ? "Fix them: with every user rejected, --allow-partial would import nobody."
+                : "Fix them, or pass --allow-partial to import the rest and record them as skipped."),
           undefined,
           undefined,
           [
-            {
-              command: commandFor(options, input.fromExport, ["--allow-partial", "--yes"]),
-              description: "Import the users that pass",
-            },
+            ...(continueEarlier
+              ? [{ command: continueEarlier, description: `Continue run ${earlier!.id}` }]
+              : []),
+            ...(nonePass
+              ? []
+              : [
+                  {
+                    command: commandFor(options, input.fromExport, ["--allow-partial", "--yes"]),
+                    description: "Import the users that pass",
+                  },
+                ]),
             ...(undoEarlier
               ? [{ command: undoEarlier, description: `Undo run ${earlier!.id} first` }]
               : []),
@@ -1248,31 +1382,50 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       if (
         checks.importable.length === 0 &&
         checks.rejects.length === 0 &&
+        checks.skipped.length === 0 &&
         withoutPassword.length === 0 &&
         attachOnly.length === 0
       ) {
         // Settled, so a continued run is finished rather than left interrupted,
         // and the JSON reports it as finished, as run.json now does.
+        // Continued by export run ID, the run records the export it now reads.
         const finished = continued
-          ? continueRun(runsDir, continued, plannedLines, carry).finish()
+          ? continueWithExport(
+              continueRun(
+                runsDir,
+                withAttempt(continued, target, pickImportFlags(options)),
+                plannedLines,
+                carry,
+              ),
+              input.fromExport,
+            ).finish()
           : undefined;
         if (options.json)
           preview({ nothingToImport: true, ...(finished ? { run: finished } : {}) });
-        else log.warn("No users left to import.");
+        else {
+          log.warn("No users left to import.");
+          if (finished?.status === "complete") {
+            log.blank();
+            for (const line of cleanupLines(runsDir, finished)) log.info(line);
+          }
+        }
         return;
       }
 
       // Rule 1: nothing is written without consent — `--yes`, or a yes at a
       // prompt. An agent, a non-TTY run and `--json` never prompt. With users
-      // skipped, the question names them: "Import 0 users?" hides the skips.
+      // skipped or attaches left, the question names them: "Import 0 users?"
+      // hides both.
       const toCreate = plural(checks.importable.length, "user");
-      const skipping = checks.rejects.length + withoutPassword.length;
+      const attaches =
+        attachOnly.length > 0 ? `, attach identifiers to ${plural(attachOnly.length, "user")}` : "";
+      const skipping = checks.rejects.length + checks.skipped.length + withoutPassword.length;
       const skips = skipping > 0 ? ` and skip ${plural(skipping, "user")}` : "";
       if (!options.yes) {
         if (!canPrompt(options)) {
           if (options.json) preview({ consent: "required" });
           throwUsageError(
-            `\`clerk migrate import\` will create ${toCreate}${skips}. Pass --yes to confirm.`,
+            `\`clerk migrate import\` will create ${toCreate}${attaches}${skips}. Pass --yes to confirm.`,
             undefined,
             undefined,
             [
@@ -1285,7 +1438,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         }
         log.blank();
         const proceed = await confirm({
-          message: skips ? `Create ${toCreate}${skips}?` : `Import ${toCreate}?`,
+          message:
+            skips || attaches ? `Create ${toCreate}${attaches}${skips}?` : `Import ${toCreate}?`,
           default: false,
         });
         if (!proceed) throwUserAbort();
@@ -1295,7 +1449,16 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       await resolveRunsDir(options.runsDir, { write: true });
       const flags = pickImportFlags(options);
       const run = continued
-        ? continueWithExport(continueRun(runsDir, continued, plannedLines, carry), input.fromExport)
+        ? continueWithExport(
+            // The answer is recorded, so a later `-y` continue keeps it.
+            continueRun(
+              runsDir,
+              { ...withAttempt(continued, target, flags), reserveUnverified },
+              plannedLines,
+              carry,
+            ),
+            input.fromExport,
+          )
         : startRun(runsDir, {
             kind: "import",
             target,
@@ -1308,8 +1471,6 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
             reserveUnverified,
             flags,
           });
-      // The flags this attempt ran with, which the next continue repeats.
-      if (continued) run.update({ flags });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
       // before the import returns, and the folder is the only record of who
       // was created.
@@ -1320,6 +1481,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           sourceId: user.userId,
           status: "skipped",
           reason: "no password (--require-password)",
+          code: NO_PASSWORD_CODE,
         });
       }
 
@@ -1376,8 +1538,9 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                 created: summary.successful,
                 failed: summary.failed,
                 notSent: summary.notSent,
+                pending: record.counts.pending ?? 0,
                 ...(summary.stopReason ? { stopReason: summary.stopReason } : {}),
-                skipped: checks.rejects.length + withoutPassword.length,
+                skipped: checks.rejects.length + checks.skipped.length + withoutPassword.length,
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
                 warnings: [...summary.droppedPhones].map(([reason, count]) => ({
                   warning: `imported without their phone: ${reason}`,
@@ -1395,7 +1558,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       log.blank();
       for (const line of formatSummary(
         summary,
-        checks.rejects.length + withoutPassword.length,
+        checks.rejects.length + checks.skipped.length + withoutPassword.length,
         record,
         run.dir,
         limits.instanceType,
@@ -1409,21 +1572,20 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       // `runs` takes only --runs-dir.
       const runsStep = runsCommand(carryFlags({ runsDir: options.runsDir }), record.id);
-      // Run later, maybe without the key exported, so from the run's target,
-      // the way `runs <id>` builds them.
-      const later = carryFlags({ runsDir: options.runsDir, ...targetCarry(record.target) });
+      // Run later, maybe without the key exported: from the run's target.
+      const later = laterCarry(options.runsDir, record.target);
       const undo = undoCommand(record.id, later);
+      // A partial run continues, as `runs <id>` says: a skip fixed since (a
+      // setting the checks named) imports then. Not when only `--require-password`
+      // skips are left: the continue would leave them out again.
       const steps =
-        summary.failed > 0
-          ? NEXT_STEPS.MIGRATE_DONE_WITH_ERRORS(
+        record.status === "partial" &&
+        hasRetryableUsers(record, latestUserLines(runsDir, record.id).values())
+          ? NEXT_STEPS.MIGRATE_PARTIAL(
               runsStep,
               // The same import again continues this run; --new-run would not.
-              commandFor(
-                { ...options, newRun: false },
-                input.fromExport,
-                options.yes ? ["--yes"] : [],
-                later,
-              ),
+              // Run as printed: consent was given to this run, at the prompt or by -y.
+              commandFor({ ...options, newRun: false }, input.fromExport, ["--yes"], later),
               undo,
             )
           : NEXT_STEPS.MIGRATE_DONE(runsStep, undo);

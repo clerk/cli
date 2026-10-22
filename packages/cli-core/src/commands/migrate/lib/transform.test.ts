@@ -4,8 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import clerkSource from "../sources/clerk.ts";
-import { __resetCustomSourcesForTesting, registerCustomSource } from "../sources/registry.ts";
 import type { SourceEntry } from "../types.ts";
+import { __resetCustomSourcesForTesting, registerCustomSource } from "../sources/registry.ts";
 import {
   consolidateClerkIdentifiers,
   flattenObjectSelectively,
@@ -277,27 +277,6 @@ describe("loadUsersFromFile", () => {
     expect(users.map((user) => user.userId)).toEqual(["#7"]);
   });
 
-  test("a custom preTransform's rows win over a CSV file", async () => {
-    registerCustomSource({
-      ...clerkSource,
-      key: "rows-from-pretransform",
-      preTransform: (filePath) => ({
-        filePath,
-        data: [{ id: "from-pretransform", primary_email_address: "p@x.dev" }],
-      }),
-    });
-    try {
-      fs.writeFileSync(
-        path.join(workDir, "ignored.csv"),
-        "id,primary_email_address\nfile,f@x.dev\n",
-      );
-      const { users } = await loadUsersFromFile("ignored.csv", "rows-from-pretransform");
-      expect(users.map((user) => user.userId)).toEqual(["from-pretransform"]);
-    } finally {
-      __resetCustomSourcesForTesting();
-    }
-  });
-
   test("keeps a row's own value over the source's default", async () => {
     const source: SourceEntry = clerkSource;
     source.defaults = { passwordHasher: "bcrypt" };
@@ -320,6 +299,27 @@ describe("loadUsersFromFile", () => {
     }
   });
 
+  test("a custom preTransform's rows win over a CSV file", async () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "rows-from-pretransform",
+      preTransform: (filePath) => ({
+        filePath,
+        data: [{ id: "from-pretransform", primary_email_address: "p@x.dev" }],
+      }),
+    });
+    try {
+      fs.writeFileSync(
+        path.join(workDir, "ignored.csv"),
+        "id,primary_email_address\nfile,f@x.dev\n",
+      );
+      const { users } = await loadUsersFromFile("ignored.csv", "rows-from-pretransform");
+      expect(users.map((user) => user.userId)).toEqual(["from-pretransform"]);
+    } finally {
+      __resetCustomSourcesForTesting();
+    }
+  });
+
   test("rejects a JSON file that is not an array of users", async () => {
     fs.writeFileSync(path.join(workDir, "wrapped.json"), JSON.stringify({ users: [] }));
     await expect(loadUsersFromFile("wrapped.json", "clerk")).rejects.toThrow(CliError);
@@ -331,6 +331,7 @@ describe("loadUsersFromFile", () => {
       new CliError("null-row.json: row 2 is not a user object."),
     );
   });
+
   test("reads the users out of an export's envelope", async () => {
     const envelope = (users: unknown[]) =>
       JSON.stringify({ clerkMigrate: 1, source: "clerk", exportedAt: "", runId: "r", users });

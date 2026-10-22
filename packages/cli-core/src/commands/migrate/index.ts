@@ -9,8 +9,6 @@ import { runs } from "./runs.ts";
 import { undo } from "./undo.ts";
 import { list as sources } from "./sources/list.ts";
 
-const migrate = { run, runs, undo, sources };
-
 export function registerMigrate(program: Program): void {
   const migrateCommand = program
     .command("migrate")
@@ -26,7 +24,7 @@ export function registerMigrate(program: Program): void {
       },
       {
         command: "clerk migrate import 20260929-141502-a1b2 --yes",
-        description: "Import it",
+        description: "Import it. Run it again to continue after a failure",
       },
       { command: "clerk migrate runs", description: "List every migration run" },
       {
@@ -37,8 +35,8 @@ export function registerMigrate(program: Program): void {
     ]);
 
   // `-y` is read several layers down — by the credential-retry loop and the
-  // export commands — so it is resolved once here rather than threaded
-  // through every export handler. Hooks are inherited, so this fires for every
+  // import — so it is resolved once here rather than threaded through every
+  // call. Hooks are inherited, so this fires for every
   // subcommand under `migrate`; one that declares no `-y` resolves to false.
   //
   // `--json` means nobody is reading a prompt, so it runs the command in agent
@@ -53,9 +51,8 @@ export function registerMigrate(program: Program): void {
   });
 
   // Named, not `isDefault`. `import` and `export` are the two directions this
-  // group moves users in, and neither is implied by the bare group name — a
-  // default would make `clerk migrate --file users.json` mean "import" while
-  // its sibling has to be spelled out. Bare `clerk migrate` prints help.
+  // group moves users in, and neither is implied by the bare group name.
+  // Bare `clerk migrate` prints help.
   //
   // The flags stay here rather than on `migrate`, matching how `config` keeps
   // its own on `pull`/`patch`/`put` — a group's help is a list of subcommands
@@ -110,8 +107,8 @@ export function registerMigrate(program: Program): void {
         description: "Check what an export run wrote, and write nothing",
       },
       {
-        command: "clerk migrate import 20260929-141502-a1b2 --yes",
-        description: "Import it. Run it again to continue after a failure",
+        command: "clerk migrate import users.json --source supabase --yes",
+        description: "Import a file. Run it again to continue after a failure",
       },
       {
         command: "clerk migrate import users.json --source clerk --allow-partial --yes",
@@ -123,8 +120,8 @@ export function registerMigrate(program: Program): void {
       },
     ])
     .action(async (input, _opts, cmd) =>
-      migrate.run({
-        ...(cmd.optsWithGlobals() as Parameters<typeof migrate.run>[0]),
+      run({
+        ...(cmd.optsWithGlobals() as Parameters<typeof run>[0]),
         ...(input ? { input } : {}),
       }),
     );
@@ -156,7 +153,7 @@ export function registerMigrate(program: Program): void {
       },
     ])
     .action(async (runId, _opts, cmd) =>
-      migrate.undo(runId, cmd.optsWithGlobals() as Parameters<typeof migrate.undo>[1]),
+      undo(runId, cmd.optsWithGlobals() as Parameters<typeof undo>[1]),
     );
 
   migrateCommand
@@ -174,7 +171,7 @@ export function registerMigrate(program: Program): void {
       { command: "clerk migrate runs --json", description: "Machine-readable listing" },
     ])
     .action(async (runId, _opts, cmd) =>
-      migrate.runs(runId, cmd.optsWithGlobals() as Parameters<typeof migrate.runs>[1]),
+      runs(runId, cmd.optsWithGlobals() as Parameters<typeof runs>[1]),
     );
 
   // A compiled binary has no source tree to grep, so the available mappings
@@ -193,6 +190,6 @@ export function registerMigrate(program: Program): void {
       { command: "clerk migrate sources ./my-source.ts", description: "Check a source you wrote" },
     ])
     .action(async (source, _opts, cmd) =>
-      migrate.sources(source, cmd.optsWithGlobals() as Parameters<typeof migrate.sources>[1]),
+      sources(source, cmd.optsWithGlobals() as Parameters<typeof sources>[1]),
     );
 }

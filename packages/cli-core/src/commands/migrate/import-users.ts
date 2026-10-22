@@ -165,8 +165,6 @@ export function buildCreateUserBody(
 type CreateContext = {
   secretKey: string;
   schedule: ApiScheduler;
-  /** Unverified identifiers go on the create as reserved, not attached after. */
-  reserveUnverified: boolean;
   /** The run sending these creates; each carries it as its marker. */
   runId?: string;
   /** Aborted by the first `user_quota_exceeded`: every later create would be refused too. */
@@ -175,6 +173,8 @@ type CreateContext = {
   halt: AbortSignal;
   /** Aborted by a Ctrl-C, the quota or a halt. No create goes out after it. */
   stop: AbortSignal;
+  /** Unverified identifiers go on the create as reserved, not attached after. */
+  reserveUnverified: boolean;
 };
 
 /**
@@ -516,10 +516,10 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   const ctx: CreateContext = {
     secretKey,
     schedule: createApiScheduler(limits.concurrencyLimit, limits.rateLimit),
-    reserveUnverified,
     quota,
     halt: halt.signal,
     stop: AbortSignal.any([interruptSignal(), quota.signal, halt.signal]),
+    reserveUnverified,
     runId,
   };
 
@@ -534,15 +534,23 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     code: string,
     notes: string[],
     unknown: boolean,
+    attempt?: UserLine,
   ) => {
     failed++;
     processed++;
     tallyError(errorBreakdown, message);
-    // With no answer, the `creating` line stays the latest: Clerk may hold
-    // the user, and a re-run looks it up before creating it again.
-    if (!unknown) {
-      record({ sourceId: userId, status: "failed", error: [message, ...notes].join("; "), code });
-    }
+    // With no answer, the user stays `creating`: Clerk may hold it, and a
+    // re-run looks it up before creating it again. The line still says why,
+    // and keeps what the attempt reserved and left out: a continue reads only
+    // the latest line to adopt the user the way it was created.
+    record({
+      sourceId: userId,
+      status: unknown ? "creating" : "failed",
+      ...(unknown && attempt?.reserved ? { reserved: true } : {}),
+      ...(unknown && attempt?.pending ? { pending: attempt.pending } : {}),
+      error: [message, ...notes].join("; "),
+      code,
+    });
     progress();
   };
 
@@ -576,6 +584,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       : reserveUnverified &&
         (identifiers.unverifiedEmails.length > 0 || identifiers.unverifiedPhones.length > 0);
     let sent = false;
+    // The `creating` line of the latest attempt, for an unknown outcome to keep.
+    let attempt: UserLine | undefined;
     try {
       created = adoptedId
         ? { clerkUserId: adoptedId, notes: [], attachLater: adoptedPending.get(user.userId) ?? [] }
@@ -589,7 +599,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
                 const leftOut = reserved
                   ? identifiers.unverifiedPhones.filter((phone) => !sentPhones.has(phone))
                   : [];
-                record({
+                attempt = {
                   sourceId: user.userId,
                   status: "creating",
                   ...(reserved ? { reserved: true } : {}),
@@ -602,7 +612,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
                         })),
                       }
                     : {}),
-                });
+                };
+                record(attempt);
                 sent = true;
               }),
             {
@@ -633,10 +644,6 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         );
         return;
       }
-      if (error instanceof RateLimitExceededError) {
-        recordFailure(user.userId, error.message, "429", retries, false);
-        return;
-      }
       const apiError = error as BapiError;
       if (apiError.code === "user_quota_exceeded" && !ctx.quota.signal.aborted) {
         ctx.quota.abort();
@@ -651,6 +658,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         code,
         retries,
         unknown,
+        attempt,
       );
       return;
     }
@@ -682,7 +690,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
 
   progress();
   const attachOnlyUser = async (line: UserLine) => {
-    await finishUser(line, line.pending ?? [], []);
+    // Its earlier error names identifiers Clerk refused; the new line keeps it.
+    await finishUser(line, line.pending ?? [], line.error ? [line.error] : []);
+    // Created by this run's earlier attempt, as an adopted user was: the bar,
+    // the summary and `result.created` all count it.
+    successful++;
     attachedUsers++;
     progress();
   };

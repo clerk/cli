@@ -1,5 +1,5 @@
 /**
- * Live-BAPI tests for `clerk migrate import`, covering what only a real
+ * Live-BAPI tests for `clerk migrate import` and `undo`, covering what only a real
  * instance can answer:
  *
  * - A Supabase export round-trips: the dry run counts it without writing, an
@@ -97,7 +97,7 @@ function writeExport(users: Record<string, unknown>[]): string {
   return file;
 }
 
-test("a Supabase export dry-runs, imports, and its passwords verify", async () => {
+test("a Supabase export dry-runs, imports, its passwords verify, and undo deletes it", async () => {
   const users = await Promise.all(
     [0, 1].map(async () => {
       const hex = randomBytes(6).toString("hex");

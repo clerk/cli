@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -22,68 +22,50 @@ describe("registerMigrate", () => {
     expect(migrate?.description()).toContain("Migrate users");
   });
 
-  test("registers the import subcommand", () => {
-    expect(findCommand(["migrate", "import"])).toBeDefined();
+  test("registers import, export, undo, runs and sources", () => {
+    expect(findCommand(["migrate"])?.commands.map((cmd) => cmd.name())).toEqual([
+      "import",
+      "export",
+      "undo",
+      "runs",
+      "sources",
+    ]);
   });
 
-  // The direction is never implied: `import` and `export` are siblings, so a
-  // default would make one of them the meaning of the bare group name.
   test("leaves migrate with no default subcommand", () => {
     const migrate = findCommand(["migrate"]) as unknown as { _defaultCommandName?: string };
     expect(migrate._defaultCommandName).toBeFalsy();
   });
 
-  test.each([
-    "--source",
-    "--dry-run",
-    "--allow-partial",
-    "--new-run",
-    "--require-password",
-    "--reserve-unverified",
-    "--json",
-    "--firebase-signer-key",
-    "--firebase-salt-separator",
-    "--firebase-rounds",
-    "--firebase-mem-cost",
-    "--yes",
-    "--secret-key",
-    "--app",
-    "--instance",
-  ])("migrate import accepts %s", (flag) => {
-    const flags = findCommand(["migrate", "import"])?.options.map((option) => option.long);
-    expect(flags).toContain(flag);
+  test("migrate import takes exactly its flags", () => {
+    expect(findCommand(["migrate", "import"])?.options.map((option) => option.long)).toEqual([
+      "--source",
+      "--dry-run",
+      "--allow-partial",
+      "--new-run",
+      "--require-password",
+      "--skip-legal-checks",
+      "--reserve-unverified",
+      "--firebase-signer-key",
+      "--firebase-salt-separator",
+      "--firebase-rounds",
+      "--firebase-mem-cost",
+      "--yes",
+      "--json",
+      "--secret-key",
+      "--app",
+      "--instance",
+      "--runs-dir",
+    ]);
   });
 
-  test("registers sources with an optional source and --json", () => {
-    const sources = findCommand(["migrate", "sources"]);
-    expect(sources?.registeredArguments[0]?.required).toBe(false);
-    expect(sources?.options.map((option) => option.long)).toEqual(["--json"]);
-  });
-
-  test.each([[["transformers"]], [["transformers", "list"]]])("no longer registers %p", (names) => {
-    expect(findCommand(["migrate", ...names])).toBeUndefined();
-  });
-
-  test.each([
-    "--transformer",
-    "--transformer-file",
-    "--file",
-    "--resume-after",
-    "--skip-unsupported-providers",
-  ])("migrate import drops %s", (flag) => {
-    expect(findCommand(["migrate", "import"])?.options.map((o) => o.long)).not.toContain(flag);
-  });
-
-  test.each([
-    [["export"]],
-    [["export", "clerk"]],
-    [["export", "auth0"]],
-    [["export", "supabase"]],
-    [["export", "authjs"]],
-    [["export", "betterauth"]],
-    [["export", "firebase"]],
-  ])("registers migrate %p", (names) => {
-    expect(findCommand(["migrate", ...names])).toBeDefined();
+  test("registers an export subcommand per registered platform", () => {
+    // Help order is not registry order, so compare as sets.
+    expect(
+      findCommand(["migrate", "export"])
+        ?.commands.map((cmd) => cmd.name())
+        .sort(),
+    ).toEqual(exportPlatformKeys().sort());
   });
 
   // Bare `migrate export` runs the picker rather than defaulting to a
@@ -95,39 +77,61 @@ describe("registerMigrate", () => {
     expect(group._defaultCommandName).toBeFalsy();
   });
 
-  test("registers an export subcommand per registered platform", () => {
-    const registered = findCommand(["migrate", "export"])?.commands.map((c) => c.name());
-    for (const key of exportPlatformKeys()) expect(registered).toContain(key);
+  test("migrate export takes exactly its flags", () => {
+    expect(findCommand(["migrate", "export"])?.options.map((option) => option.long)).toEqual([
+      "--runs-dir",
+      "--json",
+    ]);
   });
 
-  test.each(["--output", "--secret-key", "--app", "--instance"])(
-    "export clerk accepts %s",
-    (flag) => {
-      expect(findCommand(["migrate", "export", "clerk"])?.options.map((o) => o.long)).toContain(
-        flag,
-      );
-    },
-  );
-
-  test.each(["--domain", "--client-id", "--client-secret", "--output"])(
-    "export auth0 accepts %s",
-    (flag) => {
-      expect(findCommand(["migrate", "export", "auth0"])?.options.map((o) => o.long)).toContain(
-        flag,
-      );
-    },
-  );
-
-  test.each(["supabase", "authjs", "betterauth"])("export %s accepts --db-url", (platform) => {
-    expect(findCommand(["migrate", "export", platform])?.options.map((o) => o.long)).toContain(
-      "--db-url",
-    );
+  test("migrate export clerk takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "clerk"])?.options.map((option) => option.long),
+    ).toEqual(["--output", "--yes", "--runs-dir", "--json", "--secret-key", "--app", "--instance"]);
   });
 
-  test("export firebase accepts --service-account", () => {
-    expect(findCommand(["migrate", "export", "firebase"])?.options.map((o) => o.long)).toContain(
-      "--service-account",
-    );
+  test("migrate export auth0 takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "auth0"])?.options.map((option) => option.long),
+    ).toEqual([
+      "--domain",
+      "--client-id",
+      "--client-secret",
+      "--output",
+      "--yes",
+      "--runs-dir",
+      "--json",
+    ]);
+  });
+
+  test.each([
+    ["supabase", []],
+    ["authjs", ["--trust-oauth-emails"]],
+    ["betterauth", []],
+  ])("migrate export %s takes exactly its flags", (platform, own) => {
+    expect(
+      findCommand(["migrate", "export", platform])?.options.map((option) => option.long),
+    ).toEqual(["--db-url", "--output", "--yes", "--runs-dir", "--json", ...own]);
+  });
+
+  test("migrate export firebase takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "firebase"])?.options.map((option) => option.long),
+    ).toEqual(["--service-account", "--output", "--yes", "--runs-dir", "--json"]);
+  });
+
+  test("migrate export workos takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "workos"])?.options.map((option) => option.long),
+    ).toEqual([
+      "--api-key",
+      "--with-identities",
+      "--no-with-identities",
+      "--output",
+      "--yes",
+      "--runs-dir",
+      "--json",
+    ]);
   });
 
   test.each(exportPlatformKeys())(
@@ -140,21 +144,22 @@ describe("registerMigrate", () => {
     },
   );
 
-  test.each(exportPlatformKeys())("migrate export %s accepts --json", (platform) => {
-    const flags = findCommand(["migrate", "export", platform])?.options.map((o) => o.long);
-    expect(flags).toContain("--json");
+  test("registers runs with an optional run ID", () => {
+    const runsCommand = findCommand(["migrate", "runs"]);
+    expect(runsCommand?.registeredArguments[0]?.required).toBe(false);
+    expect(runsCommand?.options.map((option) => option.long)).toEqual(["--json", "--runs-dir"]);
   });
 
-  test("registers runs with an optional run ID", () => {
-    const runs = findCommand(["migrate", "runs"]);
-    expect(runs?.registeredArguments[0]?.required).toBe(false);
-    expect(runs?.options.map((option) => option.long)).toEqual(["--json", "--runs-dir"]);
+  test("registers sources with an optional source and --json", () => {
+    const sourcesCommand = findCommand(["migrate", "sources"]);
+    expect(sourcesCommand?.registeredArguments[0]?.required).toBe(false);
+    expect(sourcesCommand?.options.map((option) => option.long)).toEqual(["--json"]);
   });
 
   test("registers undo with a required run ID and its flags", () => {
-    const undo = findCommand(["migrate", "undo"]);
-    expect(undo?.registeredArguments[0]?.required).toBe(true);
-    expect(undo?.options.map((option) => option.long)).toEqual([
+    const undoCommand = findCommand(["migrate", "undo"]);
+    expect(undoCommand?.registeredArguments[0]?.required).toBe(true);
+    expect(undoCommand?.options.map((option) => option.long)).toEqual([
       "--dry-run",
       "--yes",
       "--include-signed-in",
@@ -164,24 +169,6 @@ describe("registerMigrate", () => {
       "--instance",
       "--runs-dir",
     ]);
-  });
-
-  test("the logs group is gone: runs replaces it", () => {
-    expect(findCommand(["migrate", "logs"])).toBeUndefined();
-  });
-
-  // Every command reads or writes the run store, so each one can be pointed
-  // somewhere else.
-  test.each([
-    [["import"]],
-    [["runs"]],
-    [["undo"]],
-    [["export"]],
-    ...exportPlatformKeys().map((platform) => [["export", platform]]),
-  ])("migrate %p accepts --runs-dir", (names) => {
-    expect(findCommand(["migrate", ...names])?.options.map((option) => option.long)).toContain(
-      "--runs-dir",
-    );
   });
 
   // It also takes a path, so it cannot use `.choices()`: completion offers the
@@ -197,27 +184,28 @@ describe("registerMigrate", () => {
     expect(argument?.required).toBe(false);
   });
 
-  test.each([["-y", "--yes"]])("exposes %s as the short form of %s", (short, long) => {
-    const option = findCommand(["migrate", "import"])?.options.find((o) => o.long === long);
-    expect(option?.short).toBe(short);
-  });
-
-  // Every export takes `-y`: it is what turns the credential-retry loop off,
-  // and the loop is on every one of them.
-  test.each(exportPlatformKeys())("migrate export %s accepts --yes", (platform) => {
-    const flags = findCommand(["migrate", "export", platform])?.options.map((o) => o.long);
-    expect(flags).toContain("--yes");
+  test("exposes -y as the short form of --yes", () => {
+    const option = findCommand(["migrate", "import"])?.options.find((o) => o.long === "--yes");
+    expect(option?.short).toBe("-y");
   });
 });
 
 /**
- * The hook is the only link between the parsed flag and the two places that
- * read it, three layers down. If it stopped firing — a Commander upgrade that
- * dropped hook inheritance, an action registered outside the group — both
- * behaviours would silently revert and every unit test around them would still
- * pass, because they set the flag directly.
+ * The hook is the only link between the parsed flag and the code that reads
+ * it below the action. If it stopped firing — a Commander upgrade that dropped
+ * hook inheritance, an action registered outside the group — the behaviour
+ * would silently revert and every unit test around it would still pass,
+ * because they set the flag directly.
  */
 describe("the migrate group's -y hook", () => {
+  let missing: string;
+  let missingDb: string;
+  beforeAll(() => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-hook-"));
+    missing = path.join(dir, "none.json");
+    missingDb = path.join(dir, "none.sqlite");
+  });
+
   async function parse(argv: string[]) {
     const program = createProgram();
     // `exitOverride` so a usage error inside the action throws here instead of
@@ -231,24 +219,26 @@ describe("the migrate group's -y hook", () => {
     return isAssumeYes();
   }
 
-  test("records -y on an export", async () => {
-    expect(await parse(["migrate", "export", "supabase", "-y", "--db-url", "./none.sqlite"])).toBe(
+  test("records -y on import", async () => {
+    expect(await parse(["migrate", "import", missing, "-y", "--secret-key", "sk_test_x"])).toBe(
       true,
     );
+  });
+
+  test("records -y on an export", async () => {
+    expect(await parse(["migrate", "export", "supabase", "-y", "--db-url", missingDb])).toBe(true);
   });
 
   // `--json` means nobody reads a prompt, and agent mode is how every prompt in
   // this tree already knows to stand down.
   test("--json runs the command in agent mode", async () => {
     const original = getMode();
-    const runsDir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-json-"));
     try {
       setMode("human");
-      await parse(["migrate", "runs", "--json", "--runs-dir", runsDir]);
+      await parse(["migrate", "import", missing, "--json", "--secret-key", "sk_test_x"]);
       expect(getMode()).toBe("agent");
     } finally {
       setMode(original);
-      fs.rmSync(runsDir, { recursive: true, force: true });
     }
   });
 
@@ -258,7 +248,7 @@ describe("the migrate group's -y hook", () => {
     const original = getMode();
     try {
       setMode("human");
-      await parse(["migrate", "export", "supabase", "--json", "--db-url", "./none.sqlite"]);
+      await parse(["migrate", "export", "supabase", "--json", "--db-url", missingDb]);
       expect(getMode()).toBe("agent");
     } finally {
       setMode(original);
@@ -299,6 +289,6 @@ describe("the migrate group's -y hook", () => {
 
   test("records its absence, so a previous run cannot leak into this one", async () => {
     setAssumeYes(true);
-    expect(await parse(["migrate", "export", "supabase", "--db-url", "./none.sqlite"])).toBe(false);
+    expect(await parse(["migrate", "import", missing, "--secret-key", "sk_test_x"])).toBe(false);
   });
 });

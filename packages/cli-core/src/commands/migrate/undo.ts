@@ -40,9 +40,12 @@ import {
   startRun,
   type Run,
   type RunRecord,
+  type RunState,
   openUndoOf,
   inUseMessage,
   noRunMessage,
+  withAttempt,
+  withLiveCounts,
 } from "./lib/run-store.ts";
 import { withProgress, type ProgressUpdate } from "./lib/progress.ts";
 import { createApiScheduler, type ApiScheduler } from "./lib/scheduler.ts";
@@ -51,9 +54,9 @@ import {
   describeTarget,
   isStandInInstanceId,
   keyInstanceId,
+  laterCarry,
   printTarget,
   resolveClerkTarget,
-  targetCarry,
 } from "./lib/target.ts";
 import { plural } from "./lib/plural.ts";
 import { findInFlight, lookupUsers, type SourceUser } from "./lib/user-lookup.ts";
@@ -280,8 +283,11 @@ async function deleteUsers(options: {
 
 function printPreview(record: RunRecord, preview: UndoPreview): void {
   log.blank();
+  // Every user already gone: the undo only records the import as undone.
   log.info(
-    `${bold(`Will delete ${plural(preview.toDelete, "user")}`)} created by import run ${record.id}.`,
+    preview.toDelete > 0
+      ? `${bold(`Will delete ${plural(preview.toDelete, "user")}`)} created by import run ${record.id}.`
+      : `${bold(`Will mark import run ${record.id} undone`)}: nothing is left to delete.`,
   );
   if (preview.signedInSince > 0) {
     const who =
@@ -304,17 +310,20 @@ function printPreview(record: RunRecord, preview: UndoPreview): void {
   }
 }
 
+/** The undo run a stop left on disk, as `runs` shows an unfinished run. */
+type StoppedRun = RunRecord & { state: RunState };
+
 /**
  * What the JSON adds to the preview: why undo stopped before deleting, or,
  * once it did, its run and result. One of these, never two.
  */
 type UndoOutcome =
   | { dryRun: true }
-  | { consent: "required" }
+  | { consent: "required"; includeSignedIn?: "required" }
   | { changed: true; signedInSincePreview?: number }
   | { recheckFailed: true }
-  | { writeFailed: true }
-  | { stopped: true }
+  | { writeFailed: true; run: StoppedRun | null }
+  | { stopped: true; run: StoppedRun | null }
   | {
       run: RunRecord;
       result: { deleted: number; failed: number; errors: { error: string; count: number }[] };
@@ -325,16 +334,14 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   const runsCarry = carryFlags({ runsDir: options.runsDir });
   const record = readImportRun(runsDir, runId, runsCarry);
   const importLines = readUserLines(runsDir, record.id).length;
-  // The flags that found this run and instance, for a command run again now.
+  // The flags that found this run and instance, for a refusal's command, run
+  // again straight away in the same shell.
   const carry = carryFlags(options);
+  const undoAgain = undoCommand(record.id, carry);
 
   const { secretKey, target } = await resolveClerkTarget(options);
-  // Run later, maybe without the key exported, so from the target, the way
-  // `runs <id>` builds it.
-  const undoAgain = undoCommand(
-    record.id,
-    carryFlags({ runsDir: options.runsDir, ...targetCarry(target) }),
-  );
+  // After a partial undo, run later, maybe without the key exported: from the target.
+  const undoLater = undoCommand(record.id, laterCarry(options.runsDir, target));
   if (!options.json) printTarget(target);
   assertSameInstance(record, target, secretKey);
 
@@ -369,8 +376,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
 
   if (!options.json) printPreview(record, preview);
 
-  // The flags that found this run and instance, or the command looks elsewhere
-  // and refuses.
+  // Consent to go ahead, for the same run and instance.
   const command = undoCommand(record.id, [
     "--yes",
     ...(preview.signedInSince > 0 ? ["--include-signed-in"] : []),
@@ -396,7 +402,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     printJson({ dryRun: true });
     if (!options.json) {
       log.blank();
-      log.info(dim(`Dry run: nothing was deleted. Run \`${command}\` to delete them.`));
+      const then = present.length > 0 ? "to delete them" : "to mark it undone";
+      log.info(dim(`Dry run: nothing was deleted. Run \`${command}\` ${then}.`));
     }
     return;
   }
@@ -404,17 +411,33 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   // Rule 1: nothing is deleted without consent — `--yes`, or a yes at a
   // prompt. `--json` never prompts.
   if (!nothingLeft && !options.yes) {
+    // Every user already gone: the undo only records the import as undone.
+    const what =
+      present.length > 0
+        ? `permanently deletes ${plural(present.length, "user")}`
+        : `marks run ${record.id} undone`;
     if (!canPrompt(options)) {
       printJson({ consent: "required" });
       throwUsageError(
-        `\`clerk migrate undo\` permanently deletes ${plural(present.length, "user")} and needs consent. Pass --yes to confirm.`,
+        `\`clerk migrate undo\` ${what} and needs consent. Pass --yes to confirm.`,
         undefined,
         undefined,
-        [{ command, description: "Delete the users this import created" }],
+        [
+          {
+            command,
+            description:
+              present.length > 0
+                ? "Delete the users this import created"
+                : `Mark run ${record.id} undone`,
+          },
+        ],
       );
     }
     const proceed = await confirm({
-      message: `Permanently delete ${plural(present.length, "user")}?`,
+      message:
+        present.length > 0
+          ? `Permanently delete ${plural(present.length, "user")}?`
+          : `Mark run ${record.id} undone? Its users are already gone.`,
       default: false,
     });
     if (!proceed) throwUserAbort();
@@ -424,7 +447,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   // people have used since. That takes its own flag; a human at the prompt has
   // the warning above.
   if (options.yes && preview.signedInSince > 0 && !options.includeSignedIn) {
-    printJson({ consent: "required" });
+    // Its own marker: a script that retries with --yes would loop on exit 2.
+    printJson({ consent: "required", includeSignedIn: "required" });
     throwUsageError(
       `${plural(preview.signedInSince, "user")} the import created ${preview.signedInSince === 1 ? "has" : "have"} signed in since, and --yes alone does not delete them. ` +
         "Pass --include-signed-in to delete them too. Nothing was deleted.",
@@ -439,10 +463,23 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
     throwUsageError(message);
   };
 
+  // The undo's own run, once it is on disk: a stop still names it.
+  let run: Run | undefined;
   try {
     await deleteAfterPreview();
   } catch (error) {
-    printJson(isFileSystemError(error) ? { writeFailed: true } : { stopped: true });
+    // As `runs` shows it: the record still holds the counts it opened with.
+    const written: StoppedRun | null = run
+      ? {
+          ...withLiveCounts(runsDir, run.record),
+          state: runState(runsDir, run.record),
+        }
+      : null;
+    printJson(
+      isFileSystemError(error)
+        ? { writeFailed: true, run: written }
+        : { stopped: true, run: written },
+    );
     throw error;
   }
 
@@ -459,7 +496,6 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       if (error instanceof CliError) refuseChanged(error.message);
       throw error;
     }
-    let run: Run;
     let summary: UndoSummary;
     let undoRecord: RunRecord;
     let importRecord = record;
@@ -515,7 +551,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       }
 
       run = openUndo
-        ? continueRun(runsDir, openUndo)
+        ? continueRun(runsDir, withAttempt(openUndo, target))
         : startRun(runsDir, { kind: "undo", target, undoes: record.id, source: record.source });
 
       // Users the import created that are no longer there: the undo's goal for
@@ -527,7 +563,8 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       summary =
         present.length > 0
           ? await withProgress({ total: present.length, verb: "deleted" }, async (progress) =>
-              deleteUsers({ users: present, secretKey, schedule, run, progress }),
+              // Set above; a callback doesn't keep the narrowing of an outer `let`.
+              deleteUsers({ users: present, secretKey, schedule, run: run!, progress }),
             )
           : { deleted: 0, failed: 0, errorBreakdown: new Map<string, number>() };
 
@@ -570,7 +607,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       if (undoRecord.status === "complete") {
         log.success(`Import run ${record.id} is undone.`);
       } else {
-        log.info(`Run \`${undoAgain}\` again to retry the users that failed.`);
+        log.info(`Run \`${undoLater}\` again to retry the users that failed.`);
       }
     }
 

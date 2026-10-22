@@ -212,6 +212,31 @@ describe("refusals, all exit 2 and delete nothing", () => {
     expect(deletes()).toHaveLength(0);
   });
 
+  // Nothing is left to delete, but the import is still marked undone.
+  test("no consent with every user already gone names the mark, not 0 deletes", async () => {
+    instanceUsers.clear();
+    const record = importRun();
+
+    const error = (await undo(record.id, withDir()).catch((caught: unknown) => caught)) as CliError;
+
+    expect(error.message).toContain(`marks run ${record.id} undone and needs consent`);
+    expect(error.message).not.toContain("0 users");
+    expect(error.examples?.[0]?.description).toBe(`Mark run ${record.id} undone`);
+  });
+
+  // The preview and the dry run say the same, rather than "Will delete 0 users".
+  test("a dry run with every user already gone names the mark, not 0 deletes", async () => {
+    instanceUsers.clear();
+    const record = importRun();
+
+    await undo(record.id, withDir({ dryRun: true }));
+
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(`Will mark import run ${record.id} undone: nothing is left to delete.`);
+    expect(err).toContain("to mark it undone.");
+    expect(err).not.toContain("Will delete 0");
+  });
+
   // Another process continues the import while the undo previews it.
   describe("the run changing during the preview", () => {
     const duringPreview = (act: () => void) => {
@@ -228,7 +253,8 @@ describe("refusals, all exit 2 and delete nothing", () => {
 
     // The run's own folder takes the lock, but the undo run can't be created
     // beside it. `--runs-dir` is never written to by resolveRunsDir.
-    test.skipIf(process.platform === "win32")(
+    // Root writes through 0o555, so the undo run would be created.
+    test.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
       "--json prints the preview, marked writeFailed, when the runs folder can't be written",
       async () => {
         const record = importRun();
@@ -463,6 +489,36 @@ describe("stopped part-way", () => {
     expect(fs.existsSync(path.join(runsDir, undoRun?.id ?? "", "lock"))).toBe(false);
     expect(readRun(runsDir, record.id)?.status).not.toBe("undone");
   });
+
+  // A script reads `run` to find the undo's folder.
+  test("--json names the undo run a Ctrl-C left on disk", async () => {
+    const record = importRun();
+    const clerk = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const response = await clerk(input, init);
+      if (init?.method === "DELETE") {
+        beginInterrupt();
+        abortInFlight();
+      }
+      return response;
+    }) as typeof fetch;
+    try {
+      await expect(undo(record.id, withDir({ yes: true, json: true }))).rejects.toThrow();
+    } finally {
+      _resetInterruptState();
+      globalThis.fetch = clerk;
+    }
+
+    const undoRun = listRuns(runsDir).find((r) => r.kind === "undo");
+    // As it stands on disk, not as it opened: counted from its lines.
+    const printed = JSON.parse(captured.out) as { run: RunRecord };
+    expect(printed).toMatchObject({
+      stopped: true,
+      run: { id: undoRun?.id, state: "interrupted" },
+    });
+    expect(printed.run.counts.deleted).toBe(latestUserLines(runsDir, undoRun!.id).size);
+    expect(printed.run.counts.deleted).toBeGreaterThan(0);
+  });
 });
 
 // `CLERK_MODE=human` with no terminal: the prompt would fail to open one and spin.
@@ -495,6 +551,20 @@ describe("users who signed in since the import", () => {
     expect(error.message).toContain("1 user the import created has signed in since");
     expect(error.examples?.[0]?.command).toContain("--yes --include-signed-in");
     expect(deletes()).toHaveLength(0);
+  });
+
+  // `consent` alone would tell a script to retry with --yes, which it gave.
+  test("--yes --json marks the refusal as needing --include-signed-in", async () => {
+    const record = importRun();
+
+    await expect(
+      undo(record.id, withDir({ yes: true, json: true, includeSignedIn: false })),
+    ).rejects.toThrow("--include-signed-in");
+
+    expect(JSON.parse(captured.out)).toMatchObject({
+      consent: "required",
+      includeSignedIn: "required",
+    });
   });
 
   // Without them the suggested command looks in the default runs folder, or
@@ -653,6 +723,24 @@ describe("deleting", () => {
     expect(readRun(runsDir, record.id)?.status).toBe("undone");
   });
 
+  // Run later, the exported key may be gone: the retry names it as a placeholder.
+  test("a failed delete with an exported key suggests the retry with the key", async () => {
+    failing.add("user_b");
+    const record = importRun();
+    const previous = process.env.CLERK_SECRET_KEY;
+    process.env.CLERK_SECRET_KEY = "sk_test_x";
+    try {
+      await undo(record.id, withDir({ yes: true, secretKey: undefined }));
+    } finally {
+      if (previous === undefined) delete process.env.CLERK_SECRET_KEY;
+      else process.env.CLERK_SECRET_KEY = previous;
+    }
+
+    expect(Bun.stripANSI(captured.err)).toContain(
+      `\`clerk migrate undo ${record.id} --secret-key <key> --runs-dir ${quoteArg(runsDir)}\` again to retry the users that failed`,
+    );
+  });
+
   test("a failed delete leaves the undo partial, exits 1, and a re-run continues it", async () => {
     failing.add("user_b");
     const record = importRun();
@@ -676,6 +764,21 @@ describe("deleting", () => {
     expect(undoRuns[0]).toMatchObject({ id: partial?.id, status: "complete" });
     expect(latestUserLines(runsDir, partial!.id).get("b")?.status).toBe("deleted");
     expect(readRun(runsDir, record.id)?.status).toBe("undone");
+  });
+
+  // `runs <undo-id>` builds the undo's retry from its record: the key this
+  // attempt used, not the first one's `.env`, which may not be there.
+  test("a continued undo records its own key source", async () => {
+    failing.add("user_b");
+    const record = importRun();
+    await undo(record.id, withDir({ yes: true }));
+    const [partial] = listRuns(runsDir).filter((candidate) => candidate.kind === "undo");
+    patchRun(runsDir, partial!.id, { target: { ...partial!.target, keySource: ".env" } });
+
+    process.exitCode = 0;
+    await undo(record.id, withDir({ yes: true }));
+
+    expect(readRun(runsDir, partial!.id)?.target.keySource).toBe("--secret-key");
   });
 
   test("--json --yes returns the undo run and the result", async () => {

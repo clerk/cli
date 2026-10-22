@@ -1,5 +1,4 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
-import { getMode, setMode } from "../../../mode.ts";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -29,7 +28,10 @@ let originalFetch: typeof globalThis.fetch;
 let requests: { url: string; body: unknown }[];
 let account: ServiceAccount;
 
+let originalMode: string | undefined;
+
 beforeAll(async () => {
+  originalMode = process.env.CLERK_MODE;
   originalCwd = process.cwd();
   originalFetch = globalThis.fetch;
   workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-fb-")));
@@ -61,6 +63,8 @@ beforeAll(async () => {
 });
 
 afterAll(() => {
+  if (originalMode === undefined) delete process.env.CLERK_MODE;
+  else process.env.CLERK_MODE = originalMode;
   globalThis.fetch = originalFetch;
   process.chdir(originalCwd);
   fs.rmSync(workDir, { recursive: true, force: true });
@@ -69,7 +73,7 @@ afterAll(() => {
 beforeEach(() => {
   // Tests that need a prompt set human mode themselves; without this a
   // leaked "human" from an earlier test stops a later one on the destination prompt.
-  setMode("agent");
+  process.env.CLERK_MODE = "agent";
   requests = [];
   delete process.env.FIREBASE_AUTH_EMULATOR_HOST;
   fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
@@ -567,13 +571,8 @@ describe("exportFirebase", () => {
     stubFirebase([[fbUser(0)]], { signIn: {} });
     // The suggestion now rides the gutter's Next steps block, which only
     // renders in human mode.
-    const originalMode = getMode();
-    setMode("human");
-    try {
-      await exportFirebase({ serviceAccount: "./sa.json", output: "exports/mine.json" });
-    } finally {
-      setMode(originalMode);
-    }
+    process.env.CLERK_MODE = "human";
+    await exportFirebase({ serviceAccount: "./sa.json", output: "exports/mine.json" });
     expect(captured.err).toMatch(/clerk migrate import \d{8}-\d{6}-[0-9a-f]{4}/);
   });
 

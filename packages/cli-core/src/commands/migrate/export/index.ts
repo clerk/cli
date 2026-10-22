@@ -61,7 +61,7 @@ const handlers = {
   workos: exportWorkOs,
 };
 
-/** The three platforms that read a database, which share `--db-url`. */
+/** The platforms that read a database, which share `--db-url`. */
 const DB_PLATFORMS = [
   {
     key: "supabase",
@@ -76,6 +76,12 @@ const DB_PLATFORMS = [
     envVar: "AUTHJS_DB_URL",
     dbUrl: "Postgres, MySQL, libsql/Turso or SQLite connection string",
     example: "mysql://user:password@127.0.0.1:3306/authjs",
+    flags: [
+      [
+        "--trust-oauth-emails",
+        "Mark the email of a user who signs in with OAuth verified; Auth.js leaves it unverified",
+      ],
+    ],
   },
   {
     key: "betterauth",
@@ -220,17 +226,21 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       handlers.workos(cmd.optsWithGlobals() as Parameters<typeof handlers.workos>[0]),
     );
 
-  // All three take exactly one connection string, so they are registered from
-  // a table rather than three near-identical blocks.
+  // Each takes exactly one connection string, so they are registered from a
+  // table rather than near-identical blocks.
   for (const platform of DB_PLATFORMS) {
-    exportCommand
+    const command = exportCommand
       .command(platform.key)
       .description(platform.summary)
       .option("--db-url <url>", platform.dbUrl)
       .option("-o, --output <path>", "Write the export here instead of the run folder")
       .option("-y, --yes", "Do not prompt: fail on a rejected credential")
       .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)
-      .option("--json", "Print the result as JSON; never prompts")
+      .option("--json", "Print the result as JSON; never prompts");
+    for (const [flag, description] of "flags" in platform ? platform.flags : []) {
+      command.option(flag, description);
+    }
+    command
       .setExamples([
         {
           command: `clerk migrate export ${platform.key} --db-url "${platform.example}"`,

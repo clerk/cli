@@ -550,9 +550,9 @@ describe("importUsers", () => {
   // A continue with only attaches left would otherwise read 0/0 throughout.
   test("counts an attach-only user towards progress once its attaches are sent", async () => {
     stub(() => ok("idn_1"));
-    const reported: number[] = [];
+    const reported: { done: number; ok: number }[] = [];
 
-    await importUsers({
+    const summary = await importUsers({
       users: [],
       attachOnly: [
         {
@@ -565,10 +565,40 @@ describe("importUsers", () => {
       secretKey: "sk_test_x",
       limits: LIMITS,
       record,
-      progress: ({ done }) => reported.push(done),
+      progress: ({ done, ok }) => reported.push({ done, ok }),
     });
 
-    expect(reported.at(-1)).toBe(1);
+    // Created by the run's earlier attempt: the bar and the summary agree.
+    expect(reported.at(-1)).toEqual({ done: 1, ok: 1 });
+    expect(summary.successful).toBe(1);
+  });
+
+  // The pending phone attaches now, but the email Clerk refused stays refused.
+  test("an attach-only user keeps the error its earlier line recorded", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          clerkId: "user_1",
+          status: "created",
+          error: "b@x.dev: That email address is taken.",
+          pending: [{ kind: "phone", value: "+15555550100", verified: false }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)).toMatchObject({
+      sourceId: "u1",
+      status: "created",
+      error: "b@x.dev: That email address is taken.",
+    });
+    expect(lines.at(-1)?.pending).toBeUndefined();
   });
 
   test("an adopted user is not created again; only its extras attach", async () => {
@@ -789,6 +819,61 @@ describe("importUsers", () => {
       expect(lines.at(-1)?.error).not.toContain("+15555550100");
     });
 
+    // A continue reads only the latest line: with no answer, it has to keep
+    // what the attempt reserved and left out, or the user is adopted as if
+    // nothing was reserved and the left-out phones are never attached.
+    test("keeps reserved and the left-out phones when the retried create gets no answer", async () => {
+      stub((url, attempt) =>
+        !url.endsWith("/v1/users")
+          ? ok("idn_1")
+          : attempt === 1
+            ? new Response(
+                JSON.stringify({
+                  errors: [
+                    {
+                      code: "form_param_format_invalid",
+                      message: "bad phone",
+                      meta: { param_name: "phone_number" },
+                    },
+                  ],
+                }),
+                { status: 422 },
+              )
+            : new Response("upstream", { status: 503 }),
+      );
+
+      const summary = await importUsers({
+        users: [withPhones()],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(summary.failed).toBe(1);
+      expect(allLines.at(-1)).toMatchObject({
+        status: "creating",
+        reserved: true,
+        pending: [{ kind: "phone", value: "+31612345678", verified: false }],
+        error: expect.stringContaining("a re-run checks"),
+      });
+    });
+
+    test("keeps reserved when a reserved create gets no answer", async () => {
+      stub(() => new Response("upstream", { status: 503 }));
+
+      await importUsers({
+        users: [user({ unverifiedEmailAddresses: ["c@x.dev"] })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(allLines.at(-1)).toMatchObject({ status: "creating", reserved: true });
+      expect(allLines.at(-1)).not.toHaveProperty("pending");
+    });
+
     test("creates a user with no email on its verified phone", async () => {
       refusePhone(1);
       const summary = await importUsers({
@@ -981,7 +1066,9 @@ describe("importUsers", () => {
     });
 
     expect(summary.failed).toBe(1);
-    expect(allLines.map((line) => line.status)).toEqual(["creating"]);
+    // A second `creating` line, so `runs <id>` can say why.
+    expect(allLines.map((line) => line.status)).toEqual(["creating", "creating"]);
+    expect(allLines[1]?.error).toContain("a re-run checks");
     expect([...summary.errorBreakdown.keys()][0]).toContain("a re-run checks");
   });
 
@@ -996,7 +1083,15 @@ describe("importUsers", () => {
     });
 
     expect(summary).toMatchObject({ successful: 0, failed: 1 });
-    expect(allLines).toEqual([{ sourceId: "u1", status: "creating" }]);
+    expect(allLines).toEqual([
+      { sourceId: "u1", status: "creating" },
+      {
+        sourceId: "u1",
+        status: "creating",
+        error: expect.stringContaining("without a user ID"),
+        code: "unknown",
+      },
+    ]);
   });
 
   // Every create after the first refusal would be refused too, so none is

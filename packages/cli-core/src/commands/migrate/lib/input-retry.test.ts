@@ -14,7 +14,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError, ERROR_CODE, EXIT_CODE, UserAbortError } from "../../../lib/errors.ts";
-import { getMode, setMode, type Mode } from "../../../mode.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 
 let answers: string[] = [];
@@ -54,14 +53,15 @@ const SECOND = "libsql://right.turso.io?authToken=t";
 const rejected = () =>
   new CliError("Could not reach it", { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE });
 
-let originalMode: Mode;
+let originalMode: string | undefined;
 
 beforeAll(() => {
-  originalMode = getMode();
+  originalMode = process.env.CLERK_MODE;
 });
 
 afterAll(() => {
-  setMode(originalMode);
+  if (originalMode === undefined) delete process.env.CLERK_MODE;
+  else process.env.CLERK_MODE = originalMode;
 });
 
 // The prompts here are stubs; whether this process has a terminal is not
@@ -69,7 +69,7 @@ afterAll(() => {
 const realTerminal = terminal.available;
 
 beforeEach(() => {
-  setMode("human");
+  process.env.CLERK_MODE = "human";
   setAssumeYes(false);
   answers = [];
   cancelPrompt = false;
@@ -184,7 +184,7 @@ describe("withInputRetry", () => {
   });
 
   test("throws without prompting when there is nobody to ask", async () => {
-    setMode("agent");
+    process.env.CLERK_MODE = "agent";
     let attempts = 0;
 
     await expect(
@@ -244,10 +244,7 @@ describe("withInputRetry", () => {
   // A bug inside the work, or an interrupt, is not a wrong answer to a prompt.
   // Another credential would not fix an outage, a 429 or a refused connection.
   test.each([
-    [
-      "a refused connection",
-      new CliError("Could not reach x", { code: ERROR_CODE.NETWORK_UNREACHABLE }),
-    ],
+    ["a refused connection", new CliError("Could not reach x")],
     ["a 503", new CliError("Auth0 returned 503 listing users")],
   ])("does not ask again after %s", async (_label, failure) => {
     let attempts = 0;

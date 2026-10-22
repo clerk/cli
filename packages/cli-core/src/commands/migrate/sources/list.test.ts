@@ -3,7 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError, EXIT_CODE } from "../../../lib/errors.ts";
-import { getMode, setMode, type Mode } from "../../../mode.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { list, wrapText } from "./list.ts";
 import { ACCOUNT_LINKING_URL, sources } from "./registry.ts";
@@ -85,15 +84,13 @@ describe("sources <source>", () => {
     expect(plain()).toContain("Export with `clerk migrate export supabase`");
     expect(plain()).toContain("encrypted_password → password");
     expect(plain()).toContain("Passwords yes");
-    // Supabase's hasher is read from each digest, so it lists no fixed one.
-    expect(plain()).not.toContain("passwordHasher is always");
     expect(captured.err).toContain(ACCOUNT_LINKING_URL);
   });
 
-  test("lists a source's fixed defaults", async () => {
-    await list("auth0");
-
-    expect(plain()).toContain('passwordHasher is always "bcrypt"');
+  // Supabase detects its hasher per user, so a source with a fixed one shows it.
+  test("shows a source's fixed field values", async () => {
+    await list("firebase");
+    expect(plain()).toContain('passwordHasher is always "scrypt_firebase"');
   });
 
   test("shows a source you wrote, by its path", async () => {
@@ -126,15 +123,16 @@ describe("sources <source>", () => {
 });
 
 describe("human-mode frame", () => {
-  let originalMode: Mode;
+  let originalMode: string | undefined;
 
   beforeAll(() => {
-    originalMode = getMode();
-    setMode("human");
+    originalMode = process.env.CLERK_MODE;
+    process.env.CLERK_MODE = "human";
   });
 
   afterAll(() => {
-    setMode(originalMode);
+    if (originalMode === undefined) delete process.env.CLERK_MODE;
+    else process.env.CLERK_MODE = originalMode;
   });
 
   // Reading a static registry is not a run: there is no progress to bracket,

@@ -1,22 +1,17 @@
 /**
  * Whether this run was given `-y`.
  *
- * `-y` is not the same question as {@link isAgent}. Agent mode says the CLI
- * *cannot* prompt; `-y` says the operator does not want it to. Most prompts
- * only care about the first — a confirm is skipped by either — but the two
- * places that take a default instead of asking need to know a human chose it,
- * so the two cannot be collapsed into one flag.
+ * Not the same question as {@link isAgent}: agent mode says the CLI *cannot*
+ * prompt; `-y` says the operator does not want it to. A confirm is skipped by
+ * either, but `withInputRetry` needs to know a human chose not to be asked:
+ * under `-y` a rejected credential fails instead of being asked for again.
  *
- * Held per-run rather than threaded through, because the readers are three
- * layers below the command that parses it: `withInputRetry` sits under every
- * credential prompt, and the export commands read it to decide what to print.
- * Passing it down would put a `yes` parameter on every export handler
- * signature on the way. This mirrors `mode.ts`, which resolves
- * `--mode` once in a `preAction` hook and is read the same way.
- *
- * Set by the `migrate` group's `preAction` hook, so every subcommand under it
- * is covered whether or not it declares the flag — one that does not simply
- * resolves to `false`.
+ * Set once by the `migrate` group's `preAction` hook, so every subcommand under
+ * it is covered whether or not it declares the flag — one that does not simply
+ * resolves to `false`. Held per run, the way `mode.ts` holds `--mode`, because
+ * its readers sit layers below the command that parses it: `withInputRetry`
+ * runs under every credential prompt, and passing `yes` down would put it on
+ * every export handler on the way.
  */
 
 let assumeYes = false;

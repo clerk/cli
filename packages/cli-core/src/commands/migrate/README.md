@@ -104,10 +104,10 @@ the key now in use still addresses the same instance.
 
 ## The run store
 
-Every import, export and undo that gets as far as writing is a **run**, and the run store is
-the one place `clerk migrate` keeps state. A dry run, a refusal, a run that
-needs consent and an empty file write none (`run: null`). An import whose
-users `--require-password` all leaves out still writes one, recording them
+Every import, export and undo that gets as far as writing is a **run**, and the
+run store is the one place `clerk migrate` keeps state. A dry run, a refusal, a
+run that needs consent and an empty file write none (`run: null`). An import
+whose users `--require-password` all leaves out still writes one, recording them
 as skipped.
 
 ### Where runs are kept
@@ -134,25 +134,36 @@ Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 | `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending` or `passwordDropped` when present |
 | `lock`         | The PID of the process writing the run, while it runs                                                                                  |
 
+On a `failed` line, `code` is the HTTP status, such as `422` or `429`, or
+`unknown`. On a `skipped` line it gives the reason in machine form:
+`no_password` for a user `--require-password` left out, `in_file` for one the
+checks skipped for the file's own data (invalid, a duplicate within it, an
+email Clerk refuses, a malformed hash), or `source_skip` for one its source
+asked to skip.
+
 A user's status is `creating`, `created`, `failed`, `skipped`, `deleted` or
 `exported`. The last line for each `sourceId` wins. A `429` retry, an extra
 email or phone that did not attach, a first phone Clerk refused (which the
 summary also counts), and a validation failure all land in the line's `error`
 field.
 
-`creating` is written as a user's `POST /v1/users` goes out. It stays the
-latest line when no answer says whether the create landed: an abort, a
-network error, or a 5xx. A `created` line with `pending` lists the extra emails
-and phones not yet attached.
+`creating` is written as a user's `POST /v1/users` goes out. It stays the latest
+status when no answer says whether the create landed: an abort, a network error,
+or a 5xx. The import counts a network error or a 5xx as failed, and a second
+`creating` line records its `error`. A `created` line with `pending` lists the
+extra emails and phones not yet attached, and `counts.pending` (`result.pending`
+in the import's `--json`) counts those users.
 
-A run is `partial` when any user failed, was skipped, is still `creating` or
-was never sent (`counts.notSent`), and `complete` otherwise. A run whose process
-died, or that never recorded a finish time, lists as `interrupted`. A Ctrl-C
-leaves a run that way. Its run ID and folder are printed as the run starts, so
-they are on screen however it ends. A lock held by another live process refuses
-a second writer with exit 2, and names the lock file to delete if that process
-is not a migrate run. A lock holding this process's own PID is stale: in a
-container the CLI often gets the same PID every run.
+A run is `partial` when any user failed, was skipped, is still `creating`, has
+identifiers still `pending`, or was never sent (`counts.notSent`), and
+`complete` otherwise. A user its source asked to skip (`code: "source_skip"`)
+doesn't count: nobody meant to bring it across. A run whose process died, or that never recorded a finish
+time, lists as `interrupted`. A Ctrl-C leaves a run that way. Its run ID and
+folder are printed as the run starts, so they are on screen however it ends. A
+lock held by another live process refuses a second writer with exit 2, and names
+the lock file to delete if that process is not a migrate run. A lock holding
+this process's own PID is stale: in a container the CLI often gets the same PID
+every run.
 
 Run folders are created owner-only (`0700`), and export files `0600`: they hold
 password hashes and user data.
@@ -301,6 +312,7 @@ keep `--runs-dir`: the import looks the run ID up there.
 | `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`                     |
 | `--with-identities`        | `workos`                           | Also record each user's OAuth providers                           |
 | `--no-with-identities`     | `workos`                           | Skip the OAuth provider fan-out without being asked               |
+| `--trust-oauth-emails`     | `authjs`                           | Mark the email of a user who signs in with OAuth verified         |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -380,11 +392,13 @@ alongside imports.
   the API — only the `*_enabled` booleans. Migrated users must reset their
   password in the destination instance.
 - **Auth0**'s Management API does not return password hashes either; they come
-  only from a support request. Add a `passwordHash` field to each user before
-  importing, or migrate without passwords.
-- **WorkOS** returns neither password hashes nor TOTP secrets, and has no
-  support-request escape hatch: hashes go in on import and never come back, and
-  `totp.secret` is returned on enrol only. There is nothing to add to the file.
+  only from a support request. That file has no `user_id`: a user's ID is
+  `auth0|` plus `alt_id`, or `_id` when there's no `alt_id`. Copy each
+  `passwordHash` onto the matching user before importing, or migrate without
+  passwords.
+- **WorkOS** returns neither password hashes nor TOTP secrets over the API:
+  hashes go in on import and never come back, and `totp.secret` is returned on
+  enrol only. WorkOS documents no other way to get them out.
 - **Auth.js** core stores no passwords. An app that also uses the Credentials
   provider stores them wherever it chose to, which the export does not read,
   even a password column on the user table: migrate those separately, or have
@@ -447,10 +461,27 @@ the difference as significant once quoted. On Postgres it tries
 The verified column is read as `emailVerified`, or `email_verified` on a legacy
 NextAuth table, whose `created_at` is kept too when it has one. Auth.js's own
 schemas record no creation time. Auth.js core stores no passwords, so its users
-arrive without credentials. That is all an OAuth or email-link app has. An app
+arrive without credentials, as OAuth and email-link users never had one. An app
 that also uses the Credentials provider stores passwords wherever it chose to,
 which the export does not read, even a password column on the user table:
 migrate those separately, or have those users reset their password.
+
+It also reads the account table beside the user table (`Account`, `account`,
+`accounts` or `next_auth.accounts`) for each user's OAuth providers, kept in
+the export as `providers` and printed as an **OAuth providers** block. The
+import counts them in its checks, which offer to turn on any Clerk has off.
+
+**Auth.js leaves an OAuth user's email unverified** (`emailVerified: null`;
+only an email-link sign-up gets a date). Imported as it is, that user is
+rejected by an instance that requires an email, and on one that doesn't,
+Clerk won't link their social sign-in to the unverified address and creates a
+second user. The export counts these users and warns. If every provider the
+app uses verifies addresses, `--trust-oauth-emails` marks them verified, with
+the export time as the verification date. It is opt-in because Auth.js itself
+won't link accounts by email unless the app sets
+`allowDangerousEmailAccountLinking`: a provider that never verified an address
+lets whoever holds it claim the account. Without an account table, the export
+says it could not tell who signs in with OAuth.
 
 **`betterauth` reads its schema before it queries.** It finds the tables
 (`user` and `account`, or `users` and `accounts` under `usePlural: true`), how
@@ -567,7 +598,9 @@ returning the first thousand would read as "that is everyone". A tenant of
 exactly 1000 gets the warning too: Auth0 reports a larger tenant's total as
 1000, so the two look the same. It also says so when fewer users come back
 than Auth0 counted. Either way the file holds what came back, `--json` carries
-`truncated: true`, and the export exits 1. The bulk job downloads gzipped
+`truncated: true`, and the export exits 1. The run finishes `partial`, and
+importing it by run ID warns that it is not every user, among the checks'
+warnings, so `--json` carries it too. The bulk job downloads gzipped
 NDJSON: unzip it before importing. Ask the job for `user_metadata`,
 `app_metadata` and `blocked` by name, since a job with no `fields` leaves
 them out.
@@ -634,6 +667,9 @@ A lookup that fails is counted on its own row rather than folded into
 `no OAuth provider`. "Lookup failed" and "has no providers" are different
 facts, and flattening the first into the second would understate social
 sign-in.
+A lookup is retried on a `429`, honouring `Retry-After`, and counted as not
+readable only once its retries run out. `--json` carries the block as
+`sections: [{ title, items: [{ label, count }], note? }]`.
 
 Non-interactive runs get progress on stderr every 500 users during the fan-out,
 and every 10 pages during the user fetch. `withSpinner` hands a no-op to
@@ -718,15 +754,23 @@ honouring `Retry-After` when the response carries it — and retries up to 5
 times before the user is recorded as failed. The command exits 1 if any user
 failed.
 
-`--require-password` records each user it leaves out as `skipped`, so the run
-ends `partial`.
+`--require-password` records each user it leaves out as `skipped`, with
+`code: "no_password"`, so the run ends `partial`. A continue carries the flag
+and leaves them out again, so when they are all that's left, neither the import
+nor `runs <id>` suggests one. To import them, run the same import again without
+the flag: it continues this run and creates them. A skip for the file's own data
+(`code: "in_file"`) comes back on every continue too, so it isn't counted as
+something to retry: fix the file, which makes a new run.
 
 `--json` returns `{ target, run, resume, checks, result }`. When a run stops
 before importing, it carries one of `dryRun: true`, `refused: true`,
 `consent: "required"` or `nothingToImport: true` in place of `result`, and a
 file already imported in full returns `alreadyImported: true`. With
 `--require-password`, `withoutPassword` counts the users it left out before the
-checks, so `checks.total` plus it is the file's size.
+checks, so on a first import `checks.total` plus it is the file's size. A
+continue leaves out the users the run already created. A continue with
+identifiers left to attach carries `attachOnly`: the users it attaches them to,
+which skip the checks too.
 
 #### Re-running
 
@@ -738,7 +782,7 @@ instance ID; the latest matching import run decides what happens:
 | ----------------------------------------- | ---------------------------------------------------------------------- |
 | none                                      | a new run                                                              |
 | interrupted (dead lock or no finish time) | continues the same run, skipping the users it created                  |
-| `partial`                                 | continues the same run, retrying the users that failed or were skipped |
+| `partial`                                 | continues the same run, retrying the users that did not finish earlier |
 | `complete`                                | nothing: prints "Already imported in run …" and exits 0                |
 | `undone`                                  | a new run                                                              |
 | has an undo that did not finish           | exits 2, naming the `clerk migrate undo` that finishes it              |
@@ -776,13 +820,17 @@ plain `rm` for an export written with `--output` outside one.
 #### Checks
 
 Every import runs the checks before writing anything, and `--dry-run` stops
-after them. They sort the users three ways:
+after them. They sort the users four ways:
 
+- **Skipped** — users their source asked to leave out: Better Auth's anonymous
+  guests, Firebase users with no email or phone (such as anonymous ones), and
+  Supabase's soft-deleted and anonymous users. Nobody means to bring these
+  across, so they never stop the import: each is recorded as `skipped` with its
+  source's reason (`code: "source_skip"`), and `--json` lists them as
+  `checks.skipped`. On their own, they leave the run `complete`.
 - **Rejected** — users Clerk would refuse. Each gets the first reason that
   applies:
   - it failed schema validation
-  - its source requested a skip (Better Auth: an anonymous guest; Supabase: a
-    soft-deleted user)
   - its only emails are ones Clerk refuses: malformed, or a domain that can't
     receive mail (`.local`, `.invalid`, `.test`, `.example`, `.arpa`,
     `.internal`, `.lan`, `.corp` and the like). Such an email is dropped from
@@ -792,10 +840,11 @@ after them. They sort the users three ways:
     any other user, with a warning. Spaces around a phone don't count, as Clerk
     trims them. Phones the instance has off are stripped anyway, so they are
     not checked
-  - it lacks an identifier the instance requires. An email or phone counts
-    only when it is verified, because an unverified one is attached after the
-    user exists, or with `--reserve-unverified`, which creates it reserved. A
-    required phone dropped for not being in E.164 form is named as such
+  - it lacks an identifier the instance requires. An email or phone counts when
+    it is verified, or when it is created reserved (`--reserve-unverified`, or
+    an adopted user's recorded mode). An unverified one attached after the user
+    exists does not. A required phone dropped for not being in E.164 form is
+    named as such
   - it has no identifier left once the emails and phones Clerk would refuse
     are stripped: those of an instance that neither has them on nor signs in
     or does MFA with them. A username is kept, as Clerk stores it with
@@ -820,9 +869,9 @@ after them. They sort the users three ways:
     to 15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
     checked; other hashers are not, and Clerk refuses a bad one at create)
   - Supabase: its only providers are ones Clerk has off, or doesn't offer at all
-    (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly), and it has no verified email or
-    phone the instance signs in with by code or link. The checks offer to turn
-    on the first kind; nothing can turn on the second
+    (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly), and it has no verified or
+    reserved email or phone the instance signs in with by code or link. The
+    checks offer to turn on the first kind; nothing can turn on the second
   - its source ID, primary email, primary phone or username repeats an
     earlier user in the file that passes the checks above. Only what the
     create sends counts: an extra email is attached after it, and a stripped
@@ -935,8 +984,10 @@ Users that do exceed the limit come back in the error breakdown as
 `You have reached your limit of N users`, annotated with what a development
 instance can do about it. The first refusal stops the import: the users it
 never sent are counted under "Not sent" (`result.notSent` in `--json`, and
-`counts.notSent` in `run.json`). Once the limit is raised,
-[run the import again](#re-running) to send them.
+`counts.notSent` in `run.json`), written when the run finishes. A run stopped
+with Ctrl-C never finishes, so it can't count them, and `runs <id>` offers its
+continue instead. Once the limit is raised, [run the import again](#re-running)
+to send them.
 
 ### `clerk migrate runs`
 
@@ -956,19 +1007,25 @@ clerk migrate runs --json
 
 It prints the runs folder first. The listing shows each run's ID, date, kind,
 status, target, file and counts. `runs <id>` adds the error breakdown and the
-users that failed or were skipped, with the path to the full record, then what
-to run next: for an interrupted or partial import, the import that continues
-it, with the flags it ran with, then the undo. The continue is left out when
-importing the file again might not reach this run: a newer run of the same
-file and source that may be for the same instance (one recorded under a key's
-stand-in ID may be any), a file changed since, or any undo of it. Both carry
-what reaches the run's instance again: `--secret-key <key>` for a key passed
-with `--secret-key` or exported as `CLERK_SECRET_KEY`, and `--app` and
-`--instance` for `--app` or a linked profile. Any other source (a `.env` file,
-a keyless app, or a framework's own key variable such as
-`NUXT_CLERK_SECRET_KEY`) gets no target flags, because each refuses
-`--instance` and names its own key. The import's own next steps, and an undo's,
-carry the same. An unknown ID exits 2.
+users that failed, were skipped, or are `creating` with no answer to confirm the
+create (`unconfirmed` in `--json`), with the path to the full record, then what
+to run next: for an interrupted or partial import, the import that continues it,
+with the flags it ran with, then the undo. The continue is left out when
+importing the file again might not reach this run: a newer run of the same file
+and source that may be for the same instance (a run under a key's stand-in ID
+could be for any instance), a file changed since, or any undo of it. It is also
+left out when only `--require-password` skips, or skips for the file's own
+data, are left, or for a run from an earlier build, whose flags can't be read.
+Both carry what reaches
+the run's instance again, from the key its latest attempt used: `--secret-key
+<key>` for a key passed with `--secret-key` or exported (as `CLERK_SECRET_KEY`,
+or a framework's own variable such as `NUXT_CLERK_SECRET_KEY`), and `--app` and
+`--instance` for `--app` or a linked profile (`--secret-key <key>` when the run
+is under a stand-in ID: no `--instance` resolves one, and a bare `--app`
+resolves development). A key file (`.env`, or a keyless app's) gets no target
+flags: it refuses `--instance`, and run from the same project it names the key
+itself. The import's own next steps, and a partial undo's, carry the same. An
+unknown ID exits 2.
 
 ### `clerk migrate undo`
 
@@ -1036,7 +1093,8 @@ the users that failed, in the same undo run. A Ctrl-C leaves the undo run
 `interrupted`, as it does an import, and running `undo` again carries on.
 
 Once undo reaches its preview, `--json` prints one object on stdout, whatever
-happens next. A refusal before that — no such run, a run that isn't an import,
+happens next, unless a Ctrl-C exits first (see `stopped` below). A refusal
+before that — no such run, a run that isn't an import,
 or a key for another instance — is an error, as it is for every command. The
 object:
 
@@ -1055,13 +1113,21 @@ is written, as an import's is. Once the deletes run, `run` is the undo run, and
 before that, the object says why:
 
 - `"dryRun": true`: a dry run.
-- `"consent": "required"`: refused for consent.
+- `"consent": "required"`: refused for consent. When
+  `"includeSignedIn": "required"` is beside it, `--yes` was given, but users
+  who signed in since the import also need `--include-signed-in`.
 - `"changed": true`: refused because the run changed while the preview waited,
   or another process holds it.
 - `"recheckFailed": true`: the second look at sign-ins, right before the
   deletes, failed.
 - `"writeFailed": true`: the file system refused a write to the runs folder.
-- `"stopped": true`: anything else stopped it, such as a Ctrl-C.
+- `"stopped": true`: anything else stopped it. A Ctrl-C may exit before the
+  object is printed: `clerk migrate runs` then lists the undo run, if one was
+  written, and `runs <id>` shows how far it got.
+
+With `writeFailed` or `stopped`, `run` is the undo run as it stands on disk,
+once one was written: its counts come from its lines, and `state` says how it
+stopped, as in `clerk migrate runs`.
 
 ### `clerk migrate sources`
 
@@ -1077,13 +1143,14 @@ clerk migrate sources --json
 | `[source]` | A built-in key, or the path to a source you wrote, to show fully |
 | `--json`   | The same data, on stdout                                         |
 
-`sources` alone prints the table under [Sources](#sources). `sources <source>` shows one source in
-full: its export command, what it carries with a note for each, where each
-field lands (`encrypted_password → password`), its fixed defaults, and any
-caveats. An unknown key exits 2 and lists the valid ones. There is no
-intro/outro gutter. `sources` alone, or with a built-in key, reads a static
-registry and runs nothing. With a path, it loads and runs that file, as
-`--source` does, to check it and show what it maps.
+`sources` alone prints the table under [Sources](#sources). `sources <source>`
+shows one source in full: its export command (when `clerk migrate export` has
+one for it), what it carries with a note for each, where each field lands
+(`encrypted_password → password`), its fixed defaults, and any caveats. An
+unknown key exits 2 and lists the valid ones. There is no intro/outro gutter.
+`sources` alone, or with a built-in key, reads a static registry and runs
+nothing. With a path, it loads and runs that file, as `--source` does, to check
+it and show what it maps.
 
 ### `clerk migrate help`
 
@@ -1112,6 +1179,9 @@ needs to. Every source shows the same note instead: enable the same providers in
 Clerk, and a user who signs in with one is linked to their imported account by
 verified email. See
 [account linking](https://clerk.com/docs/guides/configure/auth-strategies/social-connections/account-linking).
+The import's checks count the providers in a Supabase, Auth0 or Auth.js file and offer
+to enable any that are off. Auth0's come from each `user_id`'s prefix
+(`github|…`), so a user who linked a second provider counts under the first.
 
 ### `--source`
 
@@ -1172,8 +1242,9 @@ and won't start a new one beside it unasked either: while that run isn't
 undone, it refuses with exit 2 and names it, since the users it created would
 come back as conflicts. Pass `--new-run` to start
 a new run anyway, or undo the earlier one first. The hash covers that file
-only: a local helper it imports is not part of it, so after editing one, pass
-`--new-run` rather than continue a run made with the old helper.
+only: a local helper it imports is not part of it, so after editing one, or
+when running a copy of the file beside different helpers, pass `--new-run`
+rather than continue a run made with the old ones.
 
 #### Validation
 
@@ -1273,18 +1344,20 @@ sign in with one nobody proved they own, so it is opt-in. `-y`, `--json` and
 agent mode never ask, and keep them unverified without the flag.
 
 A run records its choice (`reserveUnverified` in `run.json`), and a continued
-run reuses it without asking, so every user of one run is created the same
-way. `--reserve-unverified` on a continue of a run that kept them unverified is
+run reuses it without asking, so every user of one run is created the same way.
+A run recorded before the choice existed asks once, and records the answer.
+`--reserve-unverified` on a continue of a run that kept them unverified is
 refused; pass `--new-run` to change modes. A user a run adopts keeps the mode
-its first create recorded (`reserved` on its `creating` line). When Clerk refused a phone and the retry went out
-without the reserved phones, that line lists them as `pending`, and a continue
-that adopts the user attaches them, unverified.
+its first create recorded (`reserved` on its `creating` line). When Clerk
+refused a phone and the retry went out without the reserved phones, that line
+lists them as `pending`, and a continue that adopts the user attaches them,
+unverified (one Clerk refuses again fails with a note).
 
 Reserved, an unverified identifier is checked for duplicates like a verified
 one, because it goes on the user's create: one that an instance user or an
-earlier record in the file already holds rejects the whole user, where without
-reserving only that address would fail to attach, with a note. If that rejects
-users you want, import without reserving.
+earlier record in the file that passes the checks already holds rejects the
+whole user, where without reserving only that address would fail to attach, with
+a note. If that rejects users you want, import without reserving.
 
 ### Firebase hash parameters
 
@@ -1299,14 +1372,18 @@ clerk migrate import users.json --source firebase -y \
   --firebase-rounds 8 --firebase-mem-cost 14
 ```
 
+A project with no salt separator passes `--firebase-salt-separator ""` (or
+`CLERK_FIREBASE_SALT_SEPARATOR=""`).
+
 All four are **required as a set** — supplying some but not all is a usage error
-naming what is missing. A partial set produces a well-formed digest that
-verifies against nothing, so users would import successfully and then be unable
-to sign in.
+naming what is missing. Rejecting a partial set prevents importing a digest that
+cannot verify: users would import successfully and then be unable to sign in.
 
 The flags are read first, then the export file's envelope, which carries the
 parameters when `clerk migrate export firebase` could read them from the
-project. The flags win, so a rotated key can be passed without re-exporting.
+project, then the `CLERK_FIREBASE_*` variables, and last a prompt at a terminal.
+The flags win, for an export file with no parameters or the wrong ones. They
+must be the parameters that produced the exported hashes.
 The envelope sits in the gitignored run folder, since the signer key is a
 Firebase secret.
 
@@ -1394,9 +1471,11 @@ stamping every user with today's.
 | `POST`   | `/v1/users`                                             | `migrate import` — creates each user                                                                                           |
 | `POST`   | `/v1/email_addresses`                                   | `migrate import` — attaches additional emails                                                                                  |
 | `POST`   | `/v1/phone_numbers`                                     | `migrate import` — attaches additional phones                                                                                  |
+| `GET`    | `/v1/users?limit=&offset=&order_by=+created_at`         | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time                                                 |
 | `GET`    | `/v1/users?limit=&starting_after=&order_by=+created_at` | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time, each page from the last user of the one before |
 | `GET`    | `/v1/users/count`                                       | `migrate import` — headroom against a development instance's user limit                                                        |
 | `GET`    | `/v1/users?external_id=…`                               | `migrate import` — checks for users already in the instance, 100 values a call                                                 |
+| `GET`    | `/v1/users?external_id=…`                               | `migrate import` — a continue looks up users whose create was in flight                                                        |
 | `GET`    | `/v1/users?external_id=…`                               | `migrate undo` — finds users whose create was in flight when the import stopped                                                |
 | `GET`    | `/v1/users?user_id=…`                                   | `migrate undo` — reads the imported users back, 100 a call                                                                     |
 | `DELETE` | `/v1/users/{user_id}`                                   | `migrate undo` — deletes one user                                                                                              |
@@ -1421,12 +1500,14 @@ Three exports talk to their own platform rather than to Clerk:
 | `GET`  | `…/user_management/users/{id}/identities`      | `export workos` — when identity lookups are enabled, one per user |
 
 The two Identity Toolkit paths are on `identitytoolkit.googleapis.com`, or on
-`FIREBASE_AUTH_EMULATOR_HOST` when that is set. The two WorkOS paths are on
-`api.workos.com`.
+`FIREBASE_AUTH_EMULATOR_HOST` when that is set. The emulator needs no token, so
+the export skips that request, and it may not carry the hash parameters: pass
+them to the import. The two WorkOS paths are on `api.workos.com`.
 
-The three database exports (`supabase`, `authjs`, `betterauth`) connect over
-`--db-url`. A `libsql://` URL is the one exception that goes over HTTP: it
-posts to the server's pipeline endpoint.
+The database exports (`supabase`, `authjs`, `betterauth`) connect over
+`--db-url`. Auth.js and Better Auth also accept a `libsql://` URL, which goes
+over HTTP: it posts to the server's pipeline endpoint. Supabase takes Postgres
+only.
 
 ## Notes
 

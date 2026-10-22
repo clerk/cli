@@ -1,10 +1,9 @@
 /**
  * Keeps README.md and the command tree honest about each other.
  *
- * This README documents six commands, seven export platforms, seven sources
- * and the run store across ~1000 lines. Checking it by eye at review time does not
- * scale, and a doc that names a flag the binary rejects is worse than no doc:
- * the reader trusts it and gets a usage error.
+ * Checking the README by eye at review time does not scale, and a doc that
+ * names a flag the binary rejects is worse than no doc: the reader trusts it
+ * and gets a usage error.
  *
  * Both directions are checked — every example must resolve, and every flag must
  * be written down — so neither renaming a flag nor adding one passes silently.
@@ -29,7 +28,7 @@ function documentedCommands(markdown: string): string[] {
   const found = new Set<string>();
 
   for (const block of fencedBlocks(markdown)) {
-    // Line continuations first: the Firebase example spans three lines.
+    // Line continuations first, so a multi-line example reads as one.
     for (const line of block.replace(/\\\n\s*/g, " ").split("\n")) {
       const start = line.indexOf("clerk migrate");
       // A command never contains a backtick, a `#`, or a run of two spaces;
