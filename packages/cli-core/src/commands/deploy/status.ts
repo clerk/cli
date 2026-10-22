@@ -743,55 +743,51 @@ function oauthSetupGuides(
 }
 
 /**
- * The Vercel command for `hostSetup`: a pipe the agent never reads, since
- * `--print` output holds the secret key and an agent that reads it puts it in
- * its own transcript. It reads the keys into a variable first so a failed
- * pull stops it, stops at the first failed upload, and uses `--force` because
- * the production values it replaces are usually development's. Whether
- * `--force` on production rewrites a variable Vercel shares with other
- * environments is unverified, so a production variable that also targets any
- * other environment (Production in a comma-separated list) stops the command
- * (exit 3) until the user agrees. The consent is the command's own
- * `allow_shared=0`, changed for that one run, so it can't carry over to later
- * runs or another project. `vercel env ls` runs with color off (Vercel's color
- * check honors `--no-color` and `FORCE_COLOR=0`) and links off: `NETLIFY` or a
- * non-zero `FORCE_HYPERLINK` turns Vercel's links on even in a pipe, and
- * `FORCE_HYPERLINK=0` overrides both. A link's codes around an environment
- * name hide the comma the shared check looks for. Color codes are stripped
- * anyway, and any escape code left, or output that is neither its table nor
- * its "No Environment Variables found" line, stops it (exit 1) rather than
- * being misread.
- * When `vercel env ls` itself fails (not installed, not logged in, the
- * project not linked), its captured output is Vercel's error, so the command
- * prints it to stderr before exiting 1: it names the fix (`vercel login`,
- * `vercel link`), and it holds no key, since the keys are only in `$keys`.
- * `>/dev/null` rather than `grep -q`: an early exit would close the pipe on a
- * long listing, and `pipefail` would turn that into a failure. The parentheses
- * keep `pipefail`, `exit`, and `allow_shared` out of the agent's shell.
- * `${name}` has braces because zsh reads `$name[` as an array subscript.
- * `set +x` comes first: a caller with `set -x` on would otherwise trace every
- * line that holds a key to stderr, which the agent reads.
- * The shared check is an `if`, not `grep ... && echo`: with no shared key the
- * `&&` form ends the loop with grep's 1, which `pipefail` carries into
- * `shared=$(...)`, and a caller with `set -e` on would exit there, silently,
- * before uploading anything.
- * Each key line is split at its first `=` by parameter expansion rather than
- * `IFS='=' read -r key value`: bash's `read` drops a single trailing `=` from
- * the last field (zsh keeps it), which would upload a truncated value and
- * still exit 0.
+ * The Vercel command for `hostSetup`, which copies the production keys into
+ * Vercel without the agent reading them. It exits 1 when the pull, the variable
+ * listing, or an upload fails or the listing can't be read, and 3, before
+ * uploading, when a key is already a production variable shared with another
+ * environment, which `--force` might rewrite.
  */
 function vercelKeyCopyCommand(pull: string): string {
   return (
+    // `set +x` comes first, or a caller's `set -x` traces each line holding a
+    // key to stderr, which the agent reads. The keys go into a variable first
+    // so a failed pull exits before any upload, and the subshell keeps `exit`
+    // and `pipefail` out of the agent's shell.
     `( set +x; allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
+    // `NETLIFY` or a non-zero `FORCE_HYPERLINK` turns Vercel's links on even in
+    // a pipe, and their codes hide the commas the shared check reads;
+    // `FORCE_HYPERLINK=0` overrides both, and `--no-color` with `FORCE_COLOR=0`
+    // turns color off. A failed listing's output is Vercel's error, which names
+    // the fix (`vercel login`, `vercel link`) and holds no key, so it goes to
+    // stderr, or the agent gets exit 1 with no reason.
     `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 FORCE_HYPERLINK=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || { printf '%s\\n' "$vars" >&2; exit 1; }; ` +
+    // Codes `sed` doesn't strip could hide those commas too, so any escape code
+    // left stops the command instead of being misread.
     `case "$vars" in *"$e"*) echo "vercel env ls printed escape codes this command can't read; check the project's variables before replacing any." >&2; exit 1 ;; esac; ` +
+    // `>/dev/null`, not `grep -q`: `grep -q` exits at its first match, so in
+    // bash a long listing's `printf` fails writing to the closed pipe, and
+    // `pipefail` makes that exit 1.
     `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
     `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
     `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
+    // An `if`, not `grep ... && echo`: with no shared key the `&&` form ends
+    // the loop with grep's 1, which `pipefail` carries into `shared=$(...)`, so
+    // a caller's `set -e` exits there before uploading. `${name}` has braces
+    // because zsh reads `$name[` as an array subscript.
     `if printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null; then echo "$name"; fi; done); ` +
+    // Consent is the command's own `allow_shared=0` changed to `1` for one
+    // rerun: the command sets it, so an `allow_shared` the caller exported
+    // doesn't count.
     `if [ -n "$shared" ] && [ "$allow_shared" != 1 ]; then ` +
     `echo "Also set for an environment other than Production: $shared" >&2; exit 3; fi; ` +
+    // Each line splits at its first `=` by parameter expansion: bash's
+    // `IFS='=' read -r key value` drops a single trailing `=` and still exits 0.
     `printf '%s\\n' "$keys" | while IFS= read -r line; do key=\${line%%=*}; value=\${line#*=}; ` +
+    // `--force` makes `vercel env add` send its upsert flag, so it replaces an
+    // existing production variable, and one usually exists, holding
+    // development's key.
     `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )`
   );
 }

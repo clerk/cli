@@ -1551,7 +1551,8 @@ vercel() {
     );
 
     // A Preview or Development-only variable has no production target for
-    // `--force` to rewrite, so it doesn't need the user.
+    // `--force` to rewrite, so it doesn't need the user. `large`, 1,000 rows,
+    // fails in bash if a `grep -q` exits early and closes the pipe.
     test
       .skipIf(!installed)
       .each(["none", "unrelated", "production_only", "preview_dev_only", "large"])(
