@@ -887,6 +887,14 @@ These items go into the GROW-1285 section of the one PR description; the PR itse
 - **`lib/keyless-target.ts` `warnKeylessCoversLess` (`:265-286`)**, printed by `config pull` and the feature toggles: the step for the classified kind. Keep the expired-session variant for `unknown_owner`.
 - **`whoami`** (in scope by Shane's decision): the signed-out keyless branch (`commands/whoami/index.ts:200-208`) says "unclaimed" only for `init_app` and `sdk_app`. For `unknown_owner` it says the folder uses the key from `<source>` and isn't linked. The next steps come from `unlinkedFolderNextStep` in place of the fixed `NEXT_STEPS.WHOAMI_KEYLESS` (`lib/next-steps.ts:68-72`).
 
+**Calls made while building this milestone, agreed in its review (2026-10-22):**
+
+1. **No rerun at these sites.** The not-linked error in `lib/config.ts` doesn't know which command stopped, and its arguments may hold a secret (`clerk api`'s body), so its advice ends with the step. `clerk open` and the warning follow suit; today none of them says to rerun.
+2. **`clerk open` classifies the folder in both branches,** so the kind decides the step: plain keys get `unknown_owner`'s, no keys `no_app`'s, and a folder the classifier reads differently (a publishable key only, an SDK file with no usable claim link) gets its own. Its lead sentences stay word for word.
+3. **The warning's advice is only the step.** "(or pass --app <app_id>)" goes: an init app or unclaimed SDK app isn't in an account, so `--app` can't reach it, and plain keys' step already names `clerk link --app <app_id>`. A locally expired session keeps "Run `clerk auth login` to re-authenticate." for every kind, as today, then the step.
+4. **`whoami` prints the step's text as its one next step,** in human mode only. Its JSON is unchanged.
+5. **The account-command error offers `--app` only when an app ID can reach the folder's app** (from the review). An init app or a claimable SDK app is in no account, so the error ends with the step; every other kind ends with "Or pass `--app <app_id>` to target an app directly."
+
 **Definition of done.**
 
 - One test per site asserting the named commands. For `open`, also assert that `init --accountless` no longer appears. For `whoami`, assert it doesn't say "unclaimed" for plain keys.
