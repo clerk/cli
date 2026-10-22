@@ -55,9 +55,9 @@ import {
   type InspectOptions,
 } from "./xcode.ts";
 
-const PERSONAL_TEAM_APPLE =
+export const PERSONAL_TEAM_APPLE =
   "This app is signed by a Personal Team, which can't use Sign in with Apple, so its capability was left out. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
-const PERSONAL_TEAM_DOMAINS =
+export const PERSONAL_TEAM_DOMAINS =
   "Associated Domains were left out: a Personal Team can't provision them for a Mac app, so passkeys and password AutoFill stay off. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
 
 export interface SetupOptions extends InspectOptions {
@@ -68,7 +68,7 @@ export interface SetupOptions extends InspectOptions {
   starter?: boolean;
   inspectOnly?: boolean;
   checkAppleConnection?: boolean;
-  /** A new starter signed by a Personal Team: no Sign in with Apple, and on macOS no Associated Domains. */
+  /** The app is signed by a Personal Team: no Sign in with Apple, and on macOS no Associated Domains. */
   personalTeam?: boolean;
   /** An inspection of the same project taken earlier (say, before prompting), to avoid a second xcodebuild pass. */
   inspection?: Inspection;
@@ -95,7 +95,7 @@ export interface SetupPreview {
   apple?: IOSNativeApplePlan;
   appleRequested: boolean;
   appleWarning?: string;
-  /** Why a Personal Team's macOS starter has no Associated Domain. */
+  /** Why a Mac app signed by a Personal Team has no Associated Domain. */
   personalTeamNote?: string;
   signInUIRequested: boolean;
   starter?: Awaited<ReturnType<typeof planStarter>>;

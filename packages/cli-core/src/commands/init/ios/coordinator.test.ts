@@ -341,12 +341,21 @@ test.each([
     domain: true,
     apple: false,
   },
-  // Setup for an app that's no longer an unchanged starter keeps its 4.0.0 behavior.
+  // The signing team decides, not whether the files still match the template, so a rerun after
+  // the first setup, or any existing app, gets the same limits.
   {
     name: "a customized macOS app on a Personal Team",
     platform: "macos",
     starter: false,
     personal: true,
+    domain: false,
+    apple: false,
+  },
+  {
+    name: "a customized macOS app on a paid team",
+    platform: "macos",
+    starter: false,
+    personal: false,
     domain: true,
     apple: true,
   },
@@ -370,12 +379,45 @@ test.each([
     );
     const explained = (text: string) => remaining.some((detail) => detail.includes(text));
     expect(explained("signed by a Personal Team, which can't use Sign in with Apple")).toBe(
-      starter && personal,
+      personal,
     );
     expect(explained("Associated Domains were left out")).toBe(!domain);
     expect(explained("rerun with --sign-in-with-apple")).toBe(false);
   },
 );
+
+test("a second run on a macOS starter's Personal Team adds nothing it can't sign", async () => {
+  const { root, dependencies } = await signedFixture("macos", true, true);
+  const options = { root, agent: true, json: true, appIdPrefix: "PERSONAL01" };
+  await runAppleInit(options, "app_test", dependencies);
+  captured.clear();
+  await runAppleInit(options, "app_test", dependencies);
+  const entitlements = await readFile(join(root, "MyApp/MyApp.entitlements"), "utf8");
+  expect(entitlements).not.toContain("webcredentials:");
+  expect(entitlements).not.toContain("com.apple.developer.applesignin");
+});
+
+test("doctor applies the Personal Team rule instead of pointing back at clerk init", async () => {
+  const { root, dependencies } = await signedFixture("macos", true, true);
+  await runAppleInit(
+    { root, agent: true, json: true, appIdPrefix: "PERSONAL01" },
+    "app_test",
+    dependencies,
+  );
+  spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
+  const ctx = {
+    getProfile: async () => ({ profile: { appId: "app_test" } }),
+  } as unknown as DoctorContext;
+  const results = await runIOSDoctorChecks(ctx, { root }, dependencies);
+  expect(results.find((result) => result.name === "Personal Team")?.status).toBe("warn");
+  // Sign in with Apple is on in Clerk, but the team can't use it, so its entitlement isn't required.
+  expect(results.some((result) => result.name.startsWith("Apple entitlement:"))).toBe(false);
+  expect(
+    results
+      .filter((result) => result.name.startsWith("Capabilities:"))
+      .map((result) => result.status),
+  ).toEqual(["pass", "pass"]);
+});
 
 test("rejects --sign-in-with-apple for a starter on a Personal Team", async () => {
   const { root, dependencies } = await signedFixture("ios", true, true);

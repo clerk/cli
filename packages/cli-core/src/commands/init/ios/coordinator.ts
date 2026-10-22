@@ -252,11 +252,10 @@ export async function runAppleInit(
     stopNativeProgress();
     setup.inspection = inspection;
     const starter = await isUnchangedStarter(inspection);
-    // An unchanged starter is still signed by the team it was created with. A Personal Team can't
-    // use Sign in with Apple, and a Mac app has no simulator to fall back to, so it also can't keep
-    // Associated Domains. Reading the team from the project covers an agent's run after creating
-    // the starter too; other apps keep their 4.0.0 setup.
-    const personalTeam = starter && signedByPersonalTeam(inspection, dependencies.xcodeTeams);
+    // The signing team decides what the app can use, on every run. A Personal Team can't use Sign
+    // in with Apple, and a Mac app has no simulator to fall back to, so it also can't keep
+    // Associated Domains. Xcode's account list says which teams are Personal Teams.
+    const personalTeam = signedByPersonalTeam(inspection, dependencies.xcodeTeams);
     if (personalTeam) {
       if (options.signInWithApple)
         throwUsageError(

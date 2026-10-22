@@ -6,7 +6,15 @@ import { sdkLinked } from "./sdk.ts";
 import { discoverRemote, describeIdentity } from "./identity.ts";
 import { auditRemote, nativeAPI } from "./remote.ts";
 import { resolvedSDKHealth, type Check } from "./sdk-health.ts";
-import { describePreview, prepareSetup, type SetupOptions, type Dependencies } from "./workflow.ts";
+import { signedByPersonalTeam } from "./teams.ts";
+import {
+  PERSONAL_TEAM_APPLE,
+  PERSONAL_TEAM_DOMAINS,
+  describePreview,
+  prepareSetup,
+  type SetupOptions,
+  type Dependencies,
+} from "./workflow.ts";
 
 export async function doctor(options: SetupOptions, dependencies: Dependencies = {}) {
   // Diagnosis is GET-only and does not require opting into provider activation.
@@ -66,10 +74,21 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
           `Bundle ID from ${discovery.bundleSource}; App ID Prefix from ${discovery.prefixSource}.`,
       },
     );
+  // The same rule as setup: a Personal Team gets no Sign in with Apple, and no Associated Domain on macOS.
+  const personalTeam = signedByPersonalTeam(preview.inspection, dependencies.xcodeTeams);
+  const mac = preview.inspection.input.selection.sdk === "macosx";
+  if (personalTeam)
+    checks.push({
+      name: "Personal Team",
+      status: "warn",
+      message: mac ? `${PERSONAL_TEAM_APPLE} ${PERSONAL_TEAM_DOMAINS}` : PERSONAL_TEAM_APPLE,
+    });
   const capabilities = await planAllCapabilities(
     preview.inspection,
     preview.inspection.document.source,
     discovery?.instance.frontendHost,
+    false,
+    !(personalTeam && mac),
   );
   for (const context of capabilities.contexts)
     checks.push({
@@ -91,7 +110,8 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
         },
         dependencies.appleAPI,
       );
-      const required = options.signInWithApple || health.runtime.current?.enabled;
+      const required =
+        !personalTeam && (options.signInWithApple || health.runtime.current?.enabled);
       checks.push({
         name: "Native Apple connection",
         status:
