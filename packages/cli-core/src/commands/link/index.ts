@@ -12,6 +12,7 @@ import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "..
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
+import { mapDeployError } from "../deploy/errors.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 
@@ -61,8 +62,9 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   intro("Linking project");
 
   if (existing && agent) {
-    printExistingStatus(existing, normalizedRemote);
     if (!targetsDifferentApp) {
+      await mapDeployError(fetchApplication(existing.profile.appId));
+      printExistingStatus(existing, normalizedRemote);
       await outro();
       return;
     }

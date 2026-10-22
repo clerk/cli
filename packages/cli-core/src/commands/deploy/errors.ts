@@ -9,6 +9,7 @@
  */
 
 import { CliError, ERROR_CODE, PlapiError } from "../../lib/errors.ts";
+import { isAgent } from "../../mode.ts";
 
 type ProductionInstanceExistsRecovery<T> = () => Promise<T>;
 
@@ -84,11 +85,7 @@ function translatePlapiError(error: PlapiError): CliError | PlapiError {
   }
 
   if (status === 404 && code === "resource_not_found") {
-    return new CliError(
-      "Clerk couldn't find this application (it may have been deleted or your workspace no longer has access). " +
-        "Run `clerk link` to re-link this directory.",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
+    return applicationNotFoundError();
   }
 
   if (status === 422 && code === "form_param_format_invalid") {
@@ -101,6 +98,17 @@ function translatePlapiError(error: PlapiError): CliError | PlapiError {
   // Pass everything else through unchanged — the global handler prints the
   // PLAPI message with a "Platform API request failed" prefix.
   return error;
+}
+
+export function applicationNotFoundError(): CliError {
+  const advice = isAgent()
+    ? "Run `clerk apps list --json`, then `clerk link --app <app_id>`."
+    : "Run `clerk link` to re-link this directory.";
+  return new CliError(
+    "Clerk couldn't find this application (it may have been deleted or your workspace no longer has access). " +
+      advice,
+    { code: ERROR_CODE.NOT_LINKED },
+  );
 }
 
 function planInsufficientMessage(error: PlapiError): string {

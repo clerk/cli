@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PlapiError } from "../../lib/errors.ts";
+import { ERROR_CODE, PlapiError } from "../../lib/errors.ts";
 import { captureTelemetryPayload } from "../../test/lib/stubs.ts";
 import type { LiveDeploySnapshot } from "./status.ts";
 
@@ -129,6 +129,21 @@ afterEach(() => {
 });
 
 describe("resolveDeployState", () => {
+  test("maps a 404 on the linked application to NOT_LINKED", async () => {
+    mockFetchApplication.mockRejectedValue(
+      new PlapiError(
+        404,
+        JSON.stringify({ errors: [{ code: "resource_not_found", message: "not found" }] }),
+        "https://x",
+      ),
+    );
+
+    await expect(resolveDeployState({ ...ctx })).rejects.toMatchObject({
+      code: ERROR_CODE.NOT_LINKED,
+      message: expect.stringContaining("couldn't find this application"),
+    });
+  });
+
   test("returns not_started when the application has no production instance", async () => {
     mockFetchApplication.mockResolvedValue({
       application_id: "app_1",

@@ -200,13 +200,40 @@ describe("link", () => {
         path: "/repo/.git",
         profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
       });
+      mockFetchApplication.mockResolvedValue({
+        application_id: "app_existing",
+        name: "Existing",
+        instances: [{ instance_id: "ins_1", environment_type: "development" }],
+      });
       consoleSpy = spyOn(console, "log").mockImplementation(() => {});
 
       await runLink();
 
       expect(captured.err).toContain("Already linked");
       expect(mockConfirm).not.toHaveBeenCalled();
-      expect(mockFetchApplication).not.toHaveBeenCalled();
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_existing");
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
+    test("advises relink when the saved app is gone", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: { workspaceId: "", appId: "app_deleted", instances: { development: "ins_1" } },
+      });
+      mockFetchApplication.mockRejectedValue(
+        new PlapiError(
+          404,
+          JSON.stringify({ errors: [{ code: "resource_not_found", message: "not found" }] }),
+          "https://api.clerk.com",
+        ),
+      );
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await expect(runLink()).rejects.toMatchObject({
+        code: "not_linked",
+        message: expect.stringContaining("clerk apps list --json"),
+      });
       expect(mockSetProfile).not.toHaveBeenCalled();
     });
 
