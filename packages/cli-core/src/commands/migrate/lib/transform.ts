@@ -10,7 +10,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import csvParser from "csv-parser";
-import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { CUSTOM_SOURCES_URL } from "../sources/load-custom.ts";
 import { getSource } from "../sources/registry.ts";
 import { normalizeBooleanField, parseDate } from "../sources/shared.ts";
 import { type TransformContext, type SourceEntry, type User } from "../types.ts";
@@ -380,7 +381,16 @@ export function transformUsers(
     // The source's own cleanup first: the Clerk Dashboard's formula-safety TAB
     // has to come off before identifiers are compared, or "\t+1555…" and
     // "+1555…" read as two phones.
-    transformer.postTransform?.(mapped, context);
+    const result: unknown = transformer.postTransform?.(mapped, context);
+    // An async hook's changes after its first await land once this user is
+    // already normalized and validated, so they would be lost without a word.
+    if (result instanceof Promise) {
+      result.catch(() => undefined);
+      throwUsageError(
+        `The "${key}" source's postTransform returned a promise. It must be synchronous: changes made after an await never reach the import.`,
+        CUSTOM_SOURCES_URL,
+      );
+    }
     if (key === "clerk") {
       consolidateClerkIdentifiers(mapped);
     }

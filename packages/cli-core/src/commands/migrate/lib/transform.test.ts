@@ -204,6 +204,25 @@ describe("transformUsers", () => {
     });
   });
 
+  test("rejects an async postTransform rather than lose its changes", () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "async-post",
+      // A source file is untyped at runtime, so nothing stops it being async.
+      postTransform: (async (user: Record<string, unknown>) => {
+        await Promise.resolve();
+        user.firstName = "late";
+      }) as unknown as SourceEntry["postTransform"],
+    });
+    try {
+      expect(() => transformUsers([{ id: "u1" }], "async-post")).toThrow(
+        /"async-post" source's postTransform returned a promise/,
+      );
+    } finally {
+      __resetCustomSourcesForTesting();
+    }
+  });
+
   test("skips validation when asked, so analysis passes see every row", () => {
     const { transformedData, validationFailed } = transformUsers([{ id: "u1" }], "clerk", {
       validate: false,
