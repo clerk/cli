@@ -493,7 +493,6 @@ function noKey(folder: UnlinkedFolder, signedIn: boolean): NextStep {
   if (!signedIn) return stepFor(folder, true, false);
   switch (folder.kind) {
     case "no_app":
-      // Today's wording at this stop, kept.
       return {
         text: "Pass --app <id>, or run `clerk apps list --json` and retry.",
         examples: [EXAMPLE.appsListExisting, EXAMPLE.linkById],

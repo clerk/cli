@@ -337,7 +337,7 @@ describe("a folder with an init token, not linked", () => {
     expectNoOtherWayToAnApp();
   });
 
-  // A session Clerk refuses only works again after a new sign-in, as before.
+  // A session Clerk refuses only works again after a new sign-in.
   test.each([
     {
       how: "an expired session that can't be refreshed",
@@ -345,7 +345,7 @@ describe("a folder with an init token, not linked", () => {
         mockGetValidToken.mockRejectedValue(new AuthError({ reason: "session_expired" })),
     },
     {
-      // Deliberate since milestone 5: only signing in fixes it.
+      // Only signing in fixes it.
       how: "a refresh that returns no refresh token",
       refuse: () =>
         mockGetValidToken.mockRejectedValue(
@@ -815,7 +815,7 @@ describe("an SDK-only folder", () => {
     expectNoPickerOrNewApp();
   });
 
-  // A server error used to turn into a picker offering only "create a new
+  // A picker after a server error could offer only "create a new
   // application", which links a new app while the SDK keeps running the old one.
   test("a person whose app list fails with a server error gets that error, never the picker or the claim page", async () => {
     mockIsAgent.mockReturnValue(false);

@@ -44,7 +44,7 @@ const APP_A: Application = {
   ],
 };
 
-/** An app already in the account: the picker's only choice before the fix. */
+/** An app already in the account: the only app a picker could offer. */
 const APP_B: Application = {
   application_id: "app_B",
   name: "Other App",

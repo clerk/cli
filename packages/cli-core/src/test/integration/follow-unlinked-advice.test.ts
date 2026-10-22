@@ -1,10 +1,9 @@
 /**
- * Advice is tested by following it (the plan's shared rule 4). Each test
- * starts from agent-mode `clerk deploy` in a folder with no linked app, runs
- * the commands its error's `examples` name, in order, and checks where the
- * folder ends up: linked to the app its keys belong to, or still unlinked with
- * a next step that isn't the command that just ran. Rows are the state
- * table's, in `todos/grow-1249/plan.md`.
+ * Advice is tested by following it. Each test starts from agent-mode `clerk
+ * deploy` in a folder with no linked app, runs the commands its error's
+ * `examples` name, in order, and checks where the folder ends up: linked to
+ * the app its keys belong to, or still unlinked with a next step that isn't
+ * the command that just ran.
  *
  * The last example reruns `clerk deploy`; once the folder is linked, its
  * not-linked error can't recur, so it isn't run. For a folder with no keys,

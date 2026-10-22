@@ -34,7 +34,7 @@ import {
 } from "./unlinked-folder.ts";
 import { isAgent } from "../mode.ts";
 
-// Moved to the leaf module `local-keys.ts`; re-exported so importers are unchanged.
+// Defined in the leaf module `local-keys.ts`; re-exported for this module's importers.
 export { ENV_VAR_SOURCE_SUFFIX, readSdkKeylessApp, SDK_KEYLESS_SOURCE };
 
 export interface KeylessTarget {

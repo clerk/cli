@@ -1,8 +1,7 @@
 /**
- * `clerk doctor` in a folder with no linked app and a secret key on disk:
- * the two `doctor` rows of the plan's state table that verifiers ran. Its
- * checks give the step for what the folder holds, from the unlinked-folder
- * module, and keep their statuses and fix labels.
+ * `clerk doctor` in a folder with no linked app. Its checks give the step for
+ * what the folder holds, from the unlinked-folder module, and keep their
+ * statuses and fix labels.
  *
  * Each test names its credential; the harness sets both a stored session and
  * CLERK_PLATFORM_API_KEY by default.

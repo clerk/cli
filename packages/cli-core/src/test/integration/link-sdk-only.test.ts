@@ -43,7 +43,7 @@ const SDK_APP: Application = {
   ],
 };
 
-/** An app already in the account: the picker's only choice before the fix. */
+/** An app already in the account: the only app a picker could offer. */
 const OTHER_APP: Application = {
   application_id: "app_other",
   name: "Other App",

@@ -155,7 +155,7 @@ describe("readFolderKeys", () => {
     });
   });
 
-  // Otherwise milestone 4 would treat a folder whose plain key it can't read
+  // Otherwise `clerk link` would treat a folder whose plain key it can't read
   // as one holding only the SDK's keys.
   test("reports a Clerk line it can't parse, and then doesn't fall back to the SDK keyless file", async () => {
     await write(".env", "  CLERK_SECRET_KEY=sk_test_indented\n");
@@ -401,7 +401,7 @@ describe("the SDK keyless file's state", () => {
       secretKey: undefined,
       sdkFile: { state: "unreadable" },
     });
-    // Existing callers keep tolerating it, as before.
+    // `readSdkKeylessApp` returns nothing for it rather than throwing.
     expect(await readSdkKeylessApp(dir)).toBeUndefined();
   });
 

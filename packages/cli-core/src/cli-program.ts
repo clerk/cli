@@ -324,8 +324,7 @@ export function reportError(error: unknown, verbose: boolean): number {
   if (error instanceof ApiError) {
     const detail = formatApiBody(error.body, verbose);
     const prefix = error.context ?? "Request failed";
-    // Absent on every API error the CLI doesn't advise on, which then prints
-    // exactly as before.
+    // Absent on every API error the CLI doesn't advise on.
     const nextStep = error.nextStep ? `\n${error.nextStep.text}` : "";
     if (isAgent()) {
       const apiErrors: ApiErrorEntry[] | undefined =

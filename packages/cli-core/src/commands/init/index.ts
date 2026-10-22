@@ -633,7 +633,7 @@ async function resolveAuthLabel(cwd: string, app: string | undefined): Promise<s
   // `link`, called next, claims the app `clerk init` created only in a folder
   // that isn't linked and without `--app`; login's claim would run first and
   // leave it nothing to decide. In an already-linked folder `link` doesn't
-  // claim, so login does, as it always has. With `--app`, the named app is
+  // claim, so login does. With `--app`, the named app is
   // the person's choice, so nothing claims, and they're told how to.
   if (!app && (await resolveProfile(cwd))) {
     await login({ showNextSteps: false });

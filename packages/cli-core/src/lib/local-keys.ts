@@ -9,9 +9,8 @@
  *   for checks that must not let a write replace a key nobody compared.
  *
  * A leaf module on purpose: it must not import `lib/config.ts`, directly or
- * through `lib/keyless-target.ts`, because `lib/config.ts` will need it to word
- * its not-linked errors. `lib/keyless-target.ts` re-exports the helpers that
- * used to live there, so their importers are unchanged.
+ * through `lib/keyless-target.ts`, because `lib/config.ts` reaches it, through
+ * the unlinked-folder module, to word its not-linked errors.
  */
 
 import { join } from "node:path";

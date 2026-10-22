@@ -237,7 +237,7 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo | undefine
   }
 
   // A person is asked before any claim. `-y` asked to skip confirmations, so
-  // it signs in again and then claims, as before.
+  // it signs in again and then claims without asking.
   if (initClaim && isHuman() && !yes) {
     return loginAskingToClaim(existingSession, initClaim, showNextSteps);
   }

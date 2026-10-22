@@ -369,8 +369,8 @@ test("another app's keys under Nuxt's names keep the folder unlinked when no fra
   expect(result.stderr).toContain("left alone");
 });
 
-// Advice is tested by following it (the plan's shared rule 4): run the command
-// the warning names and check where the folder ends up.
+// Advice is tested by following it: run the command the warning names and
+// check where the folder ends up.
 describe("following the left-alone advice", () => {
   test("another app's publishable key, folder not linked: `clerk link` links the app that key belongs to", async () => {
     await Bun.write(join(h.tempDir, ".env"), envFileFor(APP_B));

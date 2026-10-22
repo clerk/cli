@@ -412,8 +412,7 @@ export class ApiError extends Error {
   public clerkTraceId: string | null;
   /**
    * What to run next, set by a caller that knows (`withNextStep`). Printed
-   * after Clerk's message, with its commands as examples. An API error without
-   * one prints exactly as it always has.
+   * after Clerk's message, with its commands as examples.
    */
   public nextStep?: NextStepAdvice;
 

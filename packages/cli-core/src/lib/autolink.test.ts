@@ -115,7 +115,7 @@ describe("findLinkKey", () => {
     );
   });
 
-  // Was a list with the file's key as a fallback; the app loads the exported key.
+  // The app loads the exported key.
   test("an exported key is the only candidate, even when a file holds another", async () => {
     process.env.CLERK_PUBLISHABLE_KEY = "pk_from_env";
     await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_from_file\n");
@@ -124,7 +124,7 @@ describe("findLinkKey", () => {
     );
   });
 
-  // Was a list with `.env` as a fallback; Next.js loads `.env.local`'s key.
+  // Next.js loads `.env.local`'s key.
   test("Next.js: .env.local's key is the only candidate when .env holds another", async () => {
     await writePackageJson(tempDir, "next");
     await Bun.write(join(tempDir, ".env"), "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_dotenv\n");

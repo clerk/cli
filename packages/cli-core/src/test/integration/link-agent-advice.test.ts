@@ -376,7 +376,7 @@ describe("agent `clerk link` that can't choose an app", () => {
     },
   );
 
-  // PR 1 claims and links it: success, not a stop.
+  // `clerk link` claims and links it: success, not a stop.
   test.each(["session", "api_key"] as const)(
     "an init token, %s only: claims and links the init app, with no browser",
     async (credential) => {

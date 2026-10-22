@@ -2,7 +2,7 @@
  * `clerk deploy` and `clerk deploy status` in a folder with no linked
  * application.
  *
- * The lead sentence, the `not_linked` code, and exit 1 stay as they were:
+ * The lead sentence, the `not_linked` code, and exit 1 must not change:
  * agents and the skill's troubleshooting table match on them. What to run
  * next comes from the unlinked-folder module, so the same folder gets the
  * same advice from every command. The folder is read only here, on the

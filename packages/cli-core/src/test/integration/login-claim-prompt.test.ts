@@ -164,7 +164,7 @@ test("stored session only, No then No: signs in again, and the app stays unclaim
   expect(result.stderr).toContain("`my-app` is still unclaimed");
 });
 
-// Control: declining before anything happened was already a clean abort.
+// Control: declining before anything happened is a clean abort.
 test("stored session and API key, No: nothing is claimed and no browser sign-in runs", async () => {
   await useStoredSession();
   mockPrompts.confirm(false);
@@ -178,8 +178,8 @@ test("stored session and API key, No: nothing is claimed and no browser sign-in 
   expect(await profile()).toBeUndefined();
 });
 
-// Control: agents can't answer a question, so they claim as before. No answer
-// is queued; a question would fail the run.
+// Control: agents can't answer a question, so they claim without one. No
+// answer is queued; a question would fail the run.
 test("agent, stored session and API key: claims without asking", async () => {
   await useStoredSession();
 

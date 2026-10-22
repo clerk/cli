@@ -198,7 +198,7 @@ async function deploy(...args: string[]): Promise<CLIResult> {
   return clerk.raw("--mode", "agent", "deploy", ...args);
 }
 
-// The lead sentence and `not_linked` stay as they were; the advice depends
+// The lead sentence and `not_linked` must not change; the advice depends
 // on what the folder holds and which credential is present. Each case names
 // its credential: a stored session only, the API key only, or none.
 describe("without a linked project", () => {
