@@ -7,6 +7,7 @@ import { useCaptureLog } from "../test/lib/stubs.ts";
 const configModule = await import("./config.ts");
 const credentialStoreModule = await import("./credential-store.ts");
 const bapiModule = await import("./bapi.ts");
+const { _resetMode, setMode } = await import("../mode.ts");
 
 const { resolveKeylessTarget, resolveInstanceTarget, hasKeyPairMismatch, findLocalPublishableKey } =
   await import("./keyless-target.ts");
@@ -20,6 +21,7 @@ describe("keyless-target", () => {
   let resolveProfileSpy: ReturnType<typeof spyOn>;
   let hasAccountCredentialsSpy: ReturnType<typeof spyOn>;
   let getStoredSessionSpy: ReturnType<typeof spyOn>;
+  let hasStoredCredentialsSpy: ReturnType<typeof spyOn>;
   let bapiRequestSpy: ReturnType<typeof spyOn>;
   const originalEnv = { ...process.env };
   const captured = useCaptureLog();
@@ -33,6 +35,12 @@ describe("keyless-target", () => {
       "hasAccountCredentials",
     ).mockResolvedValue(false);
     getStoredSessionSpy = spyOn(credentialStoreModule, "getStoredSession").mockResolvedValue(null);
+    // The not-linked warning classifies the folder, which checks for a stored
+    // session: never the real credential store.
+    hasStoredCredentialsSpy = spyOn(
+      credentialStoreModule,
+      "hasStoredCredentials",
+    ).mockResolvedValue(false);
     bapiRequestSpy = spyOn(bapiModule, "bapiRequest");
   });
 
@@ -41,6 +49,7 @@ describe("keyless-target", () => {
     resolveProfileSpy.mockRestore();
     hasAccountCredentialsSpy.mockRestore();
     getStoredSessionSpy.mockRestore();
+    hasStoredCredentialsSpy.mockRestore();
     bapiRequestSpy.mockRestore();
     await rm(tempDir, { recursive: true, force: true });
   });
@@ -156,11 +165,46 @@ describe("keyless-target", () => {
 
     beforeEach(() => {
       process.env.CLERK_SECRET_KEY = "sk_test_x";
+      setMode("human");
     });
 
     afterEach(() => {
       delete process.env.CLERK_SECRET_KEY;
       delete process.env.CLERK_PLATFORM_API_KEY;
+      _resetMode();
+    });
+
+    /** Signed in with a session expiring at `expiresAt`, beside an init token. */
+    async function signedInWithInitToken(expiresAt: number): Promise<void> {
+      hasAccountCredentialsSpy.mockResolvedValue(true);
+      hasStoredCredentialsSpy.mockResolvedValue(true);
+      getStoredSessionSpy.mockResolvedValue(session(expiresAt));
+      await Bun.write(
+        join(tempDir, ".clerk", "keyless.json"),
+        JSON.stringify({ claimToken: "claim_token", createdAt: new Date().toISOString() }),
+      );
+    }
+
+    test("the advice is the step for what the folder holds: an init app is claimed by `clerk link`", async () => {
+      await signedInWithInitToken(Date.now() + 60_000);
+
+      await resolveInstanceTarget({ cwd: tempDir });
+
+      expect(captured.err).toContain(
+        "This directory isn't linked to an application — using the secret key from CLERK_SECRET_KEY env var, which covers fewer settings.\nThis folder's app was created by `clerk init` and isn't in an account yet. Run `clerk link`: it claims the app into your account and links this folder.",
+      );
+      expect(captured.err).not.toContain("--app <app_id>)");
+    });
+
+    test("a locally expired session keeps its re-authenticate line, then the folder's step", async () => {
+      await signedInWithInitToken(Date.now() - 60_000);
+
+      await resolveInstanceTarget({ cwd: tempDir });
+
+      expect(captured.err).toContain(
+        "Run `clerk auth login` to re-authenticate. This folder's app was created by `clerk init` and isn't in an account yet. Run `clerk link`: it claims the app",
+      );
+      expect(captured.err).not.toContain("--app <app_id>)");
     });
 
     test("resolving a target on its own never warns", async () => {

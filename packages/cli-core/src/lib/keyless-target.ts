@@ -20,6 +20,8 @@ import {
   SDK_KEYLESS_SOURCE,
 } from "./local-keys.ts";
 import { log } from "./log.ts";
+import { readUnlinkedFolder, unlinkedFolderNextStep } from "./unlinked-folder.ts";
+import { isAgent } from "../mode.ts";
 
 // Moved to the leaf module `local-keys.ts`; re-exported so importers are unchanged.
 export { ENV_VAR_SOURCE_SUFFIX, readSdkKeylessApp, SDK_KEYLESS_SOURCE };
@@ -191,26 +193,24 @@ export async function resolveKeylessTarget(options: {
  * network call, and right in the common case of a session stale by its own
  * clock rather than one the server revoked.
  */
-async function warnKeylessCoversLess(source: string): Promise<void> {
+async function warnKeylessCoversLess(source: string, cwd: string): Promise<void> {
   if (!(await hasAccountCredentials())) return;
+
+  // What to run comes from the unlinked-folder module, so the same folder gets
+  // the same advice from every command: `clerk link` claims an init app first,
+  // and finds plain keys' app by key.
+  const { text: step } = unlinkedFolderNextStep(await readUnlinkedFolder(cwd), {
+    agent: isAgent(),
+  });
 
   // A platform API key never expires this way and is on its own enough to link,
   // so it always gets the plain wording.
-  if (process.env.CLERK_PLATFORM_API_KEY) {
-    log.warn(
-      `This directory isn't linked to an application — using the secret key from ${source}, which covers fewer settings.\n` +
-        "Run `clerk link` (or pass --app <app_id>) to use the full configuration.",
-    );
-    return;
-  }
-
-  const session = await getStoredSession();
+  const session = process.env.CLERK_PLATFORM_API_KEY ? null : await getStoredSession();
   log.warn(
     session && isLocallyExpired(session)
       ? `This directory isn't linked to an application, and the stored session has expired — using the secret key from ${source}, which covers fewer settings.\n` +
-          "Run `clerk auth login` to re-authenticate, then `clerk link` (or pass --app <app_id>) to use the full configuration."
-      : `This directory isn't linked to an application — using the secret key from ${source}, which covers fewer settings.\n` +
-          "Run `clerk link` (or pass --app <app_id>) to use the full configuration.",
+          `Run \`clerk auth login\` to re-authenticate. ${step}`
+      : `This directory isn't linked to an application — using the secret key from ${source}, which covers fewer settings.\n${step}`,
   );
 }
 
@@ -233,7 +233,7 @@ export async function resolveInstanceTarget(options: {
 }): Promise<InstanceTarget> {
   const keyless = await resolveKeylessTarget(options);
   if (keyless) {
-    await warnKeylessCoversLess(keyless.source);
+    await warnKeylessCoversLess(keyless.source, options.cwd ?? process.cwd());
     return {
       kind: "keyless",
       keyless,

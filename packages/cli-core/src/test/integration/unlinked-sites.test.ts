@@ -2,7 +2,8 @@
  * The not-linked messages outside `deploy` and `doctor` give the step for what
  * the folder holds, from the unlinked-folder module, so the same folder gets
  * the same advice from every command: the not-linked error account commands
- * share (run here through `clerk env pull`) and `clerk open`.
+ * share (run here through `clerk env pull`), `clerk open`, and the "covers
+ * fewer settings" warning (through `clerk config pull`).
  *
  * Each test names its credential; the harness sets both a stored session and
  * CLERK_PLATFORM_API_KEY by default. Every run goes through `run`, which fails
@@ -192,5 +193,34 @@ describe("clerk open", () => {
       "No Clerk project linked to this directory, and no accountless application was found either. Run `clerk link` to choose one of your apps, or `clerk init` to create one.",
     );
     expect(stderr(result)).not.toContain("Examples:");
+  });
+});
+
+describe("the covers-fewer-settings warning", () => {
+  beforeEach(() => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    http.stub(async () => Response.json({}));
+  });
+
+  test("stored session, an init token and its keys: names `clerk link` as the claim step", async () => {
+    await writeInitToken();
+    await write(".env", KEYS);
+
+    const result = await run("config", "pull");
+
+    expect(stderr(result)).toContain(
+      "This directory isn't linked to an application — using the secret key from .env, which covers fewer settings.",
+    );
+    expect(stderr(result)).toContain(CLAIM_IT);
+    expect(stderr(result)).not.toContain("--app <app_id>) to use the full configuration");
+  });
+
+  test("stored session, plain keys: finds the app by key", async () => {
+    await write(".env", KEYS);
+
+    const result = await run("config", "pull");
+
+    expect(stderr(result)).toContain("covers fewer settings");
+    expect(stderr(result)).toContain(FIND_BY_KEY);
   });
 });
