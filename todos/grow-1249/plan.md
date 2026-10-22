@@ -1025,6 +1025,7 @@ These items go into the GROW-1249 section of the one PR description, and close o
   - `env pull` and `whoami` with an exported secret key and an env file they can't read stop with the not-linked error naming the file, not a file-system error.
   - `env pull`'s default target is a file the framework loads: a Nuxt folder always gets `.env`.
   - `describeBapiTarget` and `resolveBapiSecretKey` choose the key in one function, so a dry run's description never names a different app than the run uses.
+  - From the quick check that followed: with an exported secret key and an unreadable env file, `env pull` and `whoami` name the file and say to make it readable first, before an init app's claim step; signed-in `whoami` treats that file as no local key and reports the account; Backend API commands with no secret key (`api`, `users`) pass on the shared not-linked step, as `api --fapi` does; `env pull` writes over the file that supplies the key the app loads now; a write keeps a CRLF file's line endings; and a signed-out person who declines a claim is told the account they sign in to.
   - Cleanups: `readFolderKeys` reads each env file once; `resolveInstanceTarget` and `describeBapiTarget` word the folder from the read that found its key; one `rerunOf` builds every rerun; the claim check and `init`'s key check share one verdict; comments no longer narrate history.
 - **Prove it works:**
   - Run the integration tests, including the follow-the-advice tests, and paste the per-command, per-kind output (JSON error and exit code) into the PR description.
