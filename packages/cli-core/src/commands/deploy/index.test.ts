@@ -1121,6 +1121,58 @@ describe("deploy", () => {
       mockPassword.mockResolvedValueOnce("fake-secret");
     }
 
+    // A domain typed at the prompt is checked like --domain when the create
+    // loses a race: the wizard must not carry on into another domain's setup.
+    function typedDomainLosesRace(existingDomain: { provisioning: boolean }) {
+      mockIsAgent.mockReturnValue(false);
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockInput.mockResolvedValueOnce("other.com");
+      mockCreateProductionInstance.mockImplementation(() => {
+        mockLiveProduction({ domain: "example.com" });
+        if (existingDomain.provisioning) {
+          mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+        }
+        return Promise.reject(
+          new PlapiError(
+            409,
+            JSON.stringify({ errors: [{ code: "production_instance_exists" }] }),
+            "https://x",
+          ),
+        );
+      });
+    }
+
+    test("a typed domain that loses a create race to another domain is refused", async () => {
+      await linkedProject();
+      typedDomainLosesRace({ provisioning: false });
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.PRODUCTION_INSTANCE_EXISTS);
+      expect((error as CliError).message).toBe(
+        "This application already has a production instance on example.com, so the domain you " +
+          "entered, other.com, was not applied. Run `clerk deploy` again to continue with " +
+          "example.com, or change the domain in the Clerk Dashboard.",
+      );
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockPatchInstanceConfig).not.toHaveBeenCalled();
+    });
+
+    test("a typed domain can't be checked while the winning instance's domain provisions", async () => {
+      await linkedProject();
+      typedDomainLosesRace({ provisioning: true });
+
+      const error = await runDeploy({}).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED);
+      expect((error as CliError).message).toBe(
+        "This application already has a production instance, but Clerk hasn't returned its domain " +
+          "yet, so the domain you entered, other.com, could not be checked against it. " +
+          "This run did not change the instance's domain. Nothing was changed in Clerk. " +
+          "Run `clerk deploy status` to see its domain once Clerk returns it.",
+      );
+    });
+
     // A create that loses a race to another one but whose refresh can't find
     // that instance knows nothing about it, so it can't report success or
     // check --domain against it.
