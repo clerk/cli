@@ -15,6 +15,7 @@
 
 import { join } from "node:path";
 import { ENV_FILE_CANDIDATES, parseEnvFile } from "./dotenv.ts";
+import { getDashboardUrl } from "./environment.ts";
 import { errorMessage } from "./errors.ts";
 import { log } from "./log.ts";
 import { CLERK_KEY_NAMES, detectFramework } from "./framework.ts";
@@ -168,10 +169,10 @@ export type SdkClaimLink =
 /**
  * The claim link the SDK wrote for the app it created, already pointed at the
  * right Dashboard host. The file is written by another process, so its
- * contents are untrusted: anything but well-formed https is refused rather
- * than handed to the browser launcher, which on Windows goes through
- * `cmd /c start "" "<url>"`, where a `file:`/`javascript:` scheme or an
- * embedded quote stops being just a URL. Never throws, and never logs the URL.
+ * contents are untrusted: anything but an https link to the Clerk Dashboard is
+ * refused, and the link is returned re-serialized, so a quote or space in it
+ * is percent-encoded before it reaches the browser launcher, which on Windows
+ * goes through `cmd /c start "" "<url>"`. Never throws, and never logs the URL.
  */
 export async function readSdkClaimLink(cwd: string): Promise<SdkClaimLink> {
   const file = Bun.file(join(cwd, ...SDK_KEYLESS_FILE));
@@ -190,17 +191,17 @@ export async function readSdkClaimLink(cwd: string): Promise<SdkClaimLink> {
   if (typeof claimUrl !== "string" || !claimUrl) {
     return { status: "unusable", reason: "it has no claim URL" };
   }
-  let isHttps = false;
-  try {
-    isHttps = new URL(claimUrl).protocol === "https:";
-  } catch {
-    // fall through: not a URL at all
-  }
-  if (!isHttps) {
+  const url = URL.parse(claimUrl);
+  if (url?.protocol !== "https:") {
     log.debug(`keyless: ignoring non-https claimUrl in ${SDK_KEYLESS_SOURCE}`);
     return { status: "unusable", reason: "its claim URL isn't an https link" };
   }
-  return { status: "usable", url: claimUrl };
+  const dashboardHosts = new Set(["dashboard.clerk.com", URL.parse(getDashboardUrl())?.host]);
+  if (!dashboardHosts.has(url.host)) {
+    log.debug(`keyless: ignoring a claimUrl in ${SDK_KEYLESS_SOURCE} outside the Clerk Dashboard`);
+    return { status: "unusable", reason: "its claim URL isn't a Clerk Dashboard link" };
+  }
+  return { status: "usable", url: url.href };
 }
 
 /**

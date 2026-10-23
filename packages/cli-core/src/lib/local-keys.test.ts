@@ -7,6 +7,7 @@ import * as dotenv from "./dotenv.ts";
 import {
   readAllFolderKeys,
   readFolderKeys,
+  readSdkClaimLink,
   readSdkKeylessApp,
   unreadGenericPublishableKey,
 } from "./local-keys.ts";
@@ -545,6 +546,33 @@ describe("readAllFolderKeys", () => {
       state: "parsed",
       publishableKey: "pk_test_sdk",
       secretKey: "sk_test_sdk",
+    });
+  });
+});
+
+// The browser launcher hands the link to `cmd /c start "" "<url>"` on Windows.
+describe("readSdkClaimLink", () => {
+  const writeClaimUrl = (claimUrl: string) =>
+    write(".clerk/.tmp/keyless.json", JSON.stringify({ publishableKey: "pk_test_sdk", claimUrl }));
+
+  test("returns the link re-serialized, so a quote or space can't end the launcher's quoting", async () => {
+    await writeClaimUrl('https://dashboard.clerk.com/apps/claim?token=t" & calc.exe & "');
+
+    expect(await readSdkClaimLink(dir)).toEqual({
+      status: "usable",
+      url: "https://dashboard.clerk.com/apps/claim?token=t%22%20&%20calc.exe%20&%20%22",
+    });
+  });
+
+  test.each([
+    { name: "another host", claimUrl: "https://example.com/apps/claim?token=t" },
+    { name: "a look-alike host", claimUrl: "https://dashboard.clerk.com.example.com/claim" },
+  ])("refuses a link to $name", async ({ claimUrl }) => {
+    await writeClaimUrl(claimUrl);
+
+    expect(await readSdkClaimLink(dir)).toEqual({
+      status: "unusable",
+      reason: "its claim URL isn't a Clerk Dashboard link",
     });
   });
 });
