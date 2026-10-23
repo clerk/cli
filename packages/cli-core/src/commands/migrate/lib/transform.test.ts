@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CliError } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 import clerkSource from "../sources/clerk.ts";
 import type { SourceEntry } from "../types.ts";
 import { __resetCustomSourcesForTesting, registerCustomSource } from "../sources/registry.ts";
@@ -248,11 +248,32 @@ describe("transformUsers", () => {
     });
     try {
       expect(() => transformUsers([{ id: "u1" }, { id: "u2" }], "throwing-post")).toThrow(
-        'The "throwing-post" source\'s postTransform failed on row 2: boom',
+        expect.objectContaining({
+          message: 'The "throwing-post" source\'s postTransform failed on row 2: boom',
+          code: ERROR_CODE.USAGE_ERROR,
+          exitCode: EXIT_CODE.USAGE,
+        }),
       );
     } finally {
       __resetCustomSourcesForTesting();
     }
+  });
+
+  test("passes a postTransform's own CliError through with its code", () => {
+    const hashed = {
+      localId: "f1",
+      email: "a@example.com",
+      passwordHash: "SGFzaA==",
+      salt: "U2FsdA==",
+    };
+    expect(() => transformUsers([hashed], "firebase")).toThrow(
+      expect.objectContaining({
+        message: expect.stringMatching(/^This export contains Firebase password hashes/),
+        code: ERROR_CODE.USAGE_ERROR,
+        exitCode: EXIT_CODE.USAGE,
+        docsUrl: expect.stringContaining("/migrating/firebase"),
+      }),
+    );
   });
 
   test("skips validation when asked, so analysis passes see every row", () => {

@@ -385,10 +385,13 @@ export function transformUsers(
     try {
       result = transformer.postTransform?.(mapped, context);
     } catch (error) {
+      // A refusal the source meant, like Firebase's missing hash parameters,
+      // already says what to do and carries its own code.
+      if (error instanceof CliError) throw error;
       // 1-based, like the validation failures: the second user is row 2.
-      throw new CliError(
+      throwUsageError(
         `The "${key}" source's postTransform failed on row ${i + 1}: ${error instanceof Error ? error.message : String(error)}`,
-        { docsUrl: CUSTOM_SOURCES_URL },
+        CUSTOM_SOURCES_URL,
       );
     }
     // An async hook's changes after its first await land once this user is
