@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../test/lib/clerk-key-env.ts";
 import * as dotenv from "./dotenv.ts";
 import {
+  couldntTellReason,
   readAllFolderKeys,
   readFolderKeys,
   readSdkClaimLink,
@@ -167,6 +168,41 @@ describe("readFolderKeys", () => {
       secretKey: undefined,
       unreadableLines: [{ kind: "secret", name: "CLERK_SECRET_KEY", source: ".env" }],
     });
+  });
+});
+
+// Only a publishable line that may hold the key Next.js loads keeps `clerk link`
+// from matching by the publishable key.
+describe("couldntTellReason", () => {
+  test.each([
+    {
+      line: "a secret key line",
+      files: {
+        ".env.local": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_a\nCLERK_SECRET_KEY = sk_test_x\n",
+      },
+      blocks: false,
+    },
+    {
+      line: "a publishable line in a file loaded after the key's",
+      files: {
+        ".env.local": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_a\n",
+        ".env": "  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_old\n",
+      },
+      blocks: false,
+    },
+    {
+      line: "a publishable line in a file loaded before the key's",
+      files: {
+        ".env.local": "  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_new\n",
+        ".env": "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_a\n",
+      },
+      blocks: true,
+    },
+  ])("Next.js, an unreadable $line: blocks matching is $blocks", async ({ files, blocks }) => {
+    await write("package.json", JSON.stringify({ dependencies: { next: "15.0.0" } }));
+    await Promise.all(Object.entries(files).map(([file, text]) => write(file, text)));
+
+    expect(Boolean(couldntTellReason(await readFolderKeys(dir)))).toBe(blocks);
   });
 });
 

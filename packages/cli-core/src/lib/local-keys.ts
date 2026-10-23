@@ -290,6 +290,7 @@ interface EffectiveKey {
   key?: LocatedKey;
   /** The files' different values for the winning name, when no load order picks one. */
   undecided?: LocatedKey[];
+  /** Unreadable lines that may hold the key the app loads instead: all of them unless `key` is set. */
   unreadable: UnreadableKeyLine[];
 }
 
@@ -311,11 +312,20 @@ function effectiveKey(
   loadOrder: readonly string[] | undefined,
 ): EffectiveKey {
   const { keys, unreadable } = lines;
+  // A line under a lower-priority name, or under the key's own name in a file
+  // loaded after the key's, can't change which key the app loads.
+  const mayOverride = (key: LocatedKey) =>
+    unreadable.filter((line) => {
+      const byName = names.indexOf(line.name) - names.indexOf(key.name);
+      if (byName !== 0) return byName < 0;
+      if (key.source === `${key.name}${ENV_VAR_SOURCE_SUFFIX}`) return false;
+      return !loadOrder || loadOrder.indexOf(line.source) <= loadOrder.indexOf(key.source);
+    });
   // Within one name, each file's last line is its value, and the file highest
   // in the load order wins.
   for (const name of names) {
     const exported = fromEnv(name);
-    if (exported) return { key: exported, unreadable };
+    if (exported) return { key: exported, unreadable: mayOverride(exported) };
     const perFile = new Map<string, LocatedKey>();
     for (const { value, source } of keys.filter((key) => key.name === name)) {
       perFile.set(source, { value, name, source });
@@ -325,7 +335,7 @@ function effectiveKey(
     if (!loadOrder && new Set(values.map((key) => key.value)).size > 1) {
       return { undecided: values, unreadable };
     }
-    return { key: values[0], unreadable };
+    return { key: values[0]!, unreadable: mayOverride(values[0]!) };
   }
   return { unreadable };
 }
@@ -587,7 +597,7 @@ export function unreadableFolderReason(error: unknown): string {
  * clause; undefined when it can.
  */
 export function couldntTellReason({ unreadableLines, undecided }: FolderKeys): string | undefined {
-  const line = unreadableLines?.[0];
+  const line = unreadableLines?.find(({ kind }) => kind === "publishable");
   if (line) {
     return `the CLI couldn't read the \`${line.name}\` line in \`${line.source}\`, so it can't tell which key this app loads`;
   }
