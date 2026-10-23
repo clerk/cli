@@ -50,6 +50,7 @@ import {
   unreadGenericPublishableKey,
   type LocatedKey,
 } from "../../lib/local-keys.ts";
+import { isGitIgnored } from "../../lib/git.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import { isAgent } from "../../mode.ts";
 
@@ -116,7 +117,15 @@ export async function defaultTargetFile(
       );
     }
   }
-  return stale && highestLocal ? highestLocal : byFiles;
+  if (!stale || !highestLocal) return byFiles;
+  // Not every template ignores `.local` files (Astro's ignores only `.env`).
+  if ((await isGitIgnored(cwd, highestLocal)) === false) {
+    log.warn(
+      `A file loaded before \`${byFiles}\` may still set a Clerk key, but \`${highestLocal}\` isn't ignored by git, so the keys go to \`${byFiles}\`. Add \`${highestLocal}\` to .gitignore, then pull again.`,
+    );
+    return byFiles;
+  }
+  return highestLocal;
 }
 
 /**

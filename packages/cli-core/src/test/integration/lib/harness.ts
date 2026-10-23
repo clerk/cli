@@ -131,6 +131,7 @@ mock.module(
       getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
       normalizeGitRemoteUrl: (url: string) => url,
       ensureGitignoreEntry: async () => {},
+      isGitIgnored: async () => undefined,
     }) satisfies typeof import("../../../lib/git.ts"),
 );
 

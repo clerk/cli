@@ -15,6 +15,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ENV_FILE_CANDIDATES, type PreferredEnvFile } from "../../lib/dotenv.ts";
 import { FRAMEWORK_MAP, NATIVE_FRAMEWORK_MAP } from "../../lib/framework.ts";
+import * as git from "../../lib/git.ts";
 import * as localKeys from "../../lib/local-keys.ts";
 import { defaultTargetFile, targetByFiles } from "./pull.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
@@ -210,6 +211,19 @@ describe("a Vite folder whose committed .env.development may still set a Clerk k
       expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.development.local");
     } finally {
       scan.mockRestore();
+    }
+  });
+
+  test("a .env.development.local git doesn't ignore: keeps .env.local, and warns naming it", async () => {
+    await Bun.write(join(dir, ".env.development"), "VITE_CLERK_PUBLISHABLE_KEY=\n");
+    const ignored = spyOn(git, "isGitIgnored").mockResolvedValue(false);
+    try {
+      expect(await defaultTargetFile(dir, ".env.local")).toBe(".env.local");
+      expect(Bun.stripANSI(captured.err)).toContain(
+        "`.env.development.local` isn't ignored by git, so the keys go to `.env.local`",
+      );
+    } finally {
+      ignored.mockRestore();
     }
   });
 

@@ -241,6 +241,7 @@ export const gitStubs = {
   getGitNormalizedRemote: async () => undefined,
   normalizeGitRemoteUrl: (url: string) => url,
   ensureGitignoreEntry: async () => {},
+  isGitIgnored: async () => undefined,
 };
 
 /**
