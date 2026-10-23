@@ -155,7 +155,7 @@ function printDetail(entry: SourceEntry, width: number, custom?: string): void {
       ? ""
       : custom
         ? yellow("  not a Clerk field: Clerk won't store it unless postTransform moves it")
-        : dim("  not a Clerk field; the source moves it");
+        : dim("  not a Clerk field; the source handles it");
     log.info(`  ${from.padEnd(fromWidth)}→ ${to}${note}`);
   }
   if (entry.defaults) {
