@@ -220,6 +220,26 @@ describe("an Express folder whose secret keys disagree and whose publishable key
   });
 });
 
+// Without a settled publishable key there's nothing to check the secret key against.
+describe("an Express folder whose publishable keys disagree and whose secret key doesn't", () => {
+  beforeEach(async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await useFramework("express");
+    await write(".env", `CLERK_PUBLISHABLE_KEY=${FOLDER_PK}\nCLERK_SECRET_KEY=${SECRET_KEY}\n`);
+    await write(".env.local", `CLERK_PUBLISHABLE_KEY=${SDK_PK}\n`);
+  });
+
+  test("env pull writes nothing: not_linked, with the couldn't-tell advice", async () => {
+    const error = agentError(await run("--mode", "agent", "env", "pull"));
+
+    expect(error.code).toBe("not_linked");
+    expect(error.message).toContain("hold different Clerk publishable keys");
+    expect(await Bun.file(join(h.tempDir, ".env.local")).text()).toBe(
+      `CLERK_PUBLISHABLE_KEY=${SDK_PK}\n`,
+    );
+  });
+});
+
 // The SDK writes its keyless file only when nothing else configures Clerk, so
 // its secret key isn't the app's next to a plain publishable key.
 describe("a plain publishable key next to an SDK keyless file", () => {

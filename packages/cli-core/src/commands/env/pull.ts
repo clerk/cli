@@ -24,7 +24,6 @@ import {
   withApiContext,
 } from "../../lib/errors.ts";
 import {
-  findLocalPublishableKey,
   hasKeyPairMismatch,
   resolveKeylessTarget,
   type KeylessTarget,
@@ -36,13 +35,16 @@ import {
   appInNoAccount,
   readUnlinkedFolder,
   rerunOf,
+  unlinkedFolderError,
   unlinkedFolderNextStep,
   unreadableEnvFilesError,
   type Rerun,
 } from "../../lib/unlinked-folder.ts";
 import {
+  couldntTellReason,
   describeKeyLocation,
   clerkLinesIn,
+  readFolderKeys,
   ENV_VAR_SOURCE_SUFFIX,
   SDK_KEYLESS_SOURCE,
   unreadGenericPublishableKey,
@@ -247,18 +249,27 @@ async function pullKeylessKeys(
   keyless: KeylessTarget,
   options: Pick<EnvPullOptions, "file" | "print">,
 ): Promise<void> {
-  const [publishableKeyName, secretKeyName, publishableKey] = await Promise.all([
+  const [publishableKeyName, secretKeyName, keys] = await Promise.all([
     detectPublishableKeyName(cwd),
     detectSecretKeyName(cwd),
     // An exported secret key is found without the env files; with one the CLI
     // can't read, which publishable key the app loads is untold.
-    findLocalPublishableKey(cwd).catch(async (error: unknown) => {
+    readFolderKeys(cwd).catch(async (error: unknown) => {
       throw await unreadableEnvFilesError(cwd, error, {
         lead: "No Clerk project linked to this directory.",
         rerun: envPullRerun(options),
       });
     }),
   ]);
+  // A publishable key the CLI can't settle can't be checked against the
+  // secret key, and writing beside it could pair two apps.
+  if (couldntTellReason(keys)) {
+    throw unlinkedFolderError(await readUnlinkedFolder(cwd, keys), {
+      lead: "No Clerk project linked to this directory.",
+      rerun: envPullRerun(options),
+    });
+  }
+  const { publishableKey } = keys;
 
   // The secret and publishable key were found independently and may not name
   // the same application. Writing a mismatched pair is worse than writing
@@ -270,7 +281,9 @@ async function pullKeylessKeys(
       async (error: unknown) => {
         // Read only now, so a `--print` run whose check passes doesn't read the folder.
         if (error instanceof ApiError) {
-          const accountless = appInNoAccount(await readUnlinkedFolder(cwd)) ? "accountless " : "";
+          const accountless = appInNoAccount(await readUnlinkedFolder(cwd, keys))
+            ? "accountless "
+            : "";
           error.context = `Failed to verify the ${accountless}secret key from \`${keyless.source}\``;
         }
         throw error;
@@ -289,7 +302,8 @@ async function pullKeylessKeys(
 
   // Read before the write below adds the secret key to an env file, and only
   // when a line below names the folder's app or gives its step.
-  const folder = !options.print || !publishableKey ? await readUnlinkedFolder(cwd) : undefined;
+  const folder =
+    !options.print || !publishableKey ? await readUnlinkedFolder(cwd, keys) : undefined;
 
   const vars = {
     [secretKeyName]: keyless.secretKey,
