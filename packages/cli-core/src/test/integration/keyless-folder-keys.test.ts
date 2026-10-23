@@ -318,6 +318,19 @@ describe("a Next.js folder whose .env.development.local can't be read", () => {
     });
   });
 
+  // With no key to run on, the not-linked advice names the file, never a raw EACCES.
+  test.each([
+    { command: "api", args: ["api", "/users"], code: "no_secret_key" },
+    { command: "config pull", args: ["config", "pull"], code: "not_linked" },
+  ])("$command, no exported key: $code, naming the unreadable file", async ({ args, code }) => {
+    const error = agentError(await run("--mode", "agent", ...args));
+
+    expect(error.code).toBe(code);
+    expect(error.message).toContain(
+      "The CLI couldn't read this folder's env files (EACCES: permission denied, open '.env.development.local').",
+    );
+  });
+
   // Signed in, whoami reports the account; the file can only change which
   // local key would override it, and a failed profile read is treated alike.
   test("whoami, stored session, no exported key: reports the account, with no local key", async () => {

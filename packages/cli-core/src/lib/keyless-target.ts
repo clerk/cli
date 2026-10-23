@@ -194,7 +194,16 @@ export async function resolveKeylessTargetAndRead(
   const cwd = options.cwd ?? process.cwd();
   if (await resolveProfile(cwd)) return undefined;
 
-  const { target, read } = await readSecretKey(cwd, options.folderKeys);
+  let found: Awaited<ReturnType<typeof readSecretKey>>;
+  try {
+    found = await readSecretKey(cwd, options.folderKeys);
+  } catch (error) {
+    // An env file can't be read and no key is exported, so there's no key to
+    // run on: the account path's not-linked error names the file.
+    log.debug(`accountless: ${unreadableFolderReason(error)}`);
+    return undefined;
+  }
+  const { target, read } = found;
   if (!target) return undefined;
 
   if (!target.secretKey.startsWith("sk_")) {
