@@ -106,7 +106,7 @@ describe("sources <source>", () => {
   // a source you wrote, it was dropped with no word until the import's checks.
   test("marks a target that isn't a Clerk field", async () => {
     await list("authjs");
-    expect(plain()).toContain("name → name not a Clerk field; the source moves it");
+    expect(plain()).toContain("name → name not a Clerk field; the source handles it");
     expect(plain()).not.toContain("email → email not a Clerk field");
 
     captured.clear();
