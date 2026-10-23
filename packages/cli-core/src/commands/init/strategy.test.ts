@@ -389,6 +389,16 @@ describe("init strategy", () => {
     expect(captured.err).toContain("clerk init --app <app_id>");
   });
 
+  test("agent mode with a valid token but no config auth entry doesn't start a browser login", async () => {
+    setup({ isAgent: true, email: "dev@example.com", configAuth: false });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+
+    await init({ app: "app_abc" });
+
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(linkMod.link).toHaveBeenCalled();
+  });
+
   test("agent mode with real app target and no auth launches login", async () => {
     setup({ isAgent: true });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);

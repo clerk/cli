@@ -734,6 +734,11 @@ async function resolveAuthLabel(cwd: string, app: string | undefined): Promise<s
   // error, a 5xx) is still a sign-in: `link` asks about "the account you're
   // signed in to" rather than starting a browser sign-in here.
   if (lookup.status === "lookup_failed") return "Logged in";
+  // The strategy pick counts a valid token as signed in even without the
+  // config's auth entry (a fresh `CLERK_CONFIG_DIR`, a reset config); a
+  // login here would leave an agent waiting on a browser.
+  const email = await getAuthenticatedEmail();
+  if (email !== null) return email ? `Logged in as ${email}` : "Logged in";
 
   // `link`, called next, claims the app `clerk init` created only in a folder
   // that isn't linked and without `--app`; login's claim would run first and

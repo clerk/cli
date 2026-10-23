@@ -111,6 +111,8 @@ export interface SetupOverrides {
   isAgent?: boolean;
   /** What the folder holds, for `init`'s advice; never read from the real working directory. */
   unlinkedFolder?: UnlinkedFolder;
+  /** False: the token works, but the config file has no auth entry, so the account lookup reads signed out. */
+  configAuth?: boolean;
   /**
    * Leave `mode.ts` unfaked so the test exercises real mode detection
    * (env markers + TTY). The test owns the env and `process.stdout.isTTY` it
@@ -173,7 +175,7 @@ export function useInitHarness(): InitHarness {
       spyOn(scanModule, "scanForIssues").mockResolvedValue([]),
       spyOn(heuristicsModule, "getAuthenticatedEmail").mockResolvedValue(email),
       spyOn(claimPromptModule, "lookUpAccount").mockResolvedValue(
-        email != null
+        email != null && overrides.configAuth !== false
           ? { status: "account", account: { userId: "user_test", email } }
           : { status: "signed_out" },
       ),
