@@ -32,13 +32,16 @@ export type PreferredEnvFile = Extract<EnvFileName, ".env" | ".env.local">;
 
 /**
  * Returns the first candidate from ENV_FILE_CANDIDATES that exists on disk,
- * or `fallback` if none do.
+ * skipping any the framework doesn't load (`loadOrder`; Nuxt loads only
+ * `.env`), or `fallback` if none do.
  */
 export async function findExistingEnvFile(
   cwd: string,
   fallback: PreferredEnvFile,
+  loadOrder?: readonly EnvFileName[],
 ): Promise<EnvFileName> {
   for (const candidate of ENV_FILE_CANDIDATES) {
+    if (loadOrder && !loadOrder.includes(candidate)) continue;
     if (await Bun.file(join(cwd, candidate)).exists()) return candidate;
   }
   return fallback;

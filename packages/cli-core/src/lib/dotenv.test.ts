@@ -1,5 +1,14 @@
 import { test, expect, describe } from "bun:test";
-import { detectLineEnding, parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  detectLineEnding,
+  findExistingEnvFile,
+  parseEnvFile,
+  mergeEnvVars,
+  serializeEnvFile,
+} from "./dotenv.ts";
 
 describe("parseEnvFile", () => {
   test("returns empty array for empty string", () => {
@@ -173,5 +182,19 @@ describe("serializeEnvFile", () => {
     const input = "# Header\nFOO=bar\n\nBAZ=qux\n";
     const lines = parseEnvFile(input);
     expect(serializeEnvFile(lines)).toBe(input);
+  });
+});
+
+describe("findExistingEnvFile", () => {
+  test("skips a file the framework doesn't load: Nuxt loads only .env", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "clerk-find-env-"));
+    try {
+      await Bun.write(join(dir, ".env.local"), "FOO=1\n");
+
+      expect(await findExistingEnvFile(dir, ".env", [".env"])).toBe(".env");
+      expect(await findExistingEnvFile(dir, ".env")).toBe(".env.local");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

@@ -1125,6 +1125,25 @@ describe("checkEnvVars", () => {
     });
   });
 
+  // `clerk env pull`, the fix, may write `.env.development.local`.
+  test("checks the file the app loads first that names a Clerk key", async () => {
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { "react-router": "7" } }),
+    );
+    await Bun.write(join(tempDir, ".env.local"), "FOO=1\n");
+    await Bun.write(
+      join(tempDir, ".env.development.local"),
+      "VITE_CLERK_PUBLISHABLE_KEY=pk_test\nCLERK_SECRET_KEY=sk_test\n",
+    );
+    const result = await checkEnvVars(createMockContext());
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "pass",
+      message: ".env.development.local contains VITE_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY",
+    });
+  });
+
   test("falls back to .env when .env.local does not exist", async () => {
     await Bun.write(
       join(tempDir, ".env"),

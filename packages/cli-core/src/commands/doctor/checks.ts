@@ -3,8 +3,13 @@ import { homedir } from "node:os";
 import { getConfigFile } from "../../lib/config.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { CliError, ERROR_CODE, errorMessage, isAuthError, PlapiError } from "../../lib/errors.ts";
-import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
-import { parseEnvFile } from "../../lib/dotenv.ts";
+import {
+  CLERK_KEY_NAMES,
+  detectFramework,
+  detectPublishableKeyName,
+  detectSecretKeyName,
+} from "../../lib/framework.ts";
+import { ENV_FILE_CANDIDATES, parseEnvFile } from "../../lib/dotenv.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
 import { appInNoAccount, unlinkedFolderNextStep } from "../../lib/unlinked-folder.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "../../lib/version.ts";
@@ -427,19 +432,31 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
   }
 }
 
+/**
+ * The file to check: the first the app loads, in its framework's order, that
+ * names a Clerk key, else the first that exists. The fix, `clerk env pull`,
+ * may write `.env.development.local`, so reading only `.env.local` and `.env`
+ * could leave its own warning standing.
+ */
 async function findEnvFile(
   cwd: string,
 ): Promise<{ name: string; entries: Record<string, string> } | null> {
-  for (const candidate of [".env.local", ".env"]) {
+  const files = (await detectFramework(cwd))?.envLoadOrder ?? ENV_FILE_CANDIDATES;
+  const clerkNames = new Set([...CLERK_KEY_NAMES.publishable, ...CLERK_KEY_NAMES.secret]);
+  let firstExisting: { name: string; entries: Record<string, string> } | null = null;
+  for (const candidate of files) {
     const file = Bun.file(join(cwd, candidate));
     if (!(await file.exists())) continue;
     const entries: Record<string, string> = {};
     for (const line of parseEnvFile(await file.text())) {
       if (line.type === "entry") entries[line.key] = line.value;
     }
-    return { name: candidate, entries };
+    if (Object.keys(entries).some((key) => clerkNames.has(key))) {
+      return { name: candidate, entries };
+    }
+    firstExisting ??= { name: candidate, entries };
   }
-  return null;
+  return firstExisting;
 }
 
 export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {
