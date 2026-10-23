@@ -38,11 +38,13 @@ describe("init", () => {
 
     await init({ yes: true });
 
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(linkMod.link).toHaveBeenCalledWith({
       skipIfLinked: true,
       app: undefined,
       cwd: FAKE_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
+      rerun: { clause: "run `clerk init --yes` again", command: "clerk init --yes" },
     });
   });
 
@@ -59,6 +61,8 @@ describe("init", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
+      rerun: { clause: "run `clerk init --yes` again", command: "clerk init --yes" },
       createIfMissing: undefined,
     });
   });
@@ -74,6 +78,8 @@ describe("init", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
+      rerun: { clause: "run `clerk init --yes` again", command: "clerk init --yes" },
       createIfMissing: undefined,
     });
   });
@@ -399,6 +405,8 @@ describe("init", () => {
       skipIfLinked: true,
       app: undefined,
       cwd: "/tmp/fake",
+      onlyIfFolderKeysMatch: true,
+      rerun: { clause: "run `clerk init --yes` again", command: "clerk init --yes" },
     });
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
@@ -566,6 +574,8 @@ describe("init", () => {
 
   test("bootstrap passes project dir to link, not parent cwd", async () => {
     setup({ email: "test@test.com" });
+    // `init` ran in the project's parent folder.
+    track(spyOn(process, "cwd").mockReturnValue("/tmp/test"));
 
     const bootstrapCtx = {
       ...FAKE_CTX,
@@ -585,6 +595,13 @@ describe("init", () => {
       skipIfLinked: true,
       app: undefined,
       cwd: FAKE_BOOTSTRAP.projectDir,
+      onlyIfFolderKeysMatch: true,
+      // The commands it advises must run in the new project's folder.
+      rerun: {
+        clause: "run `clerk init --yes` again in `my-app`",
+        command: "clerk init --yes",
+        folder: { name: "my-app", path: FAKE_BOOTSTRAP.projectDir },
+      },
     });
   });
 

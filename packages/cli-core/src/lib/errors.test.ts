@@ -7,6 +7,11 @@ import {
   BILLING_ERROR_REASON,
   CliError,
   ERROR_CODE,
+  AuthError,
+  AUTH_ERROR_REASON,
+  credentialRefusal,
+  withNextStep,
+  EXIT_CODE,
 } from "./errors.ts";
 
 describe("ApiError envelope parsing (via PlapiError.fromBody)", () => {
@@ -180,5 +185,84 @@ describe("BillingError", () => {
     });
     expect(err.reason).toBe(BILLING_ERROR_REASON.QUOTA_EXCEEDED);
     expect(err.docsUrl).toBe("https://dashboard.clerk.com/settings/billing");
+  });
+});
+
+// A refused credential has to change before a retry can work; anything else
+// may pass on its own. Who refused it decides the fix for a stored session:
+// Clerk's API refusing one the account lookup still accepts needs a sign-out
+// first, while one the CLI can't use already reads as signed out.
+describe("credentialRefusal", () => {
+  test.each([
+    {
+      what: "not signed in",
+      error: new AuthError({ reason: AUTH_ERROR_REASON.NOT_LOGGED_IN }),
+      by: "cli",
+    },
+    {
+      what: "an expired session",
+      error: new AuthError({ reason: AUTH_ERROR_REASON.SESSION_EXPIRED }),
+      by: "cli",
+    },
+    { what: "a 401", error: new PlapiError(401, "{}"), by: "clerk" },
+    { what: "a 403", error: new PlapiError(403, "{}"), by: "clerk" },
+    {
+      what: "a secret key in CLERK_PLATFORM_API_KEY",
+      error: new CliError("Expected a Platform API key", { code: ERROR_CODE.INVALID_KEY_FORMAT }),
+      by: "cli",
+    },
+  ])("$what: refused by $by", ({ error, by }) => {
+    expect(credentialRefusal(error)).toBe(by);
+  });
+
+  test.each([
+    { what: "a 500", error: new PlapiError(500, "{}") },
+    { what: "a 429", error: new PlapiError(429, "{}") },
+    { what: "a 404", error: new PlapiError(404, "{}") },
+    { what: "a network failure", error: new TypeError("fetch failed") },
+    { what: "another CLI error", error: new CliError("the application list wasn't a list") },
+  ])("$what: not refused", ({ error }) => {
+    expect(credentialRefusal(error)).toBeUndefined();
+  });
+});
+
+// A refused credential's error is rethrown as it is, with what to run next.
+describe("withNextStep", () => {
+  const STEP = {
+    text: "Run `clerk auth login`, then run `clerk link` again.",
+    examples: [{ command: "clerk auth login", description: "Sign in" }],
+  };
+
+  test("an API error carries the step and keeps Clerk's message, code, and status", () => {
+    const error = new PlapiError(
+      401,
+      JSON.stringify({ errors: [{ code: "authentication_invalid", message: "Unauthorized" }] }),
+    );
+
+    expect(withNextStep(error, STEP)).toBe(error);
+    expect(error.nextStep).toEqual(STEP);
+    expect(error.message).toBe("Unauthorized");
+    expect(error.code).toBe("authentication_invalid");
+    expect(error.status).toBe(401);
+  });
+
+  test("a CLI error gains the step in its message and examples, keeping its class, code, and exit code", () => {
+    const error = new AuthError({ reason: AUTH_ERROR_REASON.SESSION_EXPIRED });
+    const message = error.message;
+
+    expect(withNextStep(error, STEP)).toBe(error);
+    expect(error).toBeInstanceOf(AuthError);
+    // Its own advice ends with a period, and the step starts a new line.
+    expect(error.message).toBe(`${message}.\n${STEP.text}`);
+    expect(error.examples).toEqual(STEP.examples);
+    expect(error.code).toBe(ERROR_CODE.AUTH_REQUIRED);
+    expect(error.exitCode).toBe(EXIT_CODE.GENERAL);
+  });
+
+  test("any other error is returned unchanged", () => {
+    const error = new Error("socket hang up");
+
+    expect(withNextStep(error, STEP)).toBe(error);
+    expect(error.message).toBe("socket hang up");
   });
 });

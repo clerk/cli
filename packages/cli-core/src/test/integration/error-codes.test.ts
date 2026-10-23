@@ -4,7 +4,7 @@
  */
 
 import { test, expect } from "bun:test";
-import { useIntegrationTestHarness, clerk, mockState } from "./lib/harness.ts";
+import { useIntegrationTestHarness, clerk, mockState, startInAgentMode } from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 
@@ -41,6 +41,8 @@ test("invalid_key_format error includes code in agent mode", async () => {
 });
 
 test("usage_error code for invalid mode flag", async () => {
+  // The invalid value is rejected before any mode is applied.
+  startInAgentMode();
   const result = await clerk.raw("--mode", "agent", "--mode", "banana", "env", "pull");
   expect(result.exitCode).toBe(2);
   const error = parseJsonError(result.stderr);

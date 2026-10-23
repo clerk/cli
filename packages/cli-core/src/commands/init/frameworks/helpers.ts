@@ -5,7 +5,12 @@
  */
 import { join } from "node:path";
 import { readdir } from "node:fs/promises";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../../lib/dotenv.js";
+import {
+  detectLineEnding,
+  parseEnvFile,
+  mergeEnvVars,
+  serializeEnvFile,
+} from "../../../lib/dotenv.js";
 import type { FileAction, ProjectContext } from "./types.js";
 import { hasClerkImport, indentBlock } from "./transformations.js";
 
@@ -536,7 +541,7 @@ export async function scaffoldEnvVars(
   return {
     path: ctx.envFile,
     type: "modify",
-    content: serializeEnvFile(merged),
+    content: serializeEnvFile(merged, detectLineEnding(existing)),
     description: "Add sign-in/sign-up route env vars",
   };
 }

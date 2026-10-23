@@ -9,67 +9,17 @@ import { normalizeBapiPath } from "./bapi-command.ts";
 import { CliError, FapiError, ERROR_CODE } from "./errors.ts";
 import { loggedFetch, type ApiResponse } from "./fetch.ts";
 
-const PK_TEST_PREFIX = "pk_test_";
-const PK_LIVE_PREFIX = "pk_live_";
-
 /**
  * The clerk-js client version FAPI's `/v1/environment` payload is shaped for.
  * Bump when consuming response fields introduced in a later major version.
  */
 export const CLERK_JS_API_VERSION = "6";
 
-export type InstanceType = "development" | "production";
-
-export type DecodedPublishableKey = {
-  fapiHost: string;
-  instanceType: InstanceType;
-};
-
-export function decodePublishableKey(pk: string): DecodedPublishableKey {
-  let instanceType: InstanceType;
-  let encoded: string;
-
-  if (pk.startsWith(PK_TEST_PREFIX)) {
-    instanceType = "development";
-    encoded = pk.slice(PK_TEST_PREFIX.length);
-  } else if (pk.startsWith(PK_LIVE_PREFIX)) {
-    instanceType = "production";
-    encoded = pk.slice(PK_LIVE_PREFIX.length);
-  } else {
-    throw new CliError("Invalid publishable key format: missing pk_test_ or pk_live_ prefix.", {
-      code: ERROR_CODE.INVALID_KEY_FORMAT,
-    });
-  }
-
-  let decoded: string;
-  try {
-    decoded = atob(encoded);
-  } catch {
-    throw new CliError("Invalid publishable key format: not valid base64.", {
-      code: ERROR_CODE.INVALID_KEY_FORMAT,
-    });
-  }
-
-  if (!decoded.endsWith("$")) {
-    throw new CliError("Invalid publishable key format: decoded host missing $ terminator.", {
-      code: ERROR_CODE.INVALID_KEY_FORMAT,
-    });
-  }
-
-  const host = decoded.slice(0, -1);
-
-  if (!/^[a-zA-Z0-9.-]+$/.test(host)) {
-    throw new CliError(
-      "Invalid publishable key format: decoded host contains invalid characters.",
-      { code: ERROR_CODE.INVALID_KEY_FORMAT },
-    );
-  }
-
-  return {
-    fapiHost: host,
-    instanceType,
-  };
-}
+export {
+  decodePublishableKey,
+  type DecodedPublishableKey,
+  type InstanceType,
+} from "./publishable-key.ts";
 
 export type { UserSettingsJSON };
 

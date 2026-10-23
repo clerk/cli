@@ -29,9 +29,31 @@ export const NEXT_STEPS = {
     "Run `clerk auth login` again to retry auto-claim",
     "Run `clerk link` to connect your application manually",
   ],
+  // The claim succeeded but left the folder's link and keys alone. People get
+  // the interactive picker here; the warning above names the agent-safe path.
+  AUTOCLAIM_LINKED_ELSEWHERE: (claimedAppId: string) => [
+    `Run \`clerk link --app ${claimedAppId}\` to switch this folder to the claimed application`,
+  ],
+  AUTOCLAIM_MIXED_KEYS: [
+    "Make this folder's Clerk keys belong to one application",
+    "Run `clerk link` to choose that application",
+  ],
+  AUTOCLAIM_UNMATCHED_PUBLISHABLE_KEY: [
+    "Run `clerk link` to try matching this folder's publishable key to an application in your account",
+  ],
+  AUTOCLAIM_CHOOSE_APP: ["Run `clerk link` and choose the application this folder should use"],
+  AUTOCLAIM_UNVERIFIED: (claimedAppId: string) => [
+    "Run `clerk link` to choose the application this folder uses",
+    `Run \`clerk link --app ${claimedAppId}\` to use the claimed application instead`,
+  ],
   AUTOCLAIM_SWITCH_WORKSPACE: [
     "Select a different workspace in the Clerk Dashboard",
     "Run `clerk auth login` again to proceed",
+  ],
+  // A person declined the claim. Rerunning `clerk auth login` asks again in
+  // every folder; plain `clerk link` doesn't claim in a folder already linked.
+  LOGIN_CLAIM_SKIPPED: (appName: string) => [
+    `Run \`clerk auth login\` again to claim \`${appName}\``,
   ],
   ENABLE_ORGS: [
     "Run `clerk config schema --keys organization_settings` to see all available settings",
@@ -61,12 +83,6 @@ export const NEXT_STEPS = {
   CONFIG_DRY_RUN_PUT: ["Run `clerk config put` without `--dry-run` to apply these changes"],
   LOGOUT: ["Run `clerk auth login` to sign in again"],
   WHOAMI: ["Run `clerk link` to connect this directory to an application"],
-  // An unclaimed keyless app can't be `clerk link`ed — nothing in any account
-  // to link to. `clerk open` finds the claim link whichever file minted the app.
-  WHOAMI_KEYLESS: [
-    "Run `clerk open` to open this application's claim link",
-    "Run `clerk auth login` to connect your Clerk account",
-  ],
   WHOAMI_LINKED: [
     "Run `clerk apps list` to see your other applications",
     "Run `clerk config pull` to inspect the live configuration of this instance",

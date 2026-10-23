@@ -13,6 +13,8 @@ import { join } from "node:path";
 import {
   useIntegrationTestHarness,
   http,
+  mockState,
+  publishableKeyFor,
   setProfile,
   readConfig,
   clerk,
@@ -20,6 +22,8 @@ import {
   MOCK_APP_DEV_ONLY,
   type CLIResult,
 } from "./lib/harness.ts";
+import type { Example } from "../../lib/help.ts";
+import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../lib/clerk-key-env.ts";
 
 const h = useIntegrationTestHarness();
 // The test process isn't a clerk install, so commands would start with bun
@@ -181,7 +185,12 @@ function createRequests() {
 }
 
 /** Agent mode prints a failure as one JSON object on stderr. */
-function agentError(result: CLIResult): { code: string; message: string; docsUrl?: string } {
+function agentError(result: CLIResult): {
+  code: string;
+  message: string;
+  docsUrl?: string;
+  examples?: Example[];
+} {
   return (JSON.parse(result.stderr) as { error: { code: string; message: string } }).error;
 }
 
@@ -189,20 +198,176 @@ async function deploy(...args: string[]): Promise<CLIResult> {
   return clerk.raw("--mode", "agent", "deploy", ...args);
 }
 
+// The lead sentence and `not_linked` must not change; the advice depends
+// on what the folder holds and which credential is present. Each case names
+// its credential: a stored session only, the API key only, or none.
 describe("without a linked project", () => {
-  test.each([{ args: [] }, { args: ["--domain", "example.com"] }])(
-    "fails with not_linked and creates nothing (args: $args)",
-    async ({ args }) => {
+  useSyntheticShellClerkKeys();
+  useCleanClerkKeyEnv();
+
+  const LEAD = "No Clerk project linked to this directory.";
+  const KEY = publishableKeyFor("folder-app.clerk.accounts.dev");
+  const write = (file: string, content: string) => Bun.write(join(h.tempDir, file), content);
+  const FOLDERS = {
+    initApp: async () => {
+      // The token file needs both fields, or the CLI ignores it.
+      await write(
+        ".clerk/keyless.json",
+        JSON.stringify({ claimToken: "claim_token_init", createdAt: new Date().toISOString() }),
+      );
+      await write(".env", `CLERK_PUBLISHABLE_KEY=${KEY}\n`);
+    },
+    sdkApp: () =>
+      write(
+        ".clerk/.tmp/keyless.json",
+        JSON.stringify({
+          publishableKey: KEY,
+          secretKey: "sk_test_sdk",
+          claimUrl: "https://dashboard.clerk.com/apps/claim?token=sdk_claim_token",
+        }),
+      ),
+    publishableKey: () => write(".env", `CLERK_PUBLISHABLE_KEY=${KEY}\n`),
+    secretKeyOnly: () => write(".env", "CLERK_SECRET_KEY=sk_test_folder\n"),
+    // No framework, so no documented order between the two files.
+    couldntTell: async () => {
+      await write(".env", `CLERK_PUBLISHABLE_KEY=${KEY}\n`);
+      await write(
+        ".env.local",
+        `CLERK_PUBLISHABLE_KEY=${publishableKeyFor("other.clerk.accounts.dev")}\n`,
+      );
+    },
+    none: async () => {},
+  };
+  type Credential = "session" | "api_key" | "none";
+  const LIST_AND_LINK = ["clerk apps list --json", "clerk link --app <app_id>"];
+  // The commands before the rerun, for each kind and credential.
+  const KINDS: {
+    kind: string;
+    credential: Credential;
+    setUp: () => Promise<unknown>;
+    expected: string[];
+    says?: string;
+  }[] = [
+    {
+      kind: "an init app",
+      credential: "session",
+      setUp: FOLDERS.initApp,
+      expected: ["clerk link"],
+      says: "created by `clerk init`",
+    },
+    {
+      kind: "an init app",
+      credential: "api_key",
+      setUp: FOLDERS.initApp,
+      expected: ["clerk link"],
+      says: "created by `clerk init`",
+    },
+    {
+      kind: "an init app",
+      credential: "none",
+      setUp: FOLDERS.initApp,
+      expected: ["clerk auth login"],
+      says: "created by `clerk init`",
+    },
+    {
+      kind: "an SDK app",
+      credential: "session",
+      setUp: FOLDERS.sdkApp,
+      expected: ["clerk open", "clerk link"],
+    },
+    {
+      kind: "an SDK app",
+      credential: "none",
+      setUp: FOLDERS.sdkApp,
+      expected: ["clerk open", "clerk auth login", "clerk link"],
+    },
+    {
+      kind: "a publishable key",
+      credential: "session",
+      setUp: FOLDERS.publishableKey,
+      expected: ["clerk link"],
+      says: "publishable key is `CLERK_PUBLISHABLE_KEY` in .env",
+    },
+    {
+      kind: "a publishable key",
+      credential: "none",
+      setUp: FOLDERS.publishableKey,
+      expected: ["clerk auth login", "clerk link"],
+      says: "publishable key is `CLERK_PUBLISHABLE_KEY` in .env",
+    },
+    {
+      kind: "a secret key only",
+      credential: "session",
+      setUp: FOLDERS.secretKeyOnly,
+      expected: LIST_AND_LINK,
+    },
+    {
+      kind: "keys the CLI couldn't tell apart",
+      credential: "session",
+      setUp: FOLDERS.couldntTell,
+      expected: LIST_AND_LINK,
+    },
+    {
+      kind: "no keys",
+      credential: "session",
+      setUp: FOLDERS.none,
+      expected: [...LIST_AND_LINK, "clerk init"],
+    },
+    {
+      kind: "no keys",
+      credential: "none",
+      setUp: FOLDERS.none,
+      expected: ["clerk auth login", ...LIST_AND_LINK, "clerk init"],
+    },
+  ];
+  // The rerun keeps the flags: an agent creates production only with --domain.
+  const CELLS = KINDS.flatMap((kind) => [
+    { ...kind, args: [], rerun: "clerk deploy" },
+    { ...kind, args: ["--domain", "example.com"], rerun: "clerk deploy --domain example.com" },
+    { ...kind, args: ["status"], rerun: "clerk deploy status" },
+  ]);
+
+  async function useCredential(credential: Credential): Promise<void> {
+    if (credential !== "api_key") delete process.env.CLERK_PLATFORM_API_KEY;
+    if (credential !== "session") mockState.storedToken = null;
+  }
+
+  test.each(CELLS)(
+    "$kind, $credential, deploy $args: not_linked, exit 1, creates nothing, $expected then $rerun",
+    async ({ setUp, credential, args, expected, says, rerun }) => {
+      await setUp();
+      await useCredential(credential);
       stubPlatformApi();
 
       const result = await deploy(...args);
+      const error = agentError(result);
 
       expect(result.exitCode).toBe(1);
-      expect(agentError(result).code).toBe("not_linked");
+      expect(error.code).toBe("not_linked");
+      expect(error.message.startsWith(`${LEAD} `)).toBe(true);
+      expect((error.examples ?? []).map((example) => example.command)).toEqual([
+        ...expected,
+        rerun,
+      ]);
+      if (says) expect(error.message).toContain(says);
+      expect(error.message).not.toContain("deploy --app");
       expect(result.stdout).toBe("");
-      expect(createRequests()).toEqual([]);
+      // Classifying the folder makes no API call.
+      expect(http.requests).toEqual([]);
     },
   );
+
+  test("a person gets the step in the message and no Examples block", async () => {
+    stubPlatformApi();
+
+    const result = await clerk.raw("deploy", "--domain", "example.com");
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain(LEAD);
+    expect(result.stderr).toContain("Run `clerk link` to choose one of your apps");
+    expect(result.stderr).toContain("Then run `clerk deploy --domain example.com` again.");
+    expect(result.stderr).not.toContain("Examples:");
+  });
 });
 
 describe("creating or resuming production", () => {

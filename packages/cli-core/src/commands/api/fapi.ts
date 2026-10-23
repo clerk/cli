@@ -34,10 +34,13 @@ async function resolveInstance(options: ResolveOptions): Promise<ApplicationInst
     ctx = await resolveAppContext({ app: options.app, instance: options.instance });
   } catch (error) {
     if (error instanceof CliError && error.code === ERROR_CODE.NOT_LINKED) {
+      // The shared not-linked error gives the folder's step; this site is a
+      // usage error, exit 2.
       throwUsageError(
-        "No instance found. Link a project with `clerk link`, or pass --app <app_id>.",
+        error.message,
         "https://clerk.com/docs/guides/development/managing-environments",
         ERROR_CODE.NOT_LINKED,
+        error.examples,
       );
     }
     throw error;

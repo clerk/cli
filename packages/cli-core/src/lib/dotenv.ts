@@ -6,7 +6,9 @@
 import { join } from "node:path";
 
 /**
- * Env file candidates in Next.js/Vite development load order (highest priority first).
+ * Env file candidates in Next.js development load order (highest priority first).
+ * Vite ranks `.env.development` above `.env.local`, and Nuxt loads only `.env`:
+ * each framework's own order is `envLoadOrder` in `lib/framework.ts`.
  * Production/test variants (.env.production.local, .env.test.local) are excluded —
  * the CLI always runs in a development-setup context.
  */
@@ -18,11 +20,28 @@ export const ENV_FILE_CANDIDATES = [
 ] as const;
 
 /**
- * Returns the first candidate from ENV_FILE_CANDIDATES that exists on disk,
- * or `fallback` if none do.
+ * An env file the CLI may read keys from or write keys to. Every default write
+ * target (`clerk init`, `clerk env pull`) is typed as one of these, and the
+ * claim check reads keys from all of them, so a write can never land in a file
+ * the check didn't read: a new target outside this list fails the type check.
  */
-export async function findExistingEnvFile(cwd: string, fallback: string): Promise<string> {
+export type EnvFileName = (typeof ENV_FILE_CANDIDATES)[number];
+
+/** A framework's preferred env file for keys when the project has none yet. */
+export type PreferredEnvFile = Extract<EnvFileName, ".env" | ".env.local">;
+
+/**
+ * Returns the first candidate from ENV_FILE_CANDIDATES that exists on disk,
+ * skipping any the framework doesn't load (`loadOrder`; Nuxt loads only
+ * `.env`), or `fallback` if none do.
+ */
+export async function findExistingEnvFile(
+  cwd: string,
+  fallback: PreferredEnvFile,
+  loadOrder?: readonly EnvFileName[],
+): Promise<EnvFileName> {
   for (const candidate of ENV_FILE_CANDIDATES) {
+    if (loadOrder && !loadOrder.includes(candidate)) continue;
     if (await Bun.file(join(cwd, candidate)).exists()) return candidate;
   }
   return fallback;
@@ -38,12 +57,16 @@ const ENTRY_RE = /^(export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/;
 export function parseEnvFile(content: string): EnvLine[] {
   if (!content) return [];
   const raw = content.endsWith("\n") ? content.slice(0, -1) : content;
-  return raw.split("\n").map((line): EnvLine => {
+  return raw.split("\n").map((rawLine): EnvLine => {
+    // A CRLF file's "\r" isn't part of the line; `serializeEnvFile` writes the
+    // file's own ending back (`detectLineEnding`).
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
     if (line.trim() === "") return { type: "blank" };
     const match = line.match(ENTRY_RE);
     if (!match) return { type: "comment", raw: line };
     const key = match[2]!;
-    let value = match[3]!;
+    // dotenv trims an unquoted value, so a stray trailing space isn't part of a key.
+    let value = match[3]!.trim();
     // Strip surrounding quotes
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
@@ -53,6 +76,12 @@ export function parseEnvFile(content: string): EnvLine[] {
     }
     return { type: "entry", key, value, raw: line };
   });
+}
+
+/** The line ending `content` uses: its first line's, or "\n" when it has none. */
+export function detectLineEnding(content: string): "\n" | "\r\n" {
+  const newline = content.indexOf("\n");
+  return newline > 0 && content[newline - 1] === "\r" ? "\r\n" : "\n";
 }
 
 export function mergeEnvVars(lines: EnvLine[], vars: Record<string, string>): EnvLine[] {
@@ -81,13 +110,14 @@ export function mergeEnvVars(lines: EnvLine[], vars: Record<string, string>): En
   return result;
 }
 
-export function serializeEnvFile(lines: EnvLine[]): string {
+/** The file's text, each line ending in `lineEnding`: the original file's (`detectLineEnding`). */
+export function serializeEnvFile(lines: EnvLine[], lineEnding: "\n" | "\r\n" = "\n"): string {
   const out = lines
     .map((line) => {
       if (line.type === "blank") return "";
       if (line.type === "comment") return line.raw;
       return line.raw;
     })
-    .join("\n");
-  return out + "\n";
+    .join(lineEnding);
+  return out + lineEnding;
 }

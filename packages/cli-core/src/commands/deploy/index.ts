@@ -92,6 +92,7 @@ import {
   type LiveDeploySnapshot,
 } from "./status.ts";
 import { setTelemetryStage } from "../../lib/telemetry.ts";
+import { deployRerun, notLinkedError } from "./not-linked.ts";
 import { resolveActiveReportState, type OAuthSetupFacts } from "./report-state.ts";
 import {
   recordDeployObservation,
@@ -119,7 +120,7 @@ export async function deploy(options: DeployOptions = {}) {
       : { ...options, domain: assertValidDomain(options.domain) };
 
   if (isAgent()) {
-    await runAgentDeploy(resolved.domain);
+    await runAgentDeploy(resolved);
     return;
   }
 
@@ -160,13 +161,11 @@ export async function deploy(options: DeployOptions = {}) {
  * Either way it prints the `clerk deploy status` report and exits 0 once its
  * own work succeeded: `clerk deploy status` is the pass/fail gate.
  */
-async function runAgentDeploy(domain: string | undefined): Promise<void> {
+async function runAgentDeploy(options: DeployOptions): Promise<void> {
+  const { domain } = options;
   const ctx = await resolveDeployContext();
   if (!ctx.appId || !ctx.developmentInstanceId) {
-    throw new CliError(
-      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
+    throw await notLinkedError(deployRerun(options));
   }
 
   if (!domain) {
@@ -316,10 +315,7 @@ function uncheckedDomainError(requested: string, entered = false): CliError {
 
 async function runDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
   if (!ctx.appId || !ctx.developmentInstanceId) {
-    throw new CliError(
-      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
+    throw await notLinkedError(deployRerun(options));
   }
 
   if (ctx.productionInstanceId) {

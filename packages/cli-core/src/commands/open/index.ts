@@ -9,6 +9,11 @@ import { bold, cyan, dim } from "../../lib/color.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
+import {
+  appInNoAccount,
+  readUnlinkedFolder,
+  unlinkedFolderError,
+} from "../../lib/unlinked-folder.ts";
 import { isKnownDashboardPath } from "./dashboard-paths.ts";
 import { describeKeylessInstance, findKeylessClaimUrl } from "./keyless-claim.ts";
 
@@ -98,12 +103,9 @@ export async function openDashboard(
 }
 
 /**
- * The accountless counterpart to `openDashboard` above. An unclaimed accountless
- * application belongs to no account, so `/apps/{appId}/instances/{instanceId}`
- * doesn't exist for it yet — the one page that does is the one-time claim
- * link. `clerk link` cannot help here (there is nothing in any account to
- * link to), so this path exists precisely so the CLI has *some* answer
- * instead of dead-ending on that advice.
+ * `clerk open` in a folder with no linked app. An app in no account has no
+ * `/apps/{appId}/instances/{instanceId}` page, so this opens its one-time claim
+ * link, from the init token or the SDK keyless file.
  */
 async function openKeylessDashboard(
   cwd: string,
@@ -113,25 +115,20 @@ async function openKeylessDashboard(
   const destination = await findKeylessClaimUrl(cwd);
 
   if (!destination) {
-    // A secret key on disk with no claim link is ambiguous: it may be a
-    // perfectly claimed app's key set by hand (in which case `clerk link`
-    // really is the fix), or a keyless app whose breadcrumb got lost. Name
-    // both possibilities rather than guessing.
+    // A key with no claim link may belong to an app already in an account.
+    // Never advise `clerk init --accountless`: it creates a new app and
+    // overwrites the folder's keys.
     const keyless = await resolveKeylessTarget({ cwd });
+    const folder = await readUnlinkedFolder(cwd);
+    let lead =
+      "No Clerk project linked to this directory, and no accountless application was found either.";
     if (keyless) {
-      throw new CliError(
-        `Found a secret key (from ${keyless.source}) but no claim link on disk, so there's no dashboard page to open yet. ` +
-          "If this key belongs to an application you've already claimed, run `clerk link` (or pass `--app <app_id>`) to target it directly. " +
-          "Otherwise, run `clerk init --accountless` to regenerate a claim link.",
-        { code: ERROR_CODE.NOT_LINKED },
-      );
+      const found = `Found a secret key (from ${keyless.source}) but no claim link on disk`;
+      lead = appInNoAccount(folder)
+        ? `${found}, so there's no dashboard page to open yet.`
+        : `${found}, and this folder isn't linked, so there's no dashboard page to open.`;
     }
-
-    throw new CliError(
-      "No Clerk project linked to this directory, and no accountless application was found either. " +
-        "Run `clerk link` if you already have an application, or `clerk init` to create one.",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
+    throw unlinkedFolderError(folder, { lead });
   }
 
   if (subpath) {

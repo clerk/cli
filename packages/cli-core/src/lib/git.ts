@@ -108,6 +108,16 @@ export function normalizeGitRemoteUrl(raw: string): string {
  * such as the keyless breadcrumb. Creating one without this is how a live
  * credential ends up in a tracked file.
  */
+/** Whether git ignores `file` in `cwd`'s repository; undefined outside one, or without git. */
+export async function isGitIgnored(cwd: string, file: string): Promise<boolean | undefined> {
+  try {
+    const { exitCode } = await $`git check-ignore -q ${file}`.cwd(cwd).quiet().nothrow();
+    return exitCode === 0 ? true : exitCode === 1 ? false : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export async function ensureGitignoreEntry(cwd: string, entry: string): Promise<void> {
   const gitignorePath = join(cwd, ".gitignore");
   const content = await Bun.file(gitignorePath)

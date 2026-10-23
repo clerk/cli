@@ -24,6 +24,7 @@ import {
   previewMod,
   skillsMod,
 } from "../../test/lib/init-harness.ts";
+import * as autoclaimMod from "../../lib/autoclaim.ts";
 import * as promptsMod from "../../lib/prompts.ts";
 import { CODEX_ENV_VARS } from "../../lib/env-signals.ts";
 import { _resetMode } from "../../mode.ts";
@@ -58,7 +59,7 @@ describe("init strategy", () => {
 
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(linkMod.link).toHaveBeenCalled();
   });
 
@@ -318,6 +319,8 @@ describe("init strategy", () => {
       skipIfLinked: true,
       app: undefined,
       cwd: KEYLESS_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
       createIfMissing: expect.any(String),
     });
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
@@ -350,6 +353,8 @@ describe("init strategy", () => {
       skipIfLinked: true,
       app: "app_abc",
       cwd: KEYLESS_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
       createIfMissing: expect.any(String),
     });
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: KEYLESS_CTX.cwd });
@@ -384,17 +389,29 @@ describe("init strategy", () => {
     expect(captured.err).toContain("clerk init --app <app_id>");
   });
 
+  test("agent mode with a valid token but no config auth entry doesn't start a browser login", async () => {
+    setup({ isAgent: true, email: "dev@example.com", configAuth: false });
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+
+    await init({ app: "app_abc" });
+
+    expect(loginMod.login).not.toHaveBeenCalled();
+    expect(linkMod.link).toHaveBeenCalled();
+  });
+
   test("agent mode with real app target and no auth launches login", async () => {
     setup({ isAgent: true });
     spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
 
     await init({ app: "app_abc" });
 
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(linkMod.link).toHaveBeenCalledWith({
       skipIfLinked: true,
       app: "app_abc",
       cwd: FAKE_CTX.cwd,
+      onlyIfFolderKeysMatch: true,
+      rerun: { clause: "run `clerk init` again", command: "clerk init" },
       createIfMissing: expect.any(String),
     });
   });
@@ -408,7 +425,7 @@ describe("init strategy", () => {
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
     // `-y` skips y/n confirmations but not authentication.
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
   });
 
   test("-y flag triggers login for non-keyless frameworks in bootstrap", async () => {
@@ -432,7 +449,7 @@ describe("init strategy", () => {
 
     expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
   });
   test("existing repo with keyless framework uses authenticated flow when signed in", async () => {
@@ -480,9 +497,40 @@ describe("init strategy", () => {
     expect(heuristics.isAuthenticated).toHaveBeenCalled();
     expect(heuristics.printKeylessInfo).not.toHaveBeenCalled();
     // Unauthenticated + existing repo → login + link run via authenticateAndLink.
-    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
     expect(linkMod.link).toHaveBeenCalled();
     expect(pullMod.pull).toHaveBeenCalled();
+  });
+
+  // `link` claims the app `init` created only in a folder that isn't linked
+  // and without `--app`; in the other two cases a signed-out person's sign-in
+  // decides.
+  test("signed out, folder already linked: signs in with login's own claim", async () => {
+    setup();
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_123" } } as never);
+
+    await init({});
+
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false });
+  });
+
+  test("signed out with --app: keeps the claim off and says the init app is still unclaimed", async () => {
+    const { captured } = setup();
+    spyOn(context, "gatherContext").mockResolvedValue(FAKE_CTX);
+    track(
+      spyOn(autoclaimMod, "readInitClaim").mockResolvedValue({
+        appName: "my-app",
+        claimToken: "claim_token_init",
+      }),
+    );
+
+    await init({ app: "app_abc" });
+
+    expect(loginMod.login).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
+    expect(Bun.stripANSI(captured.err)).toContain(
+      "`my-app`, the app `clerk init` created in this folder, is still unclaimed: `clerk auth login` claims it.",
+    );
   });
 
   describe("keeping an existing unclaimed keyless app (defect: re-run minted a second app)", () => {
@@ -506,7 +554,12 @@ describe("init strategy", () => {
       expect(confirmSpy).not.toHaveBeenCalled();
       expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
       expect(keylessMod.writeKeylessBreadcrumb).not.toHaveBeenCalled();
-      expect(printExistingSpy).toHaveBeenCalledWith(KEYLESS_CTX.envFile);
+      expect(printExistingSpy).toHaveBeenCalledWith({
+        keys: `in ${KEYLESS_CTX.envFile}`,
+        unclaimed: true,
+        offerFresh: true,
+        step: expect.stringContaining("Run `clerk auth login` (it opens a browser"),
+      });
     });
 
     test("-y keeps an existing unclaimed keyless app without prompting (does not force a fresh one)", async () => {
@@ -554,11 +607,20 @@ describe("init strategy", () => {
         }),
       );
       expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
-      expect(printExistingSpy).toHaveBeenCalledWith(KEYLESS_CTX.envFile);
+      expect(printExistingSpy).toHaveBeenCalledWith({
+        keys: `in ${KEYLESS_CTX.envFile}`,
+        unclaimed: true,
+        offerFresh: true,
+        step: expect.stringContaining("Run `clerk link`: it claims the app"),
+      });
     });
 
     test("an app the SDK minted for itself counts as existing too — no silent replacement", async () => {
-      setup({ isAgent: true, email: null });
+      setup({
+        isAgent: true,
+        email: null,
+        unlinkedFolder: { kind: "sdk_app", credential: "none" },
+      });
       mockExistingProject(KEYLESS_CTX);
       mockMiddlewareScaffold();
       // No CLI breadcrumb — the app came from running the dev server, so the
@@ -581,8 +643,144 @@ describe("init strategy", () => {
 
       expect(confirmSpy).not.toHaveBeenCalled();
       expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
-      expect(printExistingSpy).toHaveBeenCalledWith(KEYLESS_CTX.envFile);
+      expect(printExistingSpy).toHaveBeenCalledWith({
+        keys: "in .clerk/.tmp/keyless.json",
+        unclaimed: true,
+        offerFresh: true,
+        step: expect.stringContaining("Run `clerk open`"),
+      });
     });
+
+    // `clerk auth login` claims only an app `clerk init` created; a person
+    // claims an SDK-created app from its claim page, which `clerk link` opens.
+    test.each([
+      {
+        mode: "human",
+        isAgent: false,
+        step: "Run `clerk link`: it links the app if it's in your account, or opens the Clerk Dashboard page to claim it.",
+      },
+      {
+        mode: "agent",
+        isAgent: true,
+        step: "Run `clerk open` to print its claim link for a person to claim the app",
+      },
+    ])(
+      "keeping an SDK-created app, $mode: names the SDK file and gives the SDK app's step",
+      async ({ isAgent, step }) => {
+        const { captured } = setup({
+          isAgent,
+          email: null,
+          unlinkedFolder: { kind: "sdk_app", credential: "none" },
+        });
+        mockExistingProject(KEYLESS_CTX);
+        mockMiddlewareScaffold();
+        track(spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined));
+        track(
+          spyOn(keylessTargetMod, "readSdkKeylessApp").mockResolvedValue({
+            secretKey: "sk_test_sdkapp",
+            publishableKey: "pk_test_sdkapp",
+          }),
+        );
+
+        await init({ keyless: true, yes: true });
+
+        const err = Bun.stripANSI(captured.err);
+        expect(err).toContain(
+          "This project already has an unclaimed accountless application (keys in .clerk/.tmp/keyless.json).",
+        );
+        expect(err).toContain(step);
+        expect(err).not.toContain("clerk auth login` to claim");
+        expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+      },
+    );
+
+    // Dashboard keys pasted into .env.local beside an old SDK keyless file: the
+    // app runs on the pasted keys, which may be in an account, and replacing
+    // it (`--accountless --fresh`, or Yes at the prompt) would create a new app
+    // and overwrite them. So init keeps them without asking.
+    test.each([
+      { mode: "-y", options: { keyless: true, yes: true } },
+      { mode: "a person, no -y", options: { keyless: true } },
+    ])(
+      "keeping an old SDK file beside plain keys, $mode: no prompt, names the keys, never unclaimed or --fresh",
+      async ({ options }) => {
+        const { captured } = setup({
+          email: null,
+          unlinkedFolder: {
+            kind: "unknown_owner",
+            credential: "none",
+            publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
+            secretKey: { name: "CLERK_SECRET_KEY", source: ".env.local" },
+          },
+        });
+        mockExistingProject(KEYLESS_CTX);
+        mockMiddlewareScaffold();
+        track(spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined));
+        track(
+          spyOn(keylessTargetMod, "readSdkKeylessApp").mockResolvedValue({
+            secretKey: "sk_test_sdkapp",
+            publishableKey: "pk_test_sdkapp",
+          }),
+        );
+        const confirmSpy = spyOn(promptsMod, "confirm").mockResolvedValue(true);
+        track(confirmSpy);
+
+        await init(options);
+
+        const err = Bun.stripANSI(captured.err);
+        expect(confirmSpy).not.toHaveBeenCalled();
+        expect(err).toContain(
+          "This project already has Clerk keys (`CLERK_SECRET_KEY` in .env.local), so init kept them.",
+        );
+        expect(err).toContain("Run `clerk link`: it finds the app in your account by that key.");
+        expect(err).not.toContain("unclaimed");
+        expect(err).not.toContain("--fresh");
+        expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+      },
+    );
+
+    // An SDK app whose claim link can't be used may already be claimed: not
+    // called unclaimed, and not offered at a prompt, but `--fresh` still
+    // replaces only the SDK's own keys.
+    test.each([
+      { mode: "-y", options: { keyless: true, yes: true } },
+      { mode: "a person, no -y", options: { keyless: true } },
+    ])(
+      "keeping an SDK app with no usable claim link, $mode: no prompt, never unclaimed, --fresh offered",
+      async ({ options }) => {
+        const { captured } = setup({
+          email: null,
+          unlinkedFolder: {
+            kind: "sdk_app",
+            credential: "none",
+            unusable: { reason: "its claim URL isn't https", findableByKey: true },
+          },
+        });
+        mockExistingProject(KEYLESS_CTX);
+        mockMiddlewareScaffold();
+        track(spyOn(keylessMod, "readKeylessBreadcrumb").mockResolvedValue(undefined));
+        track(
+          spyOn(keylessTargetMod, "readSdkKeylessApp").mockResolvedValue({
+            secretKey: "sk_test_sdkapp",
+            publishableKey: "pk_test_sdkapp",
+          }),
+        );
+        const confirmSpy = spyOn(promptsMod, "confirm").mockResolvedValue(true);
+        track(confirmSpy);
+
+        await init(options);
+
+        const err = Bun.stripANSI(captured.err);
+        expect(confirmSpy).not.toHaveBeenCalled();
+        expect(err).toContain(
+          "This project already has Clerk keys (in .clerk/.tmp/keyless.json), so init kept them.",
+        );
+        expect(err).toContain("has no usable claim link");
+        expect(err).not.toContain("unclaimed");
+        expect(err).toContain("clerk init --accountless --fresh");
+        expect(keylessMod.createAccountlessApp).not.toHaveBeenCalled();
+      },
+    );
 
     test("human mode names the SDK file when prompting to replace an SDK-minted app", async () => {
       setup({ email: null });

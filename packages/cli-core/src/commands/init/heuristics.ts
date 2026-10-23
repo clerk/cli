@@ -159,13 +159,32 @@ export function printKeylessInfo(envFile: string): void {
 }
 
 /**
- * Printed instead of `printKeylessInfo` when init keeps an existing unclaimed
- * accountless app rather than minting a replacement (see `shouldKeepExistingKeyless`).
+ * Printed instead of `printKeylessInfo` when init keeps an existing app rather
+ * than minting a replacement (see `keptKeylessApp`).
  */
-export function printExistingKeylessInfo(envFile: string): void {
+export function printExistingKeylessInfo({
+  keys,
+  unclaimed,
+  offerFresh,
+  step,
+}: {
+  /** Where the kept keys are: "in .env.local", or "`CLERK_SECRET_KEY` in .env.local". */
+  keys: string;
+  /** The app is in no account yet (`appInNoAccount`), so it's called unclaimed. */
+  unclaimed: boolean;
+  /** Only an app `clerk init` or a Clerk SDK created: `--fresh` would overwrite pasted keys. */
+  offerFresh: boolean;
+  /** The step for what the folder holds (`unlinkedFolderNextStep`). */
+  step: string;
+}): void {
   const lines = [
-    `\n  This project already has an unclaimed accountless application (keys in ${envFile}).`,
-    `  Run ${bold("clerk auth login")} to claim it, or ${bold("clerk init --accountless --fresh")} to replace it with a new one.\n`,
+    unclaimed
+      ? `\n  This project already has an unclaimed accountless application (keys ${keys}).`
+      : `\n  This project already has Clerk keys (${keys}), so init kept them.`,
+    `  ${step}`,
+    ...(offerFresh
+      ? [`  To replace it with a new one, run ${bold("clerk init --accountless --fresh")}.`]
+      : []),
   ];
-  log.info(lines.map(dim).join("\n"));
+  log.info(`${lines.map(dim).join("\n")}\n`);
 }

@@ -198,6 +198,7 @@ export const configStubs = {
 // the file under test actually exercises.
 export const keylessTargetStubs = {
   resolveKeylessTarget: noop,
+  resolveKeylessTargetAndRead: noop,
   resolveInstanceTarget: noop,
   findLocalSecretKey: noop,
   findLocalPublishableKey: noop,
@@ -206,9 +207,9 @@ export const keylessTargetStubs = {
 };
 
 export const autolinkStubs = {
-  findClerkKeys: async () => [],
+  findLinkKey: async () => ({ status: "none" }),
   matchKeyToApp: () => undefined,
-  autolink: async () => undefined,
+  autolink: async () => ({ status: "no_key" }),
   linkApp: async () => undefined,
 };
 
@@ -240,6 +241,7 @@ export const gitStubs = {
   getGitNormalizedRemote: async () => undefined,
   normalizeGitRemoteUrl: (url: string) => url,
   ensureGitignoreEntry: async () => {},
+  isGitIgnored: async () => undefined,
 };
 
 /**

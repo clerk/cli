@@ -8,8 +8,13 @@
  * `buildDashboardUrl`.
  */
 
-import { join } from "node:path";
 import { readKeylessBreadcrumb } from "../../lib/keyless.ts";
+import {
+  isSdkOnly,
+  readFolderKeys,
+  readSdkClaimLink,
+  SDK_KEYLESS_SOURCE,
+} from "../../lib/local-keys.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { log } from "../../lib/log.ts";
@@ -26,44 +31,6 @@ export interface KeylessInstanceInfo {
   environmentType: string | null;
 }
 
-const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
-
-/**
- * The SDKs write their own full `claimUrl` (already pointed at the right
- * dashboard host) into this file. Reading it directly here — rather than
- * through `lib/keyless-target.ts` — because that module only surfaces the
- * key pair it needs for BAPI calls, not the claim URL.
- */
-async function readSdkClaimUrl(cwd: string): Promise<string | undefined> {
-  const file = Bun.file(join(cwd, ...SDK_KEYLESS_FILE));
-  if (!(await file.exists())) return undefined;
-
-  try {
-    const parsed = (await file.json()) as { claimUrl?: unknown };
-    const claimUrl = typeof parsed.claimUrl === "string" ? parsed.claimUrl : undefined;
-    if (!claimUrl) return undefined;
-
-    // Written by another process, so untrusted input: anything but well-formed
-    // https is dropped rather than handed to the browser launcher — which on
-    // Windows goes through `cmd /c start "" "<url>"`, where a `file:`/
-    // `javascript:` scheme or an embedded quote stops being just a URL.
-    let isHttps = false;
-    try {
-      isHttps = new URL(claimUrl).protocol === "https:";
-    } catch {
-      // fall through: not a URL at all
-    }
-    if (!isHttps) {
-      log.debug(`open: ignoring non-https claimUrl in ${SDK_KEYLESS_FILE.join("/")}`);
-      return undefined;
-    }
-    return claimUrl;
-  } catch {
-    // A half-written file during an SDK refresh isn't worth failing over.
-    return undefined;
-  }
-}
-
 /**
  * Finds the claim link for an unclaimed keyless application, checking both
  * places one can turn up depending on how keyless mode was entered:
@@ -76,16 +43,13 @@ async function readSdkClaimUrl(cwd: string): Promise<string | undefined> {
  *    writes the full URL straight into `.clerk/.tmp/keyless.json`, so that one
  *    is used verbatim rather than reconstructed.
  *
- * Returns `undefined` when neither file has a usable claim link.
+ * In the unlinked-folder classifier's order: the init token first, then the
+ * SDK file only when the folder holds no plain key, since a plain key is the
+ * app the folder runs on instead. Returns `undefined` when neither applies.
  */
 export async function findKeylessClaimUrl(
   cwd: string,
 ): Promise<KeylessClaimDestination | undefined> {
-  const sdkClaimUrl = await readSdkClaimUrl(cwd);
-  if (sdkClaimUrl) {
-    return { url: sdkClaimUrl, source: SDK_KEYLESS_FILE.join("/") };
-  }
-
   const breadcrumb = await readKeylessBreadcrumb(cwd);
   if (breadcrumb) {
     const host = getDashboardUrl().replace(/\/$/, "");
@@ -95,7 +59,13 @@ export async function findKeylessClaimUrl(
     };
   }
 
-  return undefined;
+  // An env file that can't be read may hold the plain key the app runs on.
+  const keys = await readFolderKeys(cwd).catch(() => undefined);
+  if (!keys || !isSdkOnly(keys)) return undefined;
+  const sdkClaim = await readSdkClaimLink(cwd);
+  return sdkClaim.status === "usable"
+    ? { url: sdkClaim.url, source: SDK_KEYLESS_SOURCE }
+    : undefined;
 }
 
 /**

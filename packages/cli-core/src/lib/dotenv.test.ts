@@ -1,5 +1,14 @@
 import { test, expect, describe } from "bun:test";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "./dotenv.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  detectLineEnding,
+  findExistingEnvFile,
+  parseEnvFile,
+  mergeEnvVars,
+  serializeEnvFile,
+} from "./dotenv.ts";
 
 describe("parseEnvFile", () => {
   test("returns empty array for empty string", () => {
@@ -61,6 +70,12 @@ describe("parseEnvFile", () => {
   test("handles empty values", () => {
     const lines = parseEnvFile("FOO=\n");
     expect(lines[0]).toEqual({ type: "entry", key: "FOO", value: "", raw: "FOO=" });
+  });
+
+  test("trims an unquoted value, as dotenv does, and keeps a quoted one", () => {
+    expect(
+      parseEnvFile('A= pk_test_a \nB=" b "\n').map((line) => line.type === "entry" && line.value),
+    ).toEqual(["pk_test_a", " b "]);
   });
 
   test("handles values with equals signs", () => {
@@ -133,6 +148,30 @@ describe("mergeEnvVars", () => {
   });
 });
 
+// Windows editors save CRLF line endings; the "\r" isn't part of the value.
+describe("a file with CRLF line endings", () => {
+  test("parses each entry without the carriage return", () => {
+    const lines = parseEnvFile('CLERK_SECRET_KEY=sk_test_crlf\r\nNAME="quoted"\r\n');
+    expect(lines.map((line) => (line.type === "entry" ? [line.key, line.value] : line))).toEqual([
+      ["CLERK_SECRET_KEY", "sk_test_crlf"],
+      ["NAME", "quoted"],
+    ]);
+  });
+
+  test("round-trips without modification, with its own line ending", () => {
+    const input = "# Header\r\nFOO=bar\r\n\r\nBAZ=qux\r\n";
+    expect(serializeEnvFile(parseEnvFile(input), detectLineEnding(input))).toBe(input);
+  });
+
+  test("a merge writes CRLF throughout, for updated and appended lines too", () => {
+    const input = "FOO=old\r\nBAR=keep\r\n";
+    const merged = mergeEnvVars(parseEnvFile(input), { FOO: "new", BAZ: "added" });
+    expect(serializeEnvFile(merged, detectLineEnding(input))).toBe(
+      "FOO=new\r\nBAR=keep\r\nBAZ=added\r\n",
+    );
+  });
+});
+
 describe("serializeEnvFile", () => {
   test("ends with trailing newline", () => {
     const lines = parseEnvFile("FOO=bar\n");
@@ -143,5 +182,19 @@ describe("serializeEnvFile", () => {
     const input = "# Header\nFOO=bar\n\nBAZ=qux\n";
     const lines = parseEnvFile(input);
     expect(serializeEnvFile(lines)).toBe(input);
+  });
+});
+
+describe("findExistingEnvFile", () => {
+  test("skips a file the framework doesn't load: Nuxt loads only .env", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "clerk-find-env-"));
+    try {
+      await Bun.write(join(dir, ".env.local"), "FOO=1\n");
+
+      expect(await findExistingEnvFile(dir, ".env", [".env"])).toBe(".env");
+      expect(await findExistingEnvFile(dir, ".env")).toBe(".env.local");
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
   });
 });

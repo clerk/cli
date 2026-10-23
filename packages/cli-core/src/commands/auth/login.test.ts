@@ -1,7 +1,7 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
-import { AuthError, ERROR_CODE, UserAbortError } from "../../lib/errors.ts";
+import { AuthError, ERROR_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
-import type { AutoclaimResult } from "../../lib/autoclaim.ts";
+import type { AutoclaimResult, FolderSetup } from "../../lib/autoclaim.ts";
 import type { Application } from "../../lib/plapi.ts";
 
 const actualConstants = await import("../../lib/constants.ts");
@@ -97,13 +97,25 @@ mock.module("../../lib/first-application.ts", () => ({
   ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
-const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<AutoclaimResult> => ({
-  status: "not_keyless",
-}));
+type InitClaim = { appName: string; claimToken: string };
+
+const mockAttemptAutoclaim = mock(
+  async (_cwd: string, _init?: InitClaim): Promise<AutoclaimResult> => ({ status: "not_found" }),
+);
+
+// No init token unless a test says so; the real reader would look in the
+// repo's own working directory.
+const mockReadInitClaim = mock(async (_cwd: string): Promise<InitClaim | undefined> => undefined);
 
 mock.module("../../lib/autoclaim.ts", () => ({
-  attemptAutoclaim: (cwd: string) => mockAttemptAutoclaim(cwd),
+  attemptAutoclaim: (cwd: string, init?: InitClaim) => mockAttemptAutoclaim(cwd, init),
+  readInitClaim: (cwd: string) => mockReadInitClaim(cwd),
 }));
+
+/** Login claims only a token it read at the start, so a test that claims puts one in the folder. */
+function withInitToken() {
+  mockReadInitClaim.mockResolvedValue({ appName: "bad-agent", claimToken: "claim_token" });
+}
 
 const { setLogLevel } = await import("../../lib/log.ts");
 const telemetryMod = await import("../../lib/telemetry.ts");
@@ -143,7 +155,9 @@ describe("login", () => {
     mockEnsureFirstApplication.mockReset();
     mockEnsureFirstApplication.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockReset();
-    mockAttemptAutoclaim.mockResolvedValue({ status: "not_keyless" });
+    mockAttemptAutoclaim.mockResolvedValue({ status: "not_found" });
+    mockReadInitClaim.mockReset();
+    mockReadInitClaim.mockResolvedValue(undefined);
     mockIsHuman.mockReturnValue(false);
     mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
     mockRevokeToken.mockResolvedValue("revoked");
@@ -668,9 +682,10 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue(undefined);
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
-      envPulled: true,
+      local: { kind: "linked", envPulled: true },
       app: {
         application_id: "app_claimed",
         name: "bad-agent",
@@ -697,9 +712,10 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue(undefined);
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
-      envPulled: true,
+      local: { kind: "linked", envPulled: true },
       app: {
         application_id: "app_claimed",
         name: "bad-agent",
@@ -732,9 +748,10 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue(undefined);
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
-      envPulled: true,
+      local: { kind: "linked", envPulled: true },
       // Deliberately shaped like API JSON that dropped the array.
       app: { application_id: "app_claimed", name: "bad-agent" } as Application,
     });
@@ -743,6 +760,211 @@ describe("login", () => {
 
     expect(captured.err).toContain("Claimed and linked application: `bad-agent`");
     expect(captured.err).not.toContain("Your app now lives");
+  });
+
+  describe("a claim that sets up the folder or leaves it alone", () => {
+    const CLAIMED_APP: Application = {
+      application_id: "app_claimed",
+      name: "bad-agent",
+      instances: [
+        {
+          instance_id: "ins_dev_claimed",
+          environment_type: "development",
+          publishable_key: "pk_test_claimed",
+        },
+      ],
+    };
+
+    // Signed out, so the browser flow runs and no re-auth prompt appears. Only
+    // person mode prints the outro's next steps.
+    async function loginClaiming(local: FolderSetup, mode: "human" | "agent" = "agent") {
+      mockIsHuman.mockReturnValue(mode === "human");
+      mockGetValidToken.mockResolvedValue(null);
+      mockOAuthSuccess();
+      mockResolveProfile.mockResolvedValue(undefined);
+      withInitToken();
+      // A person answers Yes to the claim question after signing in.
+      if (mode === "human") mockConfirm.mockResolvedValue(true);
+      mockAttemptAutoclaim.mockResolvedValue({ status: "claimed", app: CLAIMED_APP, local });
+      await runLogin();
+    }
+
+    const LEFT_ALONE = [
+      {
+        name: "linked to another app",
+        local: {
+          kind: "unchanged",
+          reason: "linked_elsewhere",
+          linkedTo: { appId: "app_B", appName: "Other App" },
+        },
+        warning:
+          "This folder stays linked to `Other App (app_B)`, so its link and keys were left alone. " +
+          "Run `clerk link --app app_claimed` to switch it to `bad-agent`.",
+        nextSteps: [
+          "Run `clerk link --app app_claimed` to switch this folder to the claimed application",
+        ],
+      },
+      {
+        name: "another app's publishable key that plain `clerk link` can try to match",
+        local: {
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "publishable",
+          name: "CLERK_PUBLISHABLE_KEY",
+          source: ".env",
+          mixed: false,
+          linkCanTryKey: true,
+        },
+        warning:
+          "`CLERK_PUBLISHABLE_KEY` in .env isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
+          "Run `clerk link`; it tries to match that key to an application in your account.",
+        nextSteps: [
+          "Run `clerk link` to try matching this folder's publishable key to an application in your account",
+        ],
+      },
+      {
+        // For example, the folder is already linked to the claimed app, so plain
+        // `clerk link` would keep that link instead of matching keys.
+        name: "another app's publishable key that plain `clerk link` can't try",
+        local: {
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "publishable",
+          name: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
+          source: ".env.local",
+          mixed: false,
+          linkCanTryKey: false,
+        },
+        warning:
+          "`NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in .env.local isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
+          "Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`.",
+        nextSteps: ["Run `clerk link` and choose the application this folder should use"],
+      },
+      {
+        name: "only a secret key, which isn't the claimed app's",
+        local: {
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "secret",
+          name: "CLERK_SECRET_KEY",
+          source: "CLERK_SECRET_KEY env var",
+          mixed: false,
+          linkCanTryKey: false,
+        },
+        warning:
+          "The `CLERK_SECRET_KEY` env var isn't `bad-agent`'s, so this folder's link and keys were left alone. " +
+          "Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`.",
+        nextSteps: ["Run `clerk link` and choose the application this folder should use"],
+      },
+      {
+        name: "keys from the claimed app and another app",
+        local: {
+          kind: "unchanged",
+          reason: "different_keys",
+          key: "secret",
+          name: "CLERK_SECRET_KEY",
+          source: ".env.development.local",
+          mixed: true,
+          linkCanTryKey: false,
+        },
+        warning:
+          "This folder holds keys for `bad-agent` and `CLERK_SECRET_KEY` in .env.development.local, which isn't `bad-agent`'s, so its link and keys were left alone. " +
+          "Make the folder's Clerk keys belong to one application, then link it. Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`.",
+        nextSteps: [
+          "Make this folder's Clerk keys belong to one application",
+          "Run `clerk link` to choose that application",
+        ],
+      },
+      {
+        name: "couldn't tell",
+        local: { kind: "unchanged", reason: "unverified" },
+        warning:
+          "Couldn't confirm this folder's Clerk keys belong to `bad-agent`, so this folder's link and keys were left alone. " +
+          "Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`, or run `clerk link --app app_claimed` to use `bad-agent`.",
+        nextSteps: [
+          "Run `clerk link` to choose the application this folder uses",
+          "Run `clerk link --app app_claimed` to use the claimed application instead",
+        ],
+      },
+    ] satisfies Array<{ name: string; local: FolderSetup; warning: string; nextSteps: string[] }>;
+
+    test.each(LEFT_ALONE)(
+      "$name: says the app was claimed, where it lives, why the folder was left alone, and the command to run",
+      async ({ local, warning }) => {
+        await loginClaiming(local);
+
+        expect(captured.err).toContain("Claimed application: `bad-agent`");
+        expect(captured.err).not.toContain("Claimed and linked");
+        expect(captured.err).toContain(
+          "https://dashboard.clerk.com/apps/app_claimed/instances/ins_dev_claimed",
+        );
+        expect(captured.err).toContain(warning);
+      },
+    );
+
+    test.each(LEFT_ALONE)(
+      "$name: a person also gets matching next steps",
+      async ({ local, nextSteps }) => {
+        await loginClaiming(local, "human");
+
+        expect(nextSteps.filter((step) => !captured.err.includes(step))).toEqual([]);
+      },
+    );
+
+    // Switching to the claimed app would point the folder away from the app its
+    // keys belong to; only the folder-linked-elsewhere and couldn't-tell
+    // warnings, where switching is a reasonable choice, offer it.
+    test.each(LEFT_ALONE.filter(({ local }) => local.reason === "different_keys"))(
+      "$name: never offers to switch the folder to the claimed app",
+      async ({ local }) => {
+        await loginClaiming(local, "human");
+
+        expect(captured.err).not.toContain("clerk link --app app_claimed");
+      },
+    );
+
+    test.each([
+      {
+        name: "linked, keys pulled",
+        local: { kind: "linked", envPulled: true },
+        nextStep: "Run `clerk doctor` to verify your setup",
+      },
+      {
+        name: "linked, keys not pulled",
+        local: { kind: "linked", envPulled: false },
+        nextStep: "Run `clerk env pull` to refresh your environment variables",
+      },
+      {
+        name: "link failed",
+        local: { kind: "link_failed", reason: "config directory is read-only" },
+        nextStep: "Run `clerk link` to connect your Clerk application",
+      },
+    ] satisfies Array<{ name: string; local: FolderSetup; nextStep: string }>)(
+      "$name: says whether the folder was linked, with the matching next step",
+      async ({ local, nextStep }) => {
+        await loginClaiming(local, "human");
+
+        const linked = local.kind === "linked";
+        expect(captured.err).toContain(
+          linked
+            ? "Claimed and linked application: `bad-agent`"
+            : "Claimed application: `bad-agent`",
+        );
+        expect(captured.err).not.toContain("left alone");
+        expect(captured.err).toContain(nextStep);
+      },
+    );
+
+    test("link failed: says what was claimed before saying the link failed, and why", async () => {
+      await loginClaiming({ kind: "link_failed", reason: "config directory is read-only" });
+
+      const claimedAt = captured.err.indexOf("Claimed application: `bad-agent`");
+      const failedAt = captured.err.indexOf(
+        "Linking this folder failed: config directory is read-only. Run `clerk link` to finish setup.",
+      );
+      expect(claimedAt).toBeGreaterThanOrEqual(0);
+      expect(failedAt).toBeGreaterThan(claimedAt);
+    });
   });
 
   test("shows default next steps when not linked", async () => {
@@ -816,6 +1038,7 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({
       status: "managed_workspace",
       longMessage:
@@ -835,6 +1058,7 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    withInitToken();
     mockAttemptAutoclaim.mockResolvedValue({ status: "managed_workspace", longMessage: null });
 
     await runLogin();
@@ -842,6 +1066,29 @@ describe("login", () => {
     expect(captured.err).toContain(
       "Unable to claim - this workspace is managed by an integration provider.",
     );
+  });
+
+  test("names Clerk's reason when it refuses the credential, and keeps the claim token", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    withInitToken();
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(
+        403,
+        JSON.stringify({
+          errors: [{ code: "authorization_missing_scopes", message: "Missing scopes" }],
+        }),
+      ),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Unable to claim - Clerk refused this credential: Missing scopes. The claim token stays in this folder",
+    );
+    expect(captured.err).not.toContain("temporary error");
   });
 
   test("does not call ensureFirstApplication when existing session is reused", async () => {

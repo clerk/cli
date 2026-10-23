@@ -38,9 +38,11 @@ import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 /**
  * What happened to the command, not to the thing it acted on. `incomplete`
- * means the command answered and the thing it reports on is not finished; only
- * `clerk deploy status` sends it, by declaring it. How far a deploy got is
- * `stage` and `components`, never `outcome`.
+ * means the command did its part and the thing it acts on is not finished; it
+ * is sent only by declaring it: `clerk deploy status` for an unfinished
+ * deploy, and `clerk link`, `clerk init`, and `clerk migrate import` when
+ * `link` opened a claim page instead of linking. How
+ * far a deploy got is `stage` and `components`, never `outcome`.
  */
 export type TelemetryOutcome = "success" | "error" | "abort" | "incomplete";
 

@@ -2,6 +2,7 @@ import { bold, cyan, dim } from "../../lib/color.ts";
 import { resolveAppContext, resolveInstanceId, resolveProfile } from "../../lib/config.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "../../lib/errors.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
+import { keylessRefusal, readUnlinkedFolder, rerunOf } from "../../lib/unlinked-folder.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { log } from "../../lib/log.ts";
 import { openBrowser } from "../../lib/open.ts";
@@ -67,23 +68,26 @@ async function resolveKnownUserDashboardTarget(options: UsersOpenOptions): Promi
 }
 
 /**
- * Fails with the real reason when the directory holds an unclaimed keyless
- * application, rather than letting the caller land on `not_linked`.
- *
- * Both are true — nothing is linked, and there is nothing to link to — but only
- * one of them tells you what to do next. `clerk link` and `--app` both expect an
- * application ID that an unclaimed application does not have yet, so the generic
- * message sends people to try two things that cannot work.
+ * Fails with the real reason when the folder runs on its own secret key: a
+ * Dashboard link needs the application's ID, which the key doesn't give.
  */
-async function assertNotUnclaimedKeyless(options: UsersOpenOptions, userId: string): Promise<void> {
+async function assertNotKeyless(options: UsersOpenOptions, userId: string): Promise<void> {
   // An explicit destination means the user is not asking about keyless at all,
   // and the original error is the accurate one.
   if (options.app || options.instance) return;
 
   const keyless = await resolveKeylessTarget({ cwd: process.cwd() });
   if (keyless) {
-    throw new CliError(keylessCopy.userDashboardNeedsClaim(keyless.source, userId), {
+    // The user ID was validated as `user_<letters and digits>`, so it's safe to
+    // echo; `--secret-key` never is.
+    const { subject, step, examples } = keylessRefusal(
+      await readUnlinkedFolder(process.cwd()),
+      keyless.source,
+      rerunOf([`clerk users open ${userId}`, options.print && "--print"]),
+    );
+    throw new CliError(keylessCopy.userDashboardNeedsClaim(subject, userId, step), {
       code: ERROR_CODE.INSTANCE_NOT_FOUND,
+      examples,
     });
   }
 }
@@ -107,12 +111,9 @@ export async function open(options: UsersOpenOptions = {}): Promise<void> {
     try {
       target = await resolveKnownUserDashboardTarget(options);
     } catch (error) {
-      // An unclaimed application has no Dashboard page to open — the deep-link
-      // is `/apps/{appId}/…` and there is no appId until somebody claims it.
-      // Checked before the `--secret-key` branch below because the advice that
-      // branch would eventually give ("use --app", "run `clerk link`") is
-      // unreachable here: no app exists to name.
-      await assertNotUnclaimedKeyless(options, userId);
+      // The deep link is `/apps/{appId}/…`, and a folder running on its own
+      // secret key gives no app ID; say so before the `--secret-key` branch.
+      await assertNotKeyless(options, userId);
 
       if (!options.secretKey) {
         throw error;

@@ -3,9 +3,15 @@ import { homedir } from "node:os";
 import { getConfigFile } from "../../lib/config.ts";
 import { fetchUserInfo } from "../../lib/token-exchange.ts";
 import { CliError, ERROR_CODE, errorMessage, isAuthError, PlapiError } from "../../lib/errors.ts";
-import { detectPublishableKeyName, detectSecretKeyName } from "../../lib/framework.ts";
-import { parseEnvFile } from "../../lib/dotenv.ts";
+import {
+  CLERK_KEY_NAMES,
+  detectFramework,
+  detectPublishableKeyName,
+  detectSecretKeyName,
+} from "../../lib/framework.ts";
+import { ENV_FILE_CANDIDATES, parseEnvFile } from "../../lib/dotenv.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import { appInNoAccount, unlinkedFolderNextStep } from "../../lib/unlinked-folder.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "../../lib/version.ts";
 import {
   getUpdateChannel,
@@ -75,20 +81,37 @@ function keylessLabel(keyless: KeylessTarget, instance: KeylessInstanceInfo | nu
 }
 
 /**
- * How this particular application can be claimed, which is not one answer.
- * `clerk auth login` only claims silently when `clerk init` left a claim token
- * behind; a key that arrived any other way (an SDK's own keyless.json, a
- * hand-copied secret) has no token to redeem and has to be claimed from the
- * dashboard instead.
+ * What an unlinked folder with a secret key on disk is running on, and the
+ * step to take, from the unlinked-folder module, so `doctor` gives the same
+ * advice as every other command. Only an app in no account yet is called
+ * unclaimed (`appInNoAccount`): plain keys, or an SDK app whose claim link
+ * can't be used, may belong to an app in any account.
  *
- * This rides in the check's message rather than its detail: `detail` only
- * renders under `--verbose`, and guidance nobody sees by default isn't
- * guidance.
+ * The step rides in a passing check's message rather than its detail:
+ * `detail` only renders under `--verbose`, and guidance nobody sees by
+ * default isn't guidance.
  */
-async function claimHint(ctx: DoctorContext): Promise<string> {
-  return (await ctx.hasClaimBreadcrumb())
-    ? "Run `clerk auth login` to claim it."
-    : "Claim it from the Clerk Dashboard — `clerk auth login` only claims applications `clerk init` created.";
+async function unlinkedKeyless(
+  ctx: DoctorContext,
+  keyless: KeylessTarget,
+): Promise<{ unclaimedApp?: string; source: string; step: string }> {
+  const folder = await ctx.getUnlinkedFolder();
+  const step = unlinkedFolderNextStep(folder, { agent: isAgent() }).text;
+  const source = `\`${keyless.source}\``;
+  if (!appInNoAccount(folder)) return { source, step };
+  return { unclaimedApp: keylessLabel(keyless, await ctx.getKeylessInstance()), source, step };
+}
+
+/**
+ * The file plain keys' secret key comes from, for a check that names what the
+ * key runs without giving the step; undefined for an app in no account yet,
+ * which is called the accountless application (see `unlinkedKeyless`).
+ */
+async function plainKeysSource(
+  ctx: DoctorContext,
+  keyless: KeylessTarget,
+): Promise<string | undefined> {
+  return appInNoAccount(await ctx.getUnlinkedFolder()) ? undefined : `\`${keyless.source}\``;
 }
 
 export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
@@ -131,12 +154,14 @@ export async function checkLoggedIn(ctx: DoctorContext): Promise<CheckResult> {
     return check.pass("Logged in (token found in credential store)");
   }
 
-  // No account session doesn't mean the project is broken: an unclaimed
-  // accountless application is a legitimate, healthy way to run the CLI.
+  // No account session doesn't mean the project is broken: a secret key on
+  // disk runs the app, an unclaimed accountless one included.
   if (keyless) {
-    const instance = await ctx.getKeylessInstance();
+    const { unclaimedApp, source, step } = await unlinkedKeyless(ctx, keyless);
     return check.pass(
-      `Not logged in — running on the unclaimed accountless application ${keylessLabel(keyless, instance)}. ${await claimHint(ctx)}`,
+      unclaimedApp
+        ? `Not logged in — running on the unclaimed accountless application ${unclaimedApp}. ${step}`
+        : `Not logged in — this folder uses the secret key from ${source} and isn't linked. ${step}`,
     );
   }
 
@@ -201,9 +226,13 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
   const storedToken = await ctx.getToken();
   if (!storedToken) {
     const keyless = await ctx.getKeylessTarget();
-    return keyless
-      ? check.pass("No account session — not required for this accountless application")
-      : check.skip("no token");
+    if (!keyless) return check.skip("no token");
+    const source = await plainKeysSource(ctx, keyless);
+    return check.pass(
+      source
+        ? `No account session — not required: this folder uses the secret key from ${source}`
+        : "No account session — not required for this accountless application",
+    );
   }
 
   try {
@@ -222,19 +251,30 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
       );
       if (verified) return check.pass("Account access verified through the Clerk API");
 
-      // Same fallback whoami uses: an expired session doesn't strand a keyless
-      // project, so don't tell the user their setup is broken.
+      // Same fallback whoami uses: an expired session doesn't strand a project
+      // with a secret key on disk, so don't tell the user their setup is
+      // broken. Only an app in no account yet is called accountless (see
+      // `unlinkedKeyless`).
       const keyless = await ctx.getKeylessTarget();
       if (keyless) {
-        const instance = await ctx.getKeylessInstance();
-        return check.warn(
-          `Stored session is expired — falling back to the accountless application ${keylessLabel(keyless, instance)}`,
-          {
-            remedy:
-              "Run `clerk auth login` to re-authenticate your account (optional for accountless work).",
-            fixable: false,
-          },
-        );
+        const { unclaimedApp, source } = await unlinkedKeyless(ctx, keyless);
+        return unclaimedApp
+          ? check.warn(
+              `Stored session is expired — falling back to the accountless application ${unclaimedApp}`,
+              {
+                remedy:
+                  "Run `clerk auth login` to re-authenticate your account (optional for accountless work).",
+                fixable: false,
+              },
+            )
+          : check.warn(
+              `Stored session is expired — falling back to the secret key from ${source}`,
+              {
+                remedy:
+                  "Run `clerk auth login` to re-authenticate your account (optional while this folder uses its own secret key).",
+                fixable: false,
+              },
+            );
       }
 
       return check.fail("Token is expired or invalid", {
@@ -269,32 +309,35 @@ export async function checkProjectLinked(ctx: DoctorContext): Promise<CheckResul
     );
   }
 
-  // Unlinked isn't automatically broken: a project running on an unclaimed
-  // accountless application has nothing to link yet.
+  // Unlinked isn't automatically broken: a secret key on disk runs the app,
+  // and an unclaimed accountless one has nothing to link yet.
   const keyless = await ctx.getKeylessTarget();
   if (keyless) {
-    const instance = await ctx.getKeylessInstance();
-    const label = keylessLabel(keyless, instance);
+    const { unclaimedApp, source, step } = await unlinkedKeyless(ctx, keyless);
 
     // Someone with an account who hasn't linked this directory *could* reach
-    // the full account configuration — say so, unlike the fully unclaimed case.
+    // the full account configuration — say so, unlike the signed-out case.
+    // `clerk link` claims an init app first, and finds plain keys' app by key.
     if (await ctx.hasAccountCredentials()) {
       return check.warn(
-        `Not linked — using the accountless application ${label}, which covers fewer settings`,
-        {
-          remedy: "Run `clerk link` to use the full account configuration.",
-          fixable: true,
-        },
+        unclaimedApp
+          ? `Not linked — using the accountless application ${unclaimedApp}, which covers fewer settings`
+          : `Not linked — this folder uses the secret key from ${source}`,
+        { remedy: step, fixable: true },
       );
     }
 
     return check.pass(
-      `Not linked — running on the unclaimed accountless application ${label}. ${await claimHint(ctx)}`,
+      unclaimedApp
+        ? `Not linked — running on the unclaimed accountless application ${unclaimedApp}. ${step}`
+        : `Not linked — this folder uses the secret key from ${source}. ${step}`,
     );
   }
 
+  // No secret key to run on, but the folder may still hold an app (an init
+  // token, a publishable key, an SDK file) or an env file it couldn't read.
   return check.fail("Not linked to a Clerk application", {
-    remedy: "Run `clerk link` to associate this project with a Clerk app.",
+    remedy: unlinkedFolderNextStep(await ctx.getUnlinkedFolder(), { agent: isAgent() }).text,
   });
 }
 
@@ -302,12 +345,13 @@ export async function checkLinkedAppExists(ctx: DoctorContext): Promise<CheckRes
   const check = defineCheck(CHECK_NAME.linkedAppExists, ctx.fixes.link);
   if (!(await ctx.hasAccountCredentials())) {
     // This check is account-only — the Platform API application record has no
-    // keyless equivalent — so an unclaimed keyless project has nothing to skip
+    // keyless equivalent — so a project running on a secret key has nothing to skip
     // *over*, just nothing to verify.
     const keyless = await ctx.getKeylessTarget();
-    return check.skip(
-      keyless ? "accountless application, no linked app to verify" : "not authenticated",
-    );
+    if (!keyless) return check.skip("not authenticated");
+    const source = await plainKeysSource(ctx, keyless);
+    const runs = source ? `secret key from ${source}` : "accountless application";
+    return check.skip(`${runs}, no linked app to verify`);
   }
 
   const resolved = await ctx.getProfile();
@@ -338,9 +382,10 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
     // A linked profile's dev/prod instance IDs are an account-only concept —
     // the secret key on disk already addresses its one instance directly.
     const keyless = await ctx.getKeylessTarget();
-    return check.skip(
-      keyless ? "accountless application, no linked instances to verify" : "not authenticated",
-    );
+    if (!keyless) return check.skip("not authenticated");
+    const source = await plainKeysSource(ctx, keyless);
+    const runs = source ? `secret key from ${source}` : "accountless application";
+    return check.skip(`${runs}, no linked instances to verify`);
   }
 
   const resolved = await ctx.getProfile();
@@ -387,19 +432,31 @@ export async function checkInstances(ctx: DoctorContext): Promise<CheckResult> {
   }
 }
 
+/**
+ * The file to check: the first the app loads, in its framework's order, that
+ * names a Clerk key, else the first that exists. The fix, `clerk env pull`,
+ * may write `.env.development.local`, so reading only `.env.local` and `.env`
+ * could leave its own warning standing.
+ */
 async function findEnvFile(
   cwd: string,
 ): Promise<{ name: string; entries: Record<string, string> } | null> {
-  for (const candidate of [".env.local", ".env"]) {
+  const files = (await detectFramework(cwd))?.envLoadOrder ?? ENV_FILE_CANDIDATES;
+  const clerkNames = new Set([...CLERK_KEY_NAMES.publishable, ...CLERK_KEY_NAMES.secret]);
+  let firstExisting: { name: string; entries: Record<string, string> } | null = null;
+  for (const candidate of files) {
     const file = Bun.file(join(cwd, candidate));
     if (!(await file.exists())) continue;
     const entries: Record<string, string> = {};
     for (const line of parseEnvFile(await file.text())) {
       if (line.type === "entry") entries[line.key] = line.value;
     }
-    return { name: candidate, entries };
+    if (Object.keys(entries).some((key) => clerkNames.has(key))) {
+      return { name: candidate, entries };
+    }
+    firstExisting ??= { name: candidate, entries };
   }
-  return null;
+  return firstExisting;
 }
 
 export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {

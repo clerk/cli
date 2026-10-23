@@ -143,27 +143,22 @@ test("an unfinished `deploy status` is recorded as incomplete, not an error", as
     "test-telemetry.clerk.com": {},
   });
 
-  try {
-    await clerk.raw("deploy", "status");
-    // Set by the command rather than thrown, so the harness's own result
-    // reports 0 — the soft exit is on the process, which is what the run
-    // would exit with and what the event has to carry.
-    expect(process.exitCode).toBe(1);
+  const result = await clerk.raw("deploy", "status");
+  // Set by the command rather than thrown; the harness reads it back from the
+  // process, which is what the run would exit with and what the event has to
+  // carry.
+  expect(result.exitCode).toBe(1);
 
-    const bodies = telemetryEvents();
-    expect(bodies).toHaveLength(1);
-    const event = bodies[0]!.events[0]!;
-    expect(event.payload.command).toBe("deploy status");
-    expect(event.payload.outcome).toBe("incomplete");
-    expect(event.payload.exit_code).toBe(1);
-    expect(event.payload.stage).toBe("not_started");
-    // Nothing was thrown, so there is no code to carry — the two fields are
-    // unrelated, and `incomplete` is the whole answer.
-    expect(event.payload.error_code).toBeNull();
-  } finally {
-    // Bun ignores `process.exitCode = undefined`; only a number resets it.
-    process.exitCode = 0;
-  }
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  const event = bodies[0]!.events[0]!;
+  expect(event.payload.command).toBe("deploy status");
+  expect(event.payload.outcome).toBe("incomplete");
+  expect(event.payload.exit_code).toBe(1);
+  expect(event.payload.stage).toBe("not_started");
+  // Nothing was thrown, so there is no code to carry — the two fields are
+  // unrelated, and `incomplete` is the whole answer.
+  expect(event.payload.error_code).toBeNull();
 });
 
 // `clerk api` catches the API error to print its body, so the code reaches
@@ -179,22 +174,18 @@ test("a caught uncoded 404 from `clerk api` is recorded as api_not_found", async
     return new Response("404 page not found", { status: 404 });
   });
 
-  try {
-    await clerk.raw("api", "/organization_role", "--secret-key", "sk_test_123");
-    // Set by the command rather than thrown, so the harness's own result
-    // reports 0; the soft exit is on the process.
-    expect(process.exitCode).toBe(1);
+  const result = await clerk.raw("api", "/organization_role", "--secret-key", "sk_test_123");
+  // Set by the command rather than thrown; the harness reads it back from the
+  // process.
+  expect(result.exitCode).toBe(1);
 
-    const bodies = telemetryEvents();
-    expect(bodies).toHaveLength(1);
-    const event = bodies[0]!.events[0]!;
-    expect(event.payload.command).toBe("api");
-    expect(event.payload.outcome).toBe("error");
-    expect(event.payload.exit_code).toBe(1);
-    expect(event.payload.error_code).toBe("api_not_found");
-  } finally {
-    process.exitCode = 0;
-  }
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  const event = bodies[0]!.events[0]!;
+  expect(event.payload.command).toBe("api");
+  expect(event.payload.outcome).toBe("error");
+  expect(event.payload.exit_code).toBe(1);
+  expect(event.payload.error_code).toBe("api_not_found");
 });
 
 // Drives the real program rather than the unit tests' capture helper, so it
@@ -232,20 +223,17 @@ test("maps a soft failure (process.exitCode set without throwing) to outcome err
   process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
   http.mock({ "test-telemetry.clerk.com": {} });
 
-  try {
-    // Simulates commands that report failure via process.exitCode instead of throwing.
-    process.exitCode = 1;
-    await clerk.raw("webhooks", "token", "--json");
+  // Simulates commands that report failure via process.exitCode instead of
+  // throwing. The harness lets a code set before the run reach it, and resets
+  // it afterwards.
+  process.exitCode = 1;
+  await clerk.raw("webhooks", "token", "--json");
 
-    const bodies = telemetryEvents();
-    expect(bodies).toHaveLength(1);
-    const event = bodies[0]!.events[0]!;
-    expect(event.payload.outcome).toBe("error");
-    expect(event.payload.exit_code).toBe(1);
-  } finally {
-    // Bun ignores `process.exitCode = undefined`; only a number resets it.
-    process.exitCode = 0;
-  }
+  const bodies = telemetryEvents();
+  expect(bodies).toHaveLength(1);
+  const event = bodies[0]!.events[0]!;
+  expect(event.payload.outcome).toBe("error");
+  expect(event.payload.exit_code).toBe(1);
 });
 
 test("an invalid --mode value still produces an error event", async () => {

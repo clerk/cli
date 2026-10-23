@@ -23,12 +23,13 @@ Authentication is resolved in this order:
 
 - `--secret-key <key>` (explicit)
 - `--app <id>` plus Platform API auth to resolve the instance secret key (explicit)
-- this project's own accountless secret key — `CLERK_SECRET_KEY`, `.env.local` (or the framework's detected env var name), or the SDK's own `.clerk/.tmp/keyless.json`
+- `CLERK_SECRET_KEY` exported in the shell
+- the secret key this folder's app loads, read the way every accountless command reads it (see [accountless mode in `config`'s README](../config/README.md#accountless-mode)): the framework's env files in its load order, or the SDK's own `.clerk/.tmp/keyless.json` when the folder holds no plain key. Env files that hold different secret keys give none.
 - a linked project profile via `clerk link`
 
 The third step is what makes `clerk users` work with no login and no Platform API auth on an **unclaimed accountless application** — the one an SDK creates for itself on first `next dev` (or similar) with no keys configured. It only applies when the directory isn't linked and `--app` wasn't passed, since either of those names an explicit destination the on-disk key might not belong to.
 
-The users commands talk to the instance's Backend API. Identifier and required-field rules are enforced by BAPI, so any BAPI secret key (via `CLERK_SECRET_KEY`, `.env.local`, `--secret-key`, or `--app`-resolved) is enough — no `applications:manage` Platform API scope is required.
+The users commands talk to the instance's Backend API. Identifier and required-field rules are enforced by BAPI, so any BAPI secret key (via `CLERK_SECRET_KEY`, an env file, `--secret-key`, or `--app`-resolved) is enough — no `applications:manage` Platform API scope is required.
 
 ## Interactive mode
 
@@ -129,11 +130,11 @@ In agent mode the user-id is required (no interactive picker) and output is a JS
 
 `--secret-key` chooses the Backend API key used for user lookup. `users open` still requires an app target to resolve the dashboard URL, either from `--app`, a linked project, or the human-mode app picker. Use `--instance` when you want something other than the default development instance.
 
-#### On an unclaimed accountless application
+#### In a folder that runs on its own secret key
 
-This is the one command in the family that an unclaimed accountless application cannot satisfy, and the reason is structural rather than a missing code path: a dashboard link is `/apps/{appId}/instances/{instanceId}/users/{userId}`, and an application has no `appId` until somebody claims it.
+This is the one command in the family that a folder running on its own secret key cannot satisfy: a dashboard link is `/apps/{appId}/instances/{instanceId}/users/{userId}`, and the secret key doesn't give the application's ID.
 
-Rather than report the generic "no Clerk project linked", `users open` detects the accountless project and says so — because the two remedies that message implies, `clerk link` and `--app`, both want an application ID that does not exist yet. The error names `clerk auth login` to claim the application, and `clerk api /users/<id>` to read the user right now without claiming anything. Passing `--app` explicitly skips this check: naming an application says the request isn't about the accountless one in this directory.
+Rather than report the generic "no Clerk project linked", `users open` says so, gives the step for what the folder holds (from `lib/unlinked-folder.ts`, e.g. `clerk link`, which claims an app `clerk init` created or finds plain keys' app by its publishable key), then says to run `clerk users open <id>` again (with `--print` if the run had it; never `--secret-key`), and offers `clerk api /users/<id>` to read the user right now. It calls the app unclaimed only for an app in no account yet (an init app, or an SDK app whose claim link works). Passing `--app` explicitly skips this check: naming an application says the request isn't about the one in this directory.
 
 ## API Endpoints
 

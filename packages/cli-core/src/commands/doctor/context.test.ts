@@ -6,8 +6,13 @@ import {
   keylessTargetStubs,
   stubFetch,
 } from "../../test/lib/stubs.ts";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import * as config from "../../lib/config.ts";
+import * as localKeys from "../../lib/local-keys.ts";
 import type { Application } from "../../lib/plapi.ts";
+import { useCleanClerkKeyEnv } from "../../test/lib/clerk-key-env.ts";
 
 const mockGetToken = mock();
 
@@ -41,6 +46,12 @@ mock.module("../../lib/bapi.ts", () => ({
 let mockAppResponse: Application | Application[] | null = null;
 let mockAppError: Error | null = null;
 const mockFetch = mock();
+
+// The link fix's `clerk link`: what it reports decides whether the fix applied.
+const mockLink = mock();
+mock.module("../link/index.ts", () => ({
+  link: (...args: unknown[]) => mockLink(...args),
+}));
 
 const { createDoctorContext } = await import("./context.ts");
 
@@ -239,6 +250,132 @@ describe("createDoctorContext", () => {
       const ctx = createDoctorContext();
       expect(await ctx.getKeylessTarget()).toBeUndefined();
     });
+
+    // Reading again would throw the file error into every check that asks.
+    describe("after the folder's keys couldn't be read", () => {
+      useCleanClerkKeyEnv();
+      const originalCwd = process.cwd;
+      let dir: string;
+      let readFolderKeys: ReturnType<typeof spyOn>;
+
+      beforeEach(async () => {
+        dir = await mkdtemp(join(tmpdir(), "clerk-doctor-unreadable-"));
+        process.cwd = () => dir;
+        readFolderKeys = spyOn(localKeys, "readFolderKeys").mockRejectedValue(
+          new Error("EACCES: permission denied, open '.env'"),
+        );
+      });
+
+      afterEach(async () => {
+        readFolderKeys.mockRestore();
+        process.cwd = originalCwd;
+        await rm(dir, { recursive: true, force: true });
+      });
+
+      test("resolves from the exported secret key only", async () => {
+        process.env.CLERK_SECRET_KEY = "sk_test_exported";
+
+        await createDoctorContext().getKeylessTarget();
+
+        expect(mockResolveKeylessTarget).toHaveBeenCalledWith({
+          cwd: dir,
+          folderKeys: {
+            secretKey: {
+              value: "sk_test_exported",
+              name: "CLERK_SECRET_KEY",
+              source: "CLERK_SECRET_KEY env var",
+            },
+          },
+        });
+      });
+
+      test("resolves from no keys when none is exported", async () => {
+        await createDoctorContext().getKeylessTarget();
+
+        expect(mockResolveKeylessTarget).toHaveBeenCalledWith({ cwd: dir, folderKeys: {} });
+      });
+    });
+  });
+
+  // The classifier decides from the folder's own reads, each once, and never
+  // changes the folder: doctor leaves the project exactly as found.
+  describe("getUnlinkedFolder", () => {
+    useCleanClerkKeyEnv();
+    const originalCwd = process.cwd;
+    let dir: string;
+
+    beforeEach(async () => {
+      dir = await mkdtemp(join(tmpdir(), "clerk-doctor-folder-"));
+      process.cwd = () => dir;
+      delete process.env.CLERK_PLATFORM_API_KEY;
+    });
+
+    afterEach(async () => {
+      process.cwd = originalCwd;
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    const write = (file: string, content: string) => Bun.write(join(dir, file), content);
+    const PK = "pk_test_Zm9sZGVyLmNsZXJrLmFjY291bnRzLmRldiQ";
+
+    test("returns the same promise, and reads the folder's keys once", async () => {
+      await write(".env", `CLERK_PUBLISHABLE_KEY=${PK}\nCLERK_SECRET_KEY=sk_test_folder\n`);
+
+      const ctx = createDoctorContext();
+      const first = ctx.getUnlinkedFolder();
+
+      expect(ctx.getUnlinkedFolder()).toBe(first);
+      expect(ctx.getFolderKeys()).toBe(ctx.getFolderKeys());
+      expect(await first).toMatchObject({
+        kind: "unknown_owner",
+        credential: "none",
+        publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env" },
+      });
+    });
+
+    test("the API key wins, without reading the stored session", async () => {
+      process.env.CLERK_PLATFORM_API_KEY = "test_key";
+      mockGetToken.mockResolvedValue("stored_token");
+
+      const folder = await createDoctorContext().getUnlinkedFolder();
+
+      expect(folder.credential).toBe("api_key");
+      expect(mockGetToken).not.toHaveBeenCalled();
+    });
+
+    test("a stored session counts as signed in", async () => {
+      mockGetToken.mockResolvedValue("stored_token");
+
+      expect((await createDoctorContext().getUnlinkedFolder()).credential).toBe("session");
+    });
+
+    test("an init token makes it an init app, and the token file stays", async () => {
+      await write(
+        ".clerk/keyless.json",
+        JSON.stringify({ claimToken: "claim_token", createdAt: new Date().toISOString() }),
+      );
+
+      expect((await createDoctorContext().getUnlinkedFolder()).kind).toBe("init_app");
+      expect(await Bun.file(join(dir, ".clerk", "keyless.json")).exists()).toBe(true);
+    });
+
+    // The claim-link check is part of the facts, so an SDK app whose claim link
+    // can't be used never looks claimable.
+    test("an SDK file whose claim URL isn't https: an SDK app with no usable claim link", async () => {
+      await write(
+        ".clerk/.tmp/keyless.json",
+        JSON.stringify({
+          publishableKey: PK,
+          secretKey: "sk_test_sdk",
+          claimUrl: "http://dashboard.clerk.com/apps/claim?token=x",
+        }),
+      );
+
+      expect(await createDoctorContext().getUnlinkedFolder()).toMatchObject({
+        kind: "sdk_app",
+        unusable: { findableByKey: true },
+      });
+    });
   });
 
   describe("getKeylessInstance", () => {
@@ -294,17 +431,34 @@ describe("createDoctorContext", () => {
     test("fix factories return FixAction objects with labels", () => {
       const ctx = createDoctorContext();
 
+      // Exact: `doctor --fix` lists them, and agents may match on them.
       const loginFix = ctx.fixes.login();
-      expect(loginFix.label).toContain("clerk auth login");
+      expect(loginFix.label).toBe("Log in with clerk auth login");
       expect(typeof loginFix.run).toBe("function");
 
       const linkFix = ctx.fixes.link();
-      expect(linkFix.label).toContain("clerk link");
+      expect(linkFix.label).toBe("Link project with clerk link");
       expect(typeof linkFix.run).toBe("function");
 
       const envPullFix = ctx.fixes.envPull();
-      expect(envPullFix.label).toContain("clerk env pull");
+      expect(envPullFix.label).toBe("Pull env vars with clerk env pull");
       expect(typeof envPullFix.run).toBe("function");
+    });
+
+    test("the link fix applies when `clerk link` links the folder", async () => {
+      mockLink.mockResolvedValue({ status: "linked", appId: "app_123" });
+
+      await createDoctorContext().fixes.link().run();
+    });
+
+    // A person is claiming the SDK's app in the Dashboard; the folder isn't
+    // linked yet, so the fix didn't apply.
+    test("the link fix isn't applied when `clerk link` opened a claim page instead", async () => {
+      mockLink.mockResolvedValue({ status: "claim_page_opened" });
+
+      await expect(createDoctorContext().fixes.link().run()).rejects.toThrow(
+        "claim the app on the page that opened, then run `clerk link` again",
+      );
     });
   });
 });

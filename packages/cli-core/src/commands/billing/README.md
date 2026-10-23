@@ -4,11 +4,15 @@ Toggle Clerk billing for organizations and/or users on the linked instance.
 The handlers are wired to top-level `clerk enable billing` and `clerk disable
 billing` commands.
 
-**Requires a claimed application.** Unlike `clerk enable/disable orgs`, these
-commands cannot run against an unclaimed accountless application: billing settings
-exist only in the account-level config document, and Clerk's Backend API exposes
-no billing resource an instance secret key could reach. In an accountless project both
-commands exit with an `auth_required` error pointing at `clerk auth login`.
+**Requires a linked application.** Unlike `clerk enable/disable orgs`, these
+commands cannot run on the folder's secret key alone: billing settings exist only
+in the account-level config document, and Clerk's Backend API exposes no billing
+resource an instance secret key could reach. In a folder that isn't linked but
+holds a secret key, both commands exit with an `auth_required` error that gives
+the step for what the folder holds (from `lib/unlinked-folder.ts`), e.g.
+`clerk link`, which claims an app `clerk init` created or finds plain keys' app by
+its publishable key. The error calls the app unclaimed only for an app in no
+account yet (an init app, or an SDK app whose claim link works).
 
 For arbitrary billing config edits (plans, trials, payment-method requirements)
 use `clerk config patch --json '{"billing":{...}}'` until a dedicated

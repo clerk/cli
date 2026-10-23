@@ -7,6 +7,13 @@ import { AuthError, errorMessage, withApiContext } from "../../lib/errors.ts";
 import { profileLabel, resolveProfile } from "../../lib/config.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
 import { isAgent } from "../../mode.ts";
+import {
+  appInNoAccount,
+  readUnlinkedFolder,
+  rerunOf,
+  unlinkedFolderNextStep,
+  unreadableEnvFilesError,
+} from "../../lib/unlinked-folder.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import {
   findLocalPublishableKey,
@@ -50,17 +57,17 @@ type Identity =
     };
 
 export async function whoami(options: WhoamiOptions = {}) {
-  const identity = await resolveIdentity();
+  const identity = await resolveIdentity(options);
 
   if (options.json || isAgent()) {
     log.data(JSON.stringify(toJson(identity), null, 2));
     return;
   }
 
-  render(identity);
+  await render(identity);
 }
 
-async function resolveIdentity(): Promise<Identity> {
+async function resolveIdentity(options: WhoamiOptions): Promise<Identity> {
   // Stored credentials that can no longer be refreshed are, for this command's
   // purposes, the same as no credentials: there is no account to report. Ask the
   // question in a way that can't throw, so an expired session falls through to
@@ -82,7 +89,7 @@ async function resolveIdentity(): Promise<Identity> {
         reason: (await hasStoredCredentials()) ? "session_expired" : "not_logged_in",
       });
     }
-    return describeKeyless(keyless);
+    return describeKeyless(keyless, options);
   }
 
   let userInfo;
@@ -105,12 +112,19 @@ async function resolveIdentity(): Promise<Identity> {
   // for half the command surface. A linked directory isn't automatically safe
   // from this either — resolveBapiSecretKey lets an exported CLERK_SECRET_KEY
   // win over even a linked profile, so check for that specific override
-  // instead of skipping discovery outright.
-  const localKey = profile
-    ? process.env.CLERK_SECRET_KEY
-      ? { source: "CLERK_SECRET_KEY env var" }
-      : undefined
-    : await findLocalSecretKey(process.cwd());
+  // instead of skipping discovery outright. The exported key wins first, as in
+  // resolveBapiSecretKey, even where the folder's reader would pick another
+  // name (Nuxt's own key in `.env`).
+  const localKey = process.env.CLERK_SECRET_KEY
+    ? { source: "CLERK_SECRET_KEY env var" }
+    : profile
+      ? undefined
+      : await findLocalSecretKey(process.cwd()).catch((error: unknown) => {
+          // Best-effort, like the profile above: an env file the CLI can't read
+          // doesn't stop whoami from reporting the account.
+          log.debug(`whoami: couldn't read this folder's keys (${errorMessage(error)})`);
+          return undefined;
+        });
 
   return {
     kind: "account",
@@ -120,7 +134,7 @@ async function resolveIdentity(): Promise<Identity> {
   };
 }
 
-async function describeKeyless(keyless: KeylessTarget): Promise<Identity> {
+async function describeKeyless(keyless: KeylessTarget, options: WhoamiOptions): Promise<Identity> {
   const instance = await withSpinner("Fetching instance info...", async () => {
     const response = await withApiContext(
       bapiRequest({ method: "GET", path: "/v1/instance", secretKey: keyless.secretKey }),
@@ -129,7 +143,15 @@ async function describeKeyless(keyless: KeylessTarget): Promise<Identity> {
     return response.body as { id?: string; environment_type?: string };
   });
 
-  const publishableKey = (await findLocalPublishableKey(process.cwd())) ?? null;
+  // An exported secret key is found without the env files; with one the CLI
+  // can't read, which publishable key the app loads is untold.
+  const located = await findLocalPublishableKey(process.cwd()).catch(async (error: unknown) => {
+    throw await unreadableEnvFilesError(process.cwd(), error, {
+      lead: "No Clerk project linked to this directory.",
+      rerun: rerunOf(["clerk whoami", options.json && "--json"]),
+    });
+  });
+  const publishableKey = located?.value ?? null;
   const publishableKeyMismatch = publishableKey
     ? await checkKeyPairMismatch(keyless, publishableKey)
     : false;
@@ -196,16 +218,19 @@ function toJson(identity: Identity): Record<string, unknown> {
   };
 }
 
-function render(identity: Identity): void {
+async function render(identity: Identity): Promise<void> {
   if (identity.kind === "keyless") {
     log.data(identity.instanceId ?? "unknown instance");
+    // Only an app in no account yet is called unclaimed: plain keys, or an SDK
+    // app whose claim link can't be used, may already be in one. The next
+    // step is the one every other command gives this folder.
+    const folder = await readUnlinkedFolder(process.cwd());
     log.info(
-      `Not logged in — running on an unclaimed accountless application (key from \`${identity.keySource}\`)`,
+      appInNoAccount(folder)
+        ? `Not logged in — running on an unclaimed accountless application (key from \`${identity.keySource}\`)`
+        : `Not logged in — this folder uses the secret key from \`${identity.keySource}\` and isn't linked`,
     );
-    // Not NEXT_STEPS.WHOAMI: `clerk link` needs an application in an account,
-    // which an unclaimed app by definition isn't — the same dead end
-    // `users open`, `doctor`, and `open` all refuse to point at.
-    printNextSteps(NEXT_STEPS.WHOAMI_KEYLESS);
+    printNextSteps([unlinkedFolderNextStep(folder, { agent: false }).text]);
     return;
   }
 
