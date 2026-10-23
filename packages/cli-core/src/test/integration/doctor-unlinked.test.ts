@@ -87,7 +87,7 @@ test.each([
   [
     "Authentication valid",
     "pass",
-    "No account session — not required: the secret key from `.env` works",
+    "No account session — not required: this folder uses the secret key from `.env`",
   ],
   ["Application reachable", "warn", "Skipped (secret key from `.env`, no linked app to verify)"],
   ["Instance IDs", "warn", "Skipped (secret key from `.env`, no linked instances to verify)"],

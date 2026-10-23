@@ -69,10 +69,12 @@ command for what the folder holds. Statuses and fix labels don't depend on it.
     call the app unclaimed: such an app may already be in an account.
 - No token, a secret key present → Token validity **passes**: no session is
   needed. As above, only an app in no account yet is called accountless;
-  otherwise it says the secret key from its file works.
-- Stored session expired, a secret key present → **warn** (not fail): the key
-  still works, so logging in again is optional. As above, only an app in no
-  account yet is called accountless; otherwise the key is named by its file.
+  otherwise it names the file the folder's secret key comes from, without
+  claiming the key works: no check sends a request with a plain key.
+- Stored session expired, a secret key present → **warn** (not fail): the
+  folder runs on its own secret key, so logging in again is optional. As
+  above, only an app in no account yet is called accountless; otherwise the key
+  is named by its file.
 - Signed in (has account credentials) but this directory isn't linked, a secret
   key present → **warn**, with the `clerk link` fix: the account could reach
   the fuller configuration by linking. The remedy is the step for what the

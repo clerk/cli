@@ -225,7 +225,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
     const source = await plainKeysSource(ctx, keyless);
     return check.pass(
       source
-        ? `No account session — not required: the secret key from ${source} works`
+        ? `No account session — not required: this folder uses the secret key from ${source}`
         : "No account session — not required for this accountless application",
     );
   }
@@ -266,7 +266,7 @@ export async function checkTokenValid(ctx: DoctorContext): Promise<CheckResult> 
               `Stored session is expired — falling back to the secret key from ${source}`,
               {
                 remedy:
-                  "Run `clerk auth login` to re-authenticate your account (optional: the secret key still works).",
+                  "Run `clerk auth login` to re-authenticate your account (optional while this folder uses its own secret key).",
                 fixable: false,
               },
             );

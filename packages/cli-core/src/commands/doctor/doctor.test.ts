@@ -645,12 +645,14 @@ describe("checkTokenValid", () => {
     {
       kind: "plain keys",
       folder: PLAIN_KEYS,
-      message: "No account session — not required: the secret key from `.env.local` works",
+      message:
+        "No account session — not required: this folder uses the secret key from `.env.local`",
     },
     {
       kind: "an SDK app with no usable claim link",
       folder: SDK_NO_CLAIM_LINK,
-      message: "No account session — not required: the secret key from `.env.local` works",
+      message:
+        "No account session — not required: this folder uses the secret key from `.env.local`",
     },
   ])(
     "pass (not skip) when no token but a secret key is present: $kind",
@@ -683,7 +685,7 @@ describe("checkTokenValid", () => {
       message: ["Stored session is expired", "secret key from `.env.local`"],
       messageNot: ["accountless"],
       remedy:
-        "Run `clerk auth login` to re-authenticate your account (optional: the secret key still works).",
+        "Run `clerk auth login` to re-authenticate your account (optional while this folder uses its own secret key).",
     },
   ])(
     "warn (not fail) when token is expired but a secret key is present: $kind",
