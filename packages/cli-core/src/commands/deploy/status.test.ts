@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { PlapiError } from "../../lib/errors.ts";
 import { captureTelemetryPayload } from "../../test/lib/stubs.ts";
 import type { LiveDeploySnapshot } from "./status.ts";
+import { domainVerification } from "./domain-verification.ts";
 
 const mockFetchApplication = mock();
 const mockListApplicationDomains = mock();
@@ -33,6 +34,7 @@ const {
   buildInterruptedDeployStatusReport,
   deployNextStep,
   loadInitialDeployStatus,
+  loadProductionDomain,
   resolveDeployState,
   resolveLiveDeploySnapshot,
   waitForDeployStatus,
@@ -451,10 +453,16 @@ describe("waitForDeployStatus", () => {
     mockGetApplicationDomainStatus.mockResolvedValue(completeStatus);
 
     const observed: unknown[] = [];
-    const outcome = await waitForDeployStatus("app_1", "dmn_1", "example.com", {
-      ...passthroughHandlers,
-      onStatus: (polled) => observed.push(polled),
-    });
+    const outcome = await waitForDeployStatus(
+      "app_1",
+      "dmn_1",
+      "example.com",
+      domainVerification(false),
+      {
+        ...passthroughHandlers,
+        onStatus: (polled) => observed.push(polled),
+      },
+    );
 
     expect(mockTriggerApplicationDomainDNSCheck).toHaveBeenCalledWith("app_1", "dmn_1");
     expect(mockTriggerApplicationDomainDNSCheck.mock.invocationCallOrder[0]).toBeLessThan(
@@ -475,7 +483,13 @@ describe("waitForDeployStatus", () => {
     );
     mockGetApplicationDomainStatus.mockResolvedValue(completeStatus);
 
-    const outcome = await waitForDeployStatus("app_1", "dmn_1", "example.com", passthroughHandlers);
+    const outcome = await waitForDeployStatus(
+      "app_1",
+      "dmn_1",
+      "example.com",
+      domainVerification(false),
+      passthroughHandlers,
+    );
 
     expect(outcome).toEqual({
       verified: true,
@@ -533,6 +547,7 @@ describe("recording observations", () => {
     productionInstanceId: "ins_prod",
     productionDomainId: "dmn_1",
     domain: "example.com",
+    verification: domainVerification(false),
     oauthProviders: ["google"],
     oauthProviderDescriptors: [],
     completedOAuthProviders: ["google"],
@@ -769,6 +784,7 @@ describe("buildDeployStatusReport", () => {
     productionInstanceId: "ins_prod",
     productionDomainId: "dmn_1",
     domain: "example.com",
+    verification: domainVerification(false),
     oauthProviders: ["google", "github"],
     oauthProviderDescriptors: [],
     completedOAuthProviders: ["google"],
@@ -783,6 +799,56 @@ describe("buildDeployStatusReport", () => {
     unsupportedOAuthProviders: [],
     pending: { type: "oauth" as const, provider: "github" },
   } satisfies LiveDeploySnapshot;
+
+  test("a clerk.app domain reports clerkManaged with no records and an SSL-only next action", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: {
+          ...activeSnapshot,
+          domain: "acme.clerk.app",
+          verification: domainVerification(true),
+          cnameTargets: [],
+          completedOAuthProviders: ["google", "github"],
+          componentStatus: { dns: true, ssl: false, mail: true },
+          pending: { type: "dns" as const },
+        },
+      },
+      null,
+    );
+
+    expect(report.clerkManaged).toBe(true);
+    expect(report.state).toBe("domain_pending");
+    expect(report.pendingDnsRecords).toEqual([]);
+    expect(report.nextAction).toStartWith("SSL certificate still pending for acme.clerk.app.");
+  });
+
+  test("a complete clerk.app deploy says to sign up on the deployed app", () => {
+    const report = buildDeployStatusReport(
+      {
+        kind: "active",
+        snapshot: {
+          ...activeSnapshot,
+          domain: "acme.clerk.app",
+          verification: domainVerification(true),
+          cnameTargets: [],
+          completedOAuthProviders: ["google", "github"],
+          domainComplete: true,
+          componentStatus: { dns: true, ssl: true, mail: true },
+          pending: undefined,
+        },
+      },
+      null,
+    );
+
+    expect(report.state).toBe("complete");
+    expect(report.nextAction).toContain("sign up on your deployed app to confirm");
+    expect(report.nextAction).not.toContain("sign up at https://acme.clerk.app");
+    expect(report.nextAction).toContain(
+      "A web app also needs its hosting domain, such as acme.netlify.app, added with `clerk deploy add-domain <domain>`",
+    );
+    expect(report.nextAction).toContain("https://<domain>/__clerk");
+  });
 
   test("not_started reports incomplete with deploy next action", () => {
     const report = buildDeployStatusReport({ kind: "not_started" }, null);
@@ -1811,7 +1877,7 @@ vercel() {
 
     expect(report.state).toBe("domain_pending");
     expect(report.nextAction).toContain(
-      "SSL certificate still pending for example.com. Clerk issues it automatically now that DNS is verified; re-run `clerk deploy status` in a few minutes.",
+      "SSL certificate still pending for example.com. Clerk issues it automatically; re-run `clerk deploy status` in a few minutes.",
     );
     expect(report.nextAction).not.toContain("not found yet");
     // DNS is verified in this state, so the old "DNS propagation can take
@@ -1943,6 +2009,7 @@ describe("report urls", () => {
     productionInstanceId: "ins_prod",
     productionDomainId: "dmn_1",
     domain: "example.com",
+    verification: domainVerification(false),
     oauthProviders: [],
     oauthProviderDescriptors: [],
     completedOAuthProviders: [],
@@ -1989,6 +2056,7 @@ describe("deployNextStep", () => {
     complete: false,
     state: "domain_pending" as const,
     domain: "example.com",
+    clerkManaged: false,
     productionInstanceId: "ins_prod",
     domainStatus: { dns: "pending", ssl: "pending", mail: "pending" } as const,
     pendingDnsRecords: [
@@ -2047,5 +2115,43 @@ describe("deployNextStep", () => {
   test("the agent sentence is rendered from the step the report classifies", () => {
     const report = buildDeployStatusReport({ kind: "not_started" }, null);
     expect(report.nextAction).toBe(agentNextAction(deployNextStep(report), "clerk"));
+  });
+});
+
+describe("loadProductionDomain", () => {
+  const row = (name: string, extra: Record<string, unknown> = {}) => ({
+    object: "domain",
+    id: `dmn_${name}`,
+    name,
+    is_satellite: false,
+    is_provider_domain: false,
+    frontend_api_url: `https://clerk.${name}`,
+    development_origin: "",
+    ...extra,
+  });
+
+  test("picks the primary domain over an older one added first", async () => {
+    mockListApplicationDomains.mockResolvedValue({
+      data: [
+        row("acme.clerk.app", { is_clerk_managed: true, is_primary: false }),
+        row("example.com", { is_primary: true }),
+      ],
+      total_count: 2,
+    });
+
+    const domain = await loadProductionDomain({ appId: "app_1" } as never);
+
+    expect(domain?.name).toBe("example.com");
+  });
+
+  test("falls back to the first non-satellite domain when no row says it is primary", async () => {
+    mockListApplicationDomains.mockResolvedValue({
+      data: [row("sat.example.com", { is_satellite: true }), row("example.com")],
+      total_count: 2,
+    });
+
+    const domain = await loadProductionDomain({ appId: "app_1" } as never);
+
+    expect(domain?.name).toBe("example.com");
   });
 });

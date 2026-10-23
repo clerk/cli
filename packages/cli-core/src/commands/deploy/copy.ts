@@ -1,6 +1,7 @@
 import { bold, cyan, dim, green, yellow } from "../../lib/color.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
 import type { NativeAppleReadinessIssue } from "./providers.ts";
+import type { DomainVerification } from "./domain-verification.ts";
 import { buildDashboardUrl } from "../../lib/environment.ts";
 import { wrap } from "../../lib/wrap.ts";
 
@@ -25,21 +26,44 @@ re-run it at any time to resume where you left off.
 
 When run by an agent (or without a TTY), it never prompts. It prints a JSON
 status report with the current state and a \`nextAction\` field saying what to
-do next, and creates the production instance only when \`--domain\` is passed.
-\`clerk deploy status\` prints the same report; add \`--wait\` to keep checking
-until DNS, SSL, and email DNS are verified.`;
+do next, and creates the production instance only when \`--domain\` or
+\`--clerk-app\` is passed. \`clerk deploy status\` prints the same report; add
+\`--wait\` to keep checking until DNS, SSL, and email DNS are verified.
 
-export const INTRO_PREAMBLE = `This will prepare your linked Clerk app for production by cloning your
+\`--clerk-app <name>\` uses a free <name>.clerk.app domain without prompting,
+if your app can. It has no DNS records to add. A hosting domain such as
+acme.vercel.app, typed at the prompt or passed as \`--domain\`, gets a free
+clerk.app domain as its primary and is added beside it as a hosting domain.
+
+\`clerk deploy add-domain <domain>\` adds a domain you own, such as acme.com,
+and prints its DNS records, or your app's domain on a hosting provider, such
+as acme.vercel.app, and prints how to serve Clerk there through a /__clerk
+route in your app.
+
+\`clerk deploy use-domain <domain>\` makes an added domain you own the
+primary domain, or switches back to clerk.app. Run it again until the domain
+is ready. \`clerk deploy domains\` lists the domains, and
+\`clerk deploy remove-domain <domain>\` removes one.`;
+
+const OWN_DOMAIN_NEED = `  - A domain you own where you can add DNS records (example.com, or a
+    subdomain like app.example.com). The URL a hosting provider generated
+    for your deployment won't work here.`;
+
+const OWN_OR_CLERK_APP_DOMAIN_NEED = `  - A domain you own where you can add DNS records, or a name for a free
+    <name>.clerk.app domain, which needs no DNS records.`;
+
+export function introPreamble(options: { clerkAppOffered: boolean }): string {
+  const domainNeed = options.clerkAppOffered ? OWN_OR_CLERK_APP_DOMAIN_NEED : OWN_DOMAIN_NEED;
+  return `This will prepare your linked Clerk app for production by cloning your
 development instance into a new production instance and walking you through
 the setup the dashboard would otherwise guide you through.
 
 Before you begin you will need:
-  - A domain you own where you can add DNS records (example.com, or a
-    subdomain like app.example.com). The URL a hosting provider generated
-    for your deployment won't work here.
+${domainNeed}
   - OAuth credentials for any social providers you have enabled in dev.
 
 ${dim("Reference: https://clerk.com/docs/guides/development/deployment/production")}`;
+}
 
 export function printPlan(appLabel: string, steps: readonly DeployPlanStep[]): string[] {
   return [
@@ -98,6 +122,31 @@ export function productionDnsHosts(domain: string): string[] {
     mail,
     `clk._domainkey.${domain}`,
     `clk2._domainkey.${domain}`,
+  ];
+}
+
+export const CLERK_APP_WEB_APP_NOTE =
+  "A web app also needs its hosting domain, such as acme.netlify.app, added with `clerk deploy add-domain <domain>`, and the Clerk proxy served at https://<domain>/__clerk.";
+
+export function clerkAppCreationSummary(domain: string): string[] {
+  return [
+    ...wrap(`Clerk will set up ${cyan(domain)} for you. There are no DNS records to add.`),
+    ...wrap(CLERK_APP_WEB_APP_NOTE),
+    "",
+    "This will create a Clerk production instance for your application.",
+  ];
+}
+
+export function hostingOnClerkAppNotice(host: string): string[] {
+  return wrap(`${host} looks like a hosting domain, so your app gets a free clerk.app domain.`);
+}
+
+export function hostingCreationSummary(domain: string, host: string): string[] {
+  return [
+    ...wrap(`Clerk will set up ${cyan(domain)} for you. There are no DNS records to add.`),
+    ...wrap(`${cyan(host)} is added beside it as a hosting domain.`),
+    "",
+    "This will create a Clerk production instance for your application.",
   ];
 }
 
@@ -404,9 +453,11 @@ export function deployComponentLabels(
  * instance is created: DNS propagation, SSL issuance via Let's Encrypt, and
  * email DNS records. Each value comes from the same domain status response.
  */
-export function deployComponentStatus(status: DeployComponentStatus): string {
-  const mark = (ok: boolean) => (ok ? green("✓") : yellow("pending"));
-  return `DNS: ${mark(status.dns)}  SSL: ${mark(status.ssl)}  Email DNS: ${mark(status.mail)}`;
+export function deployComponentStatus(
+  status: DeployComponentStatus,
+  verification: DomainVerification,
+): string {
+  return verification.statusRow(status, (ok) => (ok ? green("✓") : yellow("pending")));
 }
 
 export function deployStatusRetryMessage(
@@ -501,7 +552,7 @@ export function deployStatusPendingFooter(
       ...wrap(`SSL certificate still pending for ${domain}.`),
       "",
       ...wrap(
-        `Clerk issues it automatically now that DNS is verified; choose Check again below in a few minutes. ${resume}`,
+        `Clerk issues it automatically; choose Check again below in a few minutes. ${resume}`,
       ),
     ];
   }
@@ -561,16 +612,24 @@ export function nextStepsBody(
   productionInstanceId: string,
   domain: string,
   domainStatus: "verified" | "pending",
+  verification: DomainVerification,
   appleProject = false,
 ): string {
   // Until DNS is verified the domain doesn't resolve, so "sign up there"
   // would send the user to a page that doesn't exist yet.
   // Wrapped here, not by hand: the domain's length moves the break.
+  const signUp = verification.signUpTarget(domain);
   const step3 = wrap(
     domainStatus === "verified"
-      ? `  3. Redeploy your app, then sign up at https://${domain} to confirm it works`
-      : `  3. Run \`clerk deploy\` again once the domain is verified, then redeploy your app and sign up at https://${domain} to confirm it works`,
+      ? `  3. Redeploy your app, then ${signUp} to confirm it works`
+      : `  3. Run \`clerk deploy\` again once the domain is verified, then redeploy your app and ${signUp} to confirm it works`,
   ).join("\n");
+  const webApp = verification.webAppNote
+    ? `\n${wrap(`    ${verification.webAppNote}`).join("\n")}`
+    : "";
+  const ownDomain = verification.clerkManaged
+    ? `\n\n${wrap("  To move to a domain you own later, add it with `clerk deploy add-domain <domain>`, then run `clerk deploy use-domain <domain>`.").join("\n")}`
+    : "";
   const keysNote = wrap(
     `${yellow("NOTE")}  Production keys only work on your production domain. They will not work on localhost. To run your dev environment, keep using your dev keys.`,
     { hang: 6 },
@@ -588,7 +647,7 @@ export function nextStepsBody(
        - Also copy the other Clerk variables from your env file, such as
          NEXT_PUBLIC_CLERK_SIGN_IN_URL. \`env pull\` prints only the two keys.
 
-${step3}
+${step3}${webApp}
 
   4. (If applicable) Update webhook URLs and signing secrets
      ${dim("https://clerk.com/docs/guides/development/webhooks/syncing#configure-your-production-instance")}
@@ -600,7 +659,7 @@ ${step3}
        - Users, settings, and billing:
          ${dim(instanceDashboardUrl(appId, productionInstanceId))}
        - DNS and SSL status:
-         ${dim(domainsDashboardUrl(appId, productionInstanceId))}
+         ${dim(domainsDashboardUrl(appId, productionInstanceId))}${ownDomain}
 ${
   appleProject
     ? `

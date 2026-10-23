@@ -2,10 +2,12 @@ import { test, expect, describe } from "bun:test";
 import {
   DEPLOY_COMMAND_DESCRIPTION,
   DEPLOY_COMMAND_SUMMARY,
-  INTRO_PREAMBLE,
+  introPreamble,
+  clerkAppCreationSummary,
   OAUTH_SECTION_INTRO,
   bindZoneFile,
   deployComponentLabels,
+  deployComponentStatus,
   deployStatusPendingFooter,
   deployStatusRetryMessage,
   dnsIntro,
@@ -21,6 +23,7 @@ import {
   productionSummary,
 } from "./copy.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
+import { domainVerification } from "./domain-verification.ts";
 
 const stripAnsi = (value: string): string =>
   value.replace(new RegExp(String.raw`\x1b\[[0-9;]*m`, "g"), "");
@@ -150,7 +153,9 @@ describe("deployStatusRetryMessage", () => {
 
 describe("nextStepsBody", () => {
   test("links to the production instance home and its domain settings", () => {
-    const output = stripAnsi(nextStepsBody("app_123", "ins_456", "example.com", "verified"));
+    const output = stripAnsi(
+      nextStepsBody("app_123", "ins_456", "example.com", "verified", domainVerification(false)),
+    );
 
     expect(output).toContain("Manage this instance in the Clerk Dashboard");
     expect(output).toContain("- Users, settings, and billing:");
@@ -164,7 +169,13 @@ describe("nextStepsBody", () => {
     // `env pull --print` prints only the two keys. The routing variables
     // `init` wrote have to be carried over by hand, or sign-in silently
     // falls back to the hosted Account Portal.
-    const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
+    const output = nextStepsBody(
+      "app_123",
+      "ins_456",
+      "example.com",
+      "verified",
+      domainVerification(false),
+    );
 
     expect(output).toContain("- Add the printed pk_live_/sk_live_ values there.");
     expect(output).toContain("- Also copy the other Clerk variables from your env file");
@@ -175,7 +186,13 @@ describe("nextStepsBody", () => {
   // A bare `env pull` writes the production keys over the development ones
   // in the local env file, which breaks localhost.
   test("prints the production keys instead of writing them to the env file", () => {
-    const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
+    const output = nextStepsBody(
+      "app_123",
+      "ins_456",
+      "example.com",
+      "verified",
+      domainVerification(false),
+    );
 
     expect(output).toContain("clerk env pull --instance ins_456 --print");
     expect(flat(output)).toContain(
@@ -186,7 +203,13 @@ describe("nextStepsBody", () => {
   });
 
   test("ends with a real sign-up on the production domain", () => {
-    const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
+    const output = nextStepsBody(
+      "app_123",
+      "ins_456",
+      "example.com",
+      "verified",
+      domainVerification(false),
+    );
 
     expect(flat(output)).toContain(
       "3. Redeploy your app, then sign up at https://example.com to confirm it works",
@@ -196,13 +219,33 @@ describe("nextStepsBody", () => {
   test("does not send the user to a domain that is not verified yet", () => {
     // After skipping DNS verification the domain doesn't resolve, so step 3
     // has to route through the wizard before the sign-up check.
-    const output = nextStepsBody("app_123", "ins_456", "example.com", "pending");
+    const output = nextStepsBody(
+      "app_123",
+      "ins_456",
+      "example.com",
+      "pending",
+      domainVerification(false),
+    );
 
     // "once the domain is verified", not "once your DNS records are added":
     // the DNS may already be done with only the certificate outstanding.
     expect(output).toContain("3. Run `clerk deploy` again once the domain is verified");
     expect(output).toContain("sign up at https://example.com to confirm it works");
     expect(output).not.toContain("3. Redeploy your app");
+  });
+
+  test("tells a clerk.app web app to add its hosting domain and serve the proxy, and an own domain not", () => {
+    const clerkApp = flat(
+      nextStepsBody("app_123", "ins_456", "acme.clerk.app", "verified", domainVerification(true)),
+    );
+    const own = flat(
+      nextStepsBody("app_123", "ins_456", "example.com", "verified", domainVerification(false)),
+    );
+
+    expect(clerkApp).toContain(
+      "A web app also needs its hosting domain, such as acme.netlify.app, added with `clerk deploy add-domain <domain>`, and the Clerk proxy served at https://<domain>/__clerk.",
+    );
+    expect(own).not.toContain("__clerk");
   });
 });
 
@@ -214,7 +257,14 @@ describe("nextStepsBody for an iOS or macOS app", () => {
     "points at clerk doctor only in an Apple project: $appleProject",
     ({ appleProject, doctor }) => {
       const output = stripAnsi(
-        nextStepsBody("app_123", "ins_456", "example.com", "verified", appleProject),
+        nextStepsBody(
+          "app_123",
+          "ins_456",
+          "example.com",
+          "verified",
+          domainVerification(false),
+          appleProject,
+        ),
       );
       expect(output.includes("7. Check the iOS or macOS app's Release build")).toBe(doctor);
       expect(output.includes("clerk doctor")).toBe(doctor);
@@ -472,7 +522,9 @@ describe("dashboard URLs", () => {
   });
 });
 
-describe("INTRO_PREAMBLE", () => {
+describe("introPreamble", () => {
+  const INTRO_PREAMBLE = introPreamble({ clerkAppOffered: false });
+
   test("rules out host-generated URLs as a production domain and says why", () => {
     // Described rather than named: the rule covers every host, and the reject
     // list at the prompt is where specific hosts belong.
@@ -483,6 +535,13 @@ describe("INTRO_PREAMBLE", () => {
     // read as if they weren't.
     expect(INTRO_PREAMBLE).toContain("app.example.com");
     expect(INTRO_PREAMBLE).not.toContain("development subdomain");
+  });
+
+  test("offers a clerk.app name in place of DNS records only when clerk.app is offered", () => {
+    const withClerkApp = introPreamble({ clerkAppOffered: true });
+    expect(withClerkApp).toContain("<name>.clerk.app domain, which needs no DNS records.");
+    expect(withClerkApp).toContain("OAuth credentials for any social providers");
+    expect(INTRO_PREAMBLE).not.toContain("clerk.app");
   });
 });
 
@@ -708,7 +767,7 @@ describe("every wizard screen fits inside the frame", () => {
     { host: `clk2._domainkey.${DOMAIN}`, value: "dkim2.clerk.services", required: true },
   ];
   const screens: Record<string, string[]> = {
-    INTRO_PREAMBLE: [INTRO_PREAMBLE],
+    introPreamble: [introPreamble({ clerkAppOffered: false })],
     OAUTH_SECTION_INTRO: [OAUTH_SECTION_INTRO],
     dnsIntro: dnsIntro(DOMAIN),
     domainAssociationSummary: domainAssociationSummary(DOMAIN),
@@ -716,8 +775,17 @@ describe("every wizard screen fits inside the frame", () => {
     "dnsRecords afterCheck": dnsRecords(targets, { afterCheck: true }),
     "productionSummary verified": productionSummary(DOMAIN, ["Google"], "verified"),
     "productionSummary pending": productionSummary(DOMAIN, [], "pending"),
-    "nextStepsBody verified": [nextStepsBody("app_1", "ins_prod", DOMAIN, "verified")],
-    "nextStepsBody pending": [nextStepsBody("app_1", "ins_prod", DOMAIN, "pending")],
+    "nextStepsBody verified": [
+      nextStepsBody("app_1", "ins_prod", DOMAIN, "verified", domainVerification(false)),
+    ],
+    "nextStepsBody pending": [
+      nextStepsBody("app_1", "ins_prod", DOMAIN, "pending", domainVerification(false)),
+    ],
+    "nextStepsBody clerk.app": [
+      nextStepsBody("app_1", "ins_prod", "acme.clerk.app", "verified", domainVerification(true)),
+    ],
+    clerkAppCreationSummary: clerkAppCreationSummary("acme.clerk.app"),
+    "introPreamble clerk.app": [introPreamble({ clerkAppOffered: true })],
   };
   for (const oauthNext of [true, false]) {
     screens[`dnsDashboardHandoff oauthNext=${oauthNext}`] = dnsDashboardHandoff(DOMAIN, URL, {
@@ -760,7 +828,13 @@ describe("every wizard screen fits inside the frame", () => {
 
   test("step 3 keeps its numbered indent across wrapped lines", () => {
     for (const status of ["verified", "pending"] as const) {
-      const lines = nextStepsBody("app_1", "ins_prod", DOMAIN, status).split("\n");
+      const lines = nextStepsBody(
+        "app_1",
+        "ins_prod",
+        DOMAIN,
+        status,
+        domainVerification(false),
+      ).split("\n");
       const start = lines.findIndex((line) => line.startsWith("  3. "));
       expect(start).toBeGreaterThan(0);
       // Continuation lines align under the text after "3. ", like steps 1 and 2.
@@ -771,5 +845,19 @@ describe("every wizard screen fits inside the frame", () => {
       }
       expect(next).toBeGreaterThan(start + 1);
     }
+  });
+});
+
+describe("deployComponentStatus", () => {
+  const status = { dns: false, ssl: false, mail: false };
+
+  test("a clerk.app domain shows only its certificate, whatever DNS reports", () => {
+    expect(stripAnsi(deployComponentStatus(status, domainVerification(true)))).toBe("SSL: pending");
+  });
+
+  test("a domain you own shows DNS, SSL and email DNS", () => {
+    expect(stripAnsi(deployComponentStatus(status, domainVerification(false)))).toBe(
+      "DNS: pending  SSL: pending  Email DNS: pending",
+    );
   });
 });

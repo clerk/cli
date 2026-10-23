@@ -12,42 +12,59 @@ import {
   throwUsageError,
   withApiContext,
 } from "../../lib/errors.ts";
+import {
+  clerkAppDomain,
+  probeClerkApp,
+  requireClerkAppSlug,
+  type ClerkAppOffer,
+  type ClerkAppSlug,
+  type ProductionDomainChoice,
+} from "./clerk-app.ts";
+import {
+  buildNewDeployPlan,
+  collectProductionDomain,
+  confirmProductionInstanceCreation,
+  createProductionInstance,
+  parseClerkAppFlag,
+  resolveHostingDomain,
+  throwDomainConflict,
+  type DomainPlan,
+} from "./domain-choice.ts";
+import { isWebHostName } from "./domains.ts";
+import { domainVerification } from "./domain-verification.ts";
+import {
+  runDnsRecordHandoff,
+  runDnsVerificationPrompt,
+  runDomainVerification,
+  runExistingDomainDnsVerification,
+  type DnsVerificationResult,
+} from "./verify.ts";
+import {
+  addDomain,
+  emitAddDomainReport,
+  listDomainsCommand,
+  readHostingDomainReport,
+  removeDomain,
+  type AddDomainReport,
+} from "./domain-commands.ts";
+import { useDomain } from "./use-domain.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { setProfile } from "../../lib/config.ts";
-import {
-  createProductionInstance as apiCreateProductionInstance,
-  fetchInstanceConfig,
-  patchInstanceConfig,
-  type CnameTarget,
-  type ProductionInstanceResponse,
-} from "../../lib/plapi.ts";
+import { fetchInstanceConfig, patchInstanceConfig } from "../../lib/plapi.ts";
 import {
   DEPLOY_COMMAND_DESCRIPTION,
   DEPLOY_COMMAND_SUMMARY,
-  INTRO_PREAMBLE,
+  introPreamble,
   OAUTH_SECTION_INTRO,
-  type DeployComponentStatus,
   type DeployPlanStep,
-  deployComponentLabels,
-  deployComponentStatus,
-  deployStatusPendingFooter,
-  domainAssociationSummary,
-  bindZoneFile,
-  dnsDashboardHandoff,
-  dnsHandoffNothingToAdd,
-  dnsIntro,
-  dnsRecords,
-  domainsDashboardUrl,
   instanceDashboardUrl,
   nativeAppleGuidance,
   nativeApplicationsDashboardUrl,
   nextStepsBody,
-  pendingCnameTargets,
   pausedOperationNotice,
   printPlan,
   productionSummary,
 } from "./copy.ts";
-import { mapDeployError } from "./errors.ts";
 import {
   providerLabel,
   providerSetupIntro,
@@ -58,15 +75,11 @@ import {
 } from "./providers.ts";
 import {
   assertValidDomain,
-  chooseDnsVerificationAction,
-  chooseDnsVerificationRetryAction,
   chooseOAuthCredentialAction,
-  collectCustomDomain,
   collectOAuthCredentials,
-  confirmCreateProductionInstance,
   confirmAppleWebCredentials,
-  confirmExportBindZone,
   confirmProceed,
+  DOMAIN_NAME,
 } from "./prompts.ts";
 import {
   DeployPausedError,
@@ -84,27 +97,36 @@ import {
   inAppleProject,
   resolveLiveDeploySnapshot,
   resolveNativeAppleConfiguration,
-  waitForDeployStatus,
-  type DeployProgressHandlers,
-  type DomainCheckOptions,
-  type DeployStatusOutcome,
   type DiscoveredOAuthProviders,
   type LiveDeploySnapshot,
 } from "./status.ts";
 import { setTelemetryStage } from "../../lib/telemetry.ts";
 import { resolveActiveReportState, type OAuthSetupFacts } from "./report-state.ts";
-import {
-  recordDeployObservation,
-  recordDeployPoll,
-  recordDeployStage,
-  recordOAuthObservation,
-} from "./telemetry.ts";
+import { recordDeployObservation, recordDeployStage, recordOAuthObservation } from "./telemetry.ts";
 
+/** The flags commander parses for `clerk deploy`. */
 type DeployOptions = {
   /** Skips the domain prompt. In agent mode, it is what allows creating the instance. */
   domain?: string;
+  /** Like `domain`, for the free <name>.clerk.app domain. */
+  clerkApp?: string;
   yes?: boolean;
-  /** Set by the wizard when `domain` came from its prompt, so messages don't call it --domain. */
+};
+
+/**
+ * What the flags ask for. A hosting domain's clerk.app name comes from
+ * `--clerk-app`, or is picked from the host once the application is known.
+ */
+type RequestedDomain =
+  | Exclude<ProductionDomainChoice, { kind: "hosting" }>
+  | { kind: "hosting"; domain: string; slug: ClerkAppSlug | undefined };
+
+/** One run of the wizard or the agent report, with its flags parsed. */
+type DeployRun = {
+  /** From `--domain` or `--clerk-app`, or from the wizard's prompt. */
+  requested?: RequestedDomain;
+  yes?: boolean;
+  /** Set by the wizard when `requested` came from its prompt, so messages don't name a flag. */
   domainEntered?: boolean;
   /** Set by the wizard when its create found an instance another run made. */
   resumingAfterCreate?: boolean;
@@ -113,20 +135,17 @@ type DeployOptions = {
 export async function deploy(options: DeployOptions = {}) {
   // Before anything is read, so `--domain ""` fails instead of falling back to
   // the prompt or the read-only report.
-  const resolved: DeployOptions =
-    options.domain === undefined
-      ? options
-      : { ...options, domain: assertValidDomain(options.domain) };
+  const run: DeployRun = { requested: parseRequestedDomain(options), yes: options.yes };
 
   if (isAgent()) {
-    await runAgentDeploy(resolved.domain);
+    await runAgentDeploy(run.requested);
     return;
   }
 
   intro("clerk deploy");
   try {
     const ctx = await resolveDeployContext();
-    await runDeploy(ctx, resolved);
+    await runDeploy(ctx, run);
   } catch (error) {
     // Ctrl-C during a request or a DNS poll rejects with an `AbortError`, not a
     // `UserAbortError`, and `runProgram` hands rendering to the signal handler
@@ -154,13 +173,33 @@ export async function deploy(options: DeployOptions = {}) {
   }
 }
 
+function parseRequestedDomain(options: DeployOptions): RequestedDomain | undefined {
+  const host = options.domain?.trim().toLowerCase();
+  if (host && DOMAIN_NAME.test(host) && isWebHostName(host)) {
+    const slug = options.clerkApp === undefined ? undefined : parseClerkAppFlag(options.clerkApp);
+    return { kind: "hosting", domain: host, slug };
+  }
+  if (options.domain !== undefined && options.clerkApp !== undefined) {
+    throwUsageError(
+      "Pass --domain or --clerk-app, not both. They go together only when --domain is a hosting domain, such as acme.vercel.app.",
+    );
+  }
+  if (options.domain !== undefined) {
+    return { kind: "own", domain: assertValidDomain(options.domain) };
+  }
+  if (options.clerkApp !== undefined) {
+    return { kind: "clerk_app", slug: parseClerkAppFlag(options.clerkApp) };
+  }
+  return undefined;
+}
+
 /**
- * Agent mode never prompts. With `--domain` it creates the production
- * instance, or resumes the one already there; without it nothing is written.
- * Either way it prints the `clerk deploy status` report and exits 0 once its
- * own work succeeded: `clerk deploy status` is the pass/fail gate.
+ * Agent mode never prompts. With `--domain` or `--clerk-app` it creates the
+ * production instance, or resumes the one already there; without them nothing
+ * is written. Either way it prints the `clerk deploy status` report and exits
+ * 0 once its own work succeeded: `clerk deploy status` is the pass/fail gate.
  */
-async function runAgentDeploy(domain: string | undefined): Promise<void> {
+async function runAgentDeploy(requested: RequestedDomain | undefined): Promise<void> {
   const ctx = await resolveDeployContext();
   if (!ctx.appId || !ctx.developmentInstanceId) {
     throw new CliError(
@@ -169,7 +208,7 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
     );
   }
 
-  if (!domain) {
+  if (!requested) {
     const state = await resolveDeployState(ctx);
     recordDeployObservation(state);
     log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
@@ -179,7 +218,7 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
   // From here a production instance exists, created by this run or found by
   // it, so a read that fails or comes back empty must not look like nothing
   // happened: the caller would create again, or give up on a live instance.
-  const created = await ensureProductionInstance(ctx, domain);
+  const created = await ensureProductionInstance(ctx, requested);
   const state = await withApiContext(
     resolveDeployState(ctx),
     "The production instance exists, but its status could not be read; run `clerk deploy status` to retry",
@@ -200,10 +239,21 @@ async function runAgentDeploy(domain: string | undefined): Promise<void> {
   // on the requested domain however Clerk spells it back. Only a run that
   // found the instance has a domain to check.
   if (!created) {
-    if (state.kind === "active") assertRequestedDomain(domain, state.snapshot.domain);
-    else throw uncheckedDomainError(domain);
+    if (state.kind === "active") assertRequestedDomain(requested, state.snapshot.domain);
+    else throw uncheckedDomainError(requested);
   }
-  log.data(JSON.stringify(buildDeployStatusReport(state, null), null, 2));
+  let hostingDomain: AddDomainReport | undefined;
+  if (requested.kind === "hosting") {
+    hostingDomain = await readHostingDomainReport(ctx.appId, requested.domain, created);
+    if (!hostingDomain) {
+      throw new CliError(
+        `${requested.domain} isn't one of production's domains. ` +
+          `Add it with \`clerk deploy add-domain ${requested.domain}\`.`,
+        { code: ERROR_CODE.DEPLOY_DOMAIN_CONFLICT },
+      );
+    }
+  }
+  log.data(JSON.stringify({ ...buildDeployStatusReport(state, null), hostingDomain }, null, 2));
 }
 
 /** Clerk said a production instance exists but returned none: nothing to resume or report. */
@@ -235,11 +285,15 @@ function instanceReadError(error: unknown, created: boolean): unknown {
  * report points to next. True when this run created it; false when it found
  * one, including one another run created first.
  */
-async function ensureProductionInstance(ctx: DeployContext, domain: string): Promise<boolean> {
+async function ensureProductionInstance(
+  ctx: DeployContext,
+  requested: RequestedDomain,
+): Promise<boolean> {
   let created = false;
   if (!ctx.productionInstanceId) {
     recordDeployStage("not_started");
-    const production = await createProductionInstance(ctx, domain);
+    const choice = await resolveRequestedDomain(ctx.appId, requested, { prompt: false });
+    const production = await createProductionInstance(ctx, choice);
     if (production === "exists") {
       // Same as the wizard: `not_started` is now false and nothing has been
       // read yet, so the run sends no stage unless the read that follows does.
@@ -254,6 +308,19 @@ async function ensureProductionInstance(ctx: DeployContext, domain: string): Pro
   }
   await rememberProductionInstance(ctx, ctx.productionInstanceId);
   return created;
+}
+
+/** Checks a requested clerk.app name, or picks one for a hosting domain. */
+async function resolveRequestedDomain(
+  appId: string,
+  requested: RequestedDomain,
+  options: { prompt: boolean },
+): Promise<ProductionDomainChoice> {
+  if (requested.kind === "hosting") {
+    return resolveHostingDomain(appId, requested.domain, { slug: requested.slug, ...options });
+  }
+  if (requested.kind === "clerk_app") await requireClerkAppSlug(appId, requested.slug);
+  return requested;
 }
 
 /**
@@ -274,8 +341,18 @@ async function rememberProductionInstance(
  * deploy on another domain as if the request had been honored would send the
  * caller off to add DNS records for a domain they did not ask for.
  */
-function assertRequestedDomain(requested: string, existing: string, entered = false): void {
-  if (comparableDomain(existing) === comparableDomain(requested)) return;
+function assertRequestedDomain(
+  requested: RequestedDomain,
+  existing: string,
+  entered = false,
+): void {
+  // Without --clerk-app the name was picked when the instance was created, so any clerk.app primary matches.
+  if (requested.kind === "hosting" && !requested.slug) {
+    if (comparableDomain(existing).endsWith(".clerk.app")) return;
+  } else if (comparableDomain(existing) === comparableDomain(requestedDomainName(requested))) {
+    return;
+  }
+  if (requested.kind === "clerk_app" && !entered) throwDomainConflict(existing, requested.slug);
   // A rerun resumes the existing instance; only the flag has to be dropped.
   const rerun = entered ? "Run `clerk deploy` again" : "Run `clerk deploy` without --domain";
   throw new CliError(
@@ -287,8 +364,22 @@ function assertRequestedDomain(requested: string, existing: string, entered = fa
 }
 
 /** How a message names the requested domain: as the flag, or as what the person typed. */
-function requestedDomainPhrase(requested: string, entered: boolean): string {
-  return entered ? `the domain you entered, ${requested},` : `--domain ${requested}`;
+function requestedDomainPhrase(requested: RequestedDomain, entered: boolean): string {
+  if (entered) return `the domain you entered, ${requestedDomainName(requested)},`;
+  switch (requested.kind) {
+    case "own":
+      return `--domain ${requested.domain}`;
+    case "clerk_app":
+      return `--clerk-app ${requested.slug}`;
+    case "hosting":
+      return `--domain ${requested.domain}${requested.slug ? ` --clerk-app ${requested.slug}` : ""}`;
+  }
+}
+
+function requestedDomainName(requested: RequestedDomain): string {
+  if (requested.kind === "own") return requested.domain;
+  if (requested.kind === "clerk_app") return clerkAppDomain(requested.slug);
+  return requested.slug ? clerkAppDomain(requested.slug) : requested.domain;
 }
 
 /** A domain as DNS compares it: case-insensitive, with or without the root's trailing dot. */
@@ -302,7 +393,7 @@ function comparableDomain(domain: string): string {
  * the requested domain; any other run can't tell, and once Clerk returns the
  * domain the report would send the caller to add records for it.
  */
-function uncheckedDomainError(requested: string, entered = false): CliError {
+function uncheckedDomainError(requested: RequestedDomain, entered = false): CliError {
   // Only called when this run created nothing; its own profile write (the
   // instance id) is local, hence "in Clerk".
   return new CliError(
@@ -314,7 +405,7 @@ function uncheckedDomainError(requested: string, entered = false): CliError {
   );
 }
 
-async function runDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
+async function runDeploy(ctx: DeployContext, options: DeployRun): Promise<void> {
   if (!ctx.appId || !ctx.developmentInstanceId) {
     throw new CliError(
       "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
@@ -330,19 +421,31 @@ async function runDeploy(ctx: DeployContext, options: DeployOptions): Promise<vo
   await startNewDeploy(ctx, options);
 }
 
-async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
+async function startNewDeploy(ctx: DeployContext, options: DeployRun): Promise<void> {
   // What `clerk deploy status` reports on exactly this condition. Set before
   // anything is read, so a run that ends at the plan, the domain prompt or the
   // create confirmation says where the deploy stood rather than nothing.
   recordDeployStage("not_started");
+  const requested =
+    options.requested &&
+    (await resolveRequestedDomain(ctx.appId, options.requested, { prompt: !options.yes }));
 
-  const { descriptors: oauthProviders, unsupported }: DiscoveredOAuthProviders =
-    await loadDevelopmentOAuthProviders(ctx);
+  const [{ descriptors: oauthProviders, unsupported }, offer]: [
+    DiscoveredOAuthProviders,
+    ClerkAppOffer,
+  ] = await Promise.all([
+    loadDevelopmentOAuthProviders(ctx),
+    requested
+      ? Promise.resolve<ClerkAppOffer>({ enabled: false })
+      : probeClerkApp(ctx.appId, ctx.appLabel),
+  ]);
+  const domainPlan: DomainPlan =
+    requested && requested.kind !== "own" ? "clerk_app" : offer.enabled ? "either" : "own";
 
   log.blank();
-  log.info(INTRO_PREAMBLE);
+  log.info(introPreamble({ clerkAppOffered: domainPlan !== "own" }));
   log.blank();
-  for (const line of printPlan(ctx.appLabel, buildNewDeployPlan(oauthProviders))) {
+  for (const line of printPlan(ctx.appLabel, buildNewDeployPlan(oauthProviders, domainPlan))) {
     log.info(line);
   }
   log.blank();
@@ -356,15 +459,16 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   }
 
   bar();
-  const domainEntered = options.domain === undefined;
-  const domain = options.domain ?? (await collectCustomDomain());
+  const domainEntered = requested === undefined;
+  const choice: ProductionDomainChoice =
+    requested ?? (await collectProductionDomain(ctx.appId, offer));
   const shouldCreateProductionInstance = await confirmProductionInstanceCreation(
-    domain,
+    choice,
     options.yes,
   );
   if (!shouldCreateProductionInstance) return;
 
-  const productionOrExists = await createProductionInstance(ctx, domain);
+  const productionOrExists = await createProductionInstance(ctx, choice);
   if (productionOrExists === "exists") {
     // `not_started` is now false and the resume has not read anything yet, so
     // the run sends no stage unless the resume below observes one.
@@ -379,7 +483,7 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     // instance on another domain must not carry on into that domain's setup.
     await reconcileExistingDeploy(ctx, refreshed.productionInstanceId, {
       ...options,
-      domain,
+      requested: choice,
       domainEntered,
       resumingAfterCreate: true,
     });
@@ -402,6 +506,7 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   // URL on its own line: with it, the sentence is wider than the frame.
   log.success("Clerk production instance created. Manage it in the Dashboard:");
   log.info(`  ${instanceDashboardUrl(ctx.appId, production.id)}`);
+  if (choice.kind === "hosting") await reportHostingDomain(ctx.appId, choice.domain);
 
   // Rerunning at once can't help: until Clerk returns the domain, a rerun
   // with --domain is refused (`deploy_domain_unchecked`) and one without it
@@ -417,6 +522,7 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   log.blank();
 
   const productionDomain = production.active_domain.name;
+  const verification = domainVerification(production.active_domain.is_clerk_managed);
   const cnameTargets = production.active_domain.cname_targets ?? [];
   let completedOAuthProviders: OAuthProvider[] = [];
   const operationState: DeployOperationState = {
@@ -425,6 +531,7 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     productionInstanceId: production.id,
     productionDomainId: production.active_domain.id,
     domain: productionDomain,
+    verification,
     frontendApiUrl: production.active_domain.frontend_api_url,
     pending: { type: "oauth", provider: oauthProviders[0]?.provider ?? "google" },
     oauthProviders: oauthProviders.map((descriptor) => descriptor.provider),
@@ -432,41 +539,62 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
     cnameTargets,
   };
 
-  // OAuth setup only runs when there are providers; with none, the DNS check
-  // is what comes next.
-  await runDnsRecordHandoff(
-    { ...operationState, pending: { type: "dns" } },
-    {
-      display: cnameTargets,
-      exportTargets: cnameTargets,
-      // Nothing has been checked yet on a fresh run.
-      status: { dns: false, ssl: false, mail: false },
-      oauthNext: oauthProviders.length > 0,
-    },
-  );
+  if (verification.clerkManaged) {
+    log.info(
+      `There are no DNS records to add for ${productionDomain}. Clerk is issuing its SSL certificate.`,
+    );
+    log.blank();
+  } else {
+    await runDnsRecordHandoff(
+      { ...operationState, pending: { type: "dns" } },
+      {
+        display: cnameTargets,
+        exportTargets: cnameTargets,
+        // Nothing has been checked yet on a fresh run.
+        status: { dns: false, ssl: false, mail: false },
+        oauthNext: oauthProviders.length > 0,
+      },
+    );
+  }
 
   bar();
   completedOAuthProviders = await runOAuthSetup(ctx, operationState, oauthProviders);
 
   bar();
-  const dnsStatus = await runDnsVerificationPrompt(
-    ctx,
-    { ...operationState, pending: { type: "dns" }, completedOAuthProviders },
-    { justCreated: true },
-  );
+  const verifyState: DeployOperationState = {
+    ...operationState,
+    pending: { type: "dns" },
+    completedOAuthProviders,
+  };
+  // A clerk.app domain has nothing for the user to add first, so there is no "check now?" prompt.
+  const dnsStatus = verification.clerkManaged
+    ? await runDomainVerification(ctx, verifyState, { justCreated: true })
+    : await runDnsVerificationPrompt(ctx, verifyState, { justCreated: true });
 
   await finishDeploy(
     ctx,
-    productionDomain,
+    operationState,
     { oauthProviders: operationState.oauthProviders, completedOAuthProviders },
     dnsStatus,
+  );
+}
+
+async function reportHostingDomain(appId: string, host: string): Promise<void> {
+  const report = await readHostingDomainReport(appId, host, true);
+  if (report) {
+    emitAddDomainReport(report);
+    return;
+  }
+  log.blank();
+  log.warn(
+    `Clerk doesn't list ${host} as a hosting domain yet. Run \`clerk deploy domains\` to check it.`,
   );
 }
 
 async function reconcileExistingDeploy(
   ctx: DeployContext,
   productionInstanceId: string,
-  options: DeployOptions,
+  options: DeployRun,
 ): Promise<void> {
   // Everything below reads the instance through `ctx`.
   ctx.productionInstanceId = productionInstanceId;
@@ -478,7 +606,7 @@ async function reconcileExistingDeploy(
     recordDeployStage("domain_provisioning");
     // Same as agent mode: nothing to check --domain against, so it is refused
     // rather than reported as if it had been applied.
-    if (options.domain) throw uncheckedDomainError(options.domain, options.domainEntered);
+    if (options.requested) throw uncheckedDomainError(options.requested, options.domainEntered);
     log.blank();
     log.info("A production instance exists, but Clerk did not return a production domain yet.");
     log.info("Run `clerk deploy` again after the domain is available from the API.");
@@ -489,8 +617,8 @@ async function reconcileExistingDeploy(
   // substituted; a later poll that succeeds will. OAuth is recorded either
   // way, since the configuration read succeeded.
   recordDeployObservation({ kind: "active", snapshot });
-  if (options.domain) {
-    assertRequestedDomain(options.domain, snapshot.domain, options.domainEntered);
+  if (options.requested) {
+    assertRequestedDomain(options.requested, snapshot.domain, options.domainEntered);
   }
   // Only once the domain check passed, so it never comes right before a refusal.
   if (options.resumingAfterCreate) {
@@ -510,7 +638,7 @@ async function reconcileExistingDeploy(
 
   if (!snapshot.pending) {
     log.info("No deploy actions remain.");
-    await finishDeploy(ctx, snapshot.domain, snapshot, "verified");
+    await finishDeploy(ctx, snapshot, snapshot, "verified");
     return;
   }
 
@@ -549,10 +677,8 @@ async function reconcileExistingDeploy(
     );
   }
 
-  await finishDeploy(ctx, snapshot.domain, snapshot, dnsStatus);
+  await finishDeploy(ctx, snapshot, snapshot, dnsStatus);
 }
-
-type DnsVerificationResult = "verified" | "pending";
 
 function warnUnsupportedOAuthProviders(count: number): void {
   if (count === 0) return;
@@ -566,18 +692,6 @@ function warnUnsupportedOAuthProviders(count: number): void {
     "These providers may not have working production credentials. Configure them from the Clerk Dashboard before going live, or disable them in development first.",
   );
   log.blank();
-}
-
-function buildNewDeployPlan(oauthProviders: readonly OAuthProviderDescriptor[]): DeployPlanStep[] {
-  return [
-    { label: "Create production instance", status: "pending" },
-    { label: "Choose a production domain you own", status: "pending" },
-    ...oauthProviders.map((descriptor) => ({
-      label: `Configure ${descriptor.label} OAuth credentials`,
-      status: "pending" as const,
-    })),
-    { label: "Verify DNS records", status: "pending" },
-  ];
 }
 
 function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
@@ -595,237 +709,11 @@ function buildLiveDeployPlan(snapshot: LiveDeploySnapshot): DeployPlanStep[] {
         status,
       };
     }),
-    { label: "Verify DNS records", status: snapshot.domainComplete ? "done" : "pending" },
-  ];
-}
-
-async function createProductionInstance(
-  ctx: DeployContext,
-  domain: string,
-): Promise<ProductionInstanceResponse | "exists"> {
-  return withSpinner("Creating production instance...", async () => {
-    return mapDeployError<ProductionInstanceResponse | "exists">(
-      apiCreateProductionInstance(ctx.appId, {
-        domain,
-        environment_type: "production",
-        clone_instance_id: ctx.developmentInstanceId,
-      }),
-      { onProductionInstanceExists: async () => "exists" },
-    );
-  });
-}
-
-async function confirmProductionInstanceCreation(domain: string, yes = false): Promise<boolean> {
-  // Separate this screen from the domain the user just typed; without it the
-  // echoed answer runs straight into the lead sentence.
-  log.blank();
-  for (const line of domainAssociationSummary(domain)) log.info(line);
-  log.blank();
-  const confirmed = yes || (await confirmCreateProductionInstance());
-  if (confirmed) {
-    log.blank();
-    return true;
-  }
-
-  log.blank();
-  log.info("No production instance was created.");
-  await outro("Cancelled");
-  return false;
-}
-
-/**
- * `display` is what the screen lists as records to add; `exportTargets` is
- * what the BIND zone file gets. They differ on resume: the screen shows only
- * the records still outstanding, but a zone file with some of the domain's
- * records is not a zone file anyone should import.
- */
-async function runDnsRecordHandoff(
-  state: DeployOperationState,
-  options: {
-    /** Records printed on screen: only the ones still to add. */
-    display: readonly CnameTarget[];
-    /** Records offered for the zone-file export: every record for the domain. */
-    exportTargets: readonly CnameTarget[];
-    status: DeployComponentStatus;
-    afterCheck?: boolean;
-    oauthNext: boolean;
-  },
-): Promise<void> {
-  const { display, exportTargets, status } = options;
-  const handoffInstanceId = state.productionInstanceId;
-  const domainsUrl = handoffInstanceId
-    ? domainsDashboardUrl(state.appId, handoffInstanceId)
-    : undefined;
-
-  // With no records to add, a "Configure DNS" page is the wrong page: say
-  // what is actually outstanding instead (certificate, Clerk finalizing, or
-  // a record list Clerk didn't return).
-  const lines =
-    display.length > 0
-      ? [
-          ...dnsIntro(state.domain),
-          "",
-          ...dnsRecords(display, { afterCheck: options.afterCheck }),
-          "",
-          ...dnsDashboardHandoff(state.domain, domainsUrl, { oauthNext: options.oauthNext }),
-        ]
-      : dnsHandoffNothingToAdd(state.domain, status, domainsUrl, { oauthNext: options.oauthNext });
-  for (const line of lines) {
-    if (line === "") log.blank();
-    else log.info(line);
-  }
-  log.blank();
-  try {
-    await offerBindZoneExport(state.domain, exportTargets);
-    log.blank();
-  } catch (error) {
-    if (error instanceof UserAbortError) {
-      throwDeployPaused(state, "cancelled");
-    }
-    throw error;
-  }
-}
-
-async function runExistingDomainDnsVerification(
-  ctx: DeployContext,
-  state: DeployOperationState,
-  componentStatus: DeployComponentStatus,
-): Promise<DnsVerificationResult> {
-  // On resume some records may already be verified; only the outstanding ones
-  // are records to add, and the user may have added those already.
-  const allTargets = state.cnameTargets ?? [];
-  // OAuth ran before this on the resume path, so the check is next.
-  await runDnsRecordHandoff(state, {
-    display: pendingCnameTargets(allTargets, componentStatus),
-    exportTargets: allTargets,
-    status: componentStatus,
-    afterCheck: true,
-    oauthNext: false,
-  });
-  return runDnsVerificationPrompt(ctx, state);
-}
-
-async function runDnsVerificationPrompt(
-  ctx: DeployContext,
-  state: DeployOperationState,
-  options: DomainCheckOptions = {},
-): Promise<DnsVerificationResult> {
-  try {
-    const action = await chooseDnsVerificationAction();
-    if (action === "skip") {
-      log.blank();
-      log.info("Skipping DNS verification for now.");
-      return "pending";
-    }
-    return await runDnsVerification(ctx, state, options);
-  } catch (error) {
-    if (error instanceof UserAbortError) {
-      throwDeployPaused(state, "cancelled");
-    }
-    throw error;
-  }
-}
-
-async function runDnsVerification(
-  ctx: DeployContext,
-  state: DeployOperationState,
-  options: DomainCheckOptions,
-): Promise<DnsVerificationResult> {
-  const domainIdOrName = state.productionDomainId ?? state.domain;
-
-  while (true) {
-    // Per poll, not once the wait returns: a Ctrl-C mid-wait is reported by
-    // the signal handler with the stage as it stands at that moment.
-    const outcome = await pollDeployStatus(
-      ctx.appId,
-      domainIdOrName,
-      state.domain,
-      (polled) => recordDeployPoll(state, polled),
-      options,
-    );
-
-    if (outcome.verified) {
-      log.blank();
-      log.info(deployComponentStatus(outcome.status));
-      return "verified";
-    }
-
-    log.blank();
-    log.info(deployComponentStatus(outcome.status));
-    log.blank();
-    const productionInstanceId = state.productionInstanceId ?? ctx.productionInstanceId;
-    // Computed before the footer so the footer can tell the user when there is
-    // no record list to print, instead of saying "add them" over nothing.
-    const pendingTargets = pendingCnameTargets(state.cnameTargets ?? [], outcome.status);
-    for (const line of deployStatusPendingFooter(
-      state.domain,
-      outcome.status,
-      productionInstanceId ? domainsDashboardUrl(ctx.appId, productionInstanceId) : undefined,
-      pendingTargets.length > 0,
-    )) {
-      if (line === "") log.blank();
-      else log.warn(line);
-    }
-
-    // When all DNS components are verified but the server has not yet marked the
-    // deployment complete, the user cannot influence the remaining wait.
-    if (outcome.status.dns && outcome.status.ssl && outcome.status.mail) {
-      throwDeployPaused(state, "finalizing");
-    }
-
-    if (pendingTargets.length > 0) {
-      log.blank();
-      for (const line of dnsRecords(pendingTargets, { afterCheck: true })) log.info(line);
-    }
-    log.blank();
-    let action: Awaited<ReturnType<typeof chooseDnsVerificationRetryAction>>;
-    try {
-      action = await chooseDnsVerificationRetryAction();
-    } catch (error) {
-      if (error instanceof UserAbortError) {
-        throwDeployPaused(state, "cancelled");
-      }
-      throw error;
-    }
-    if (action === "skip") {
-      log.blank();
-      log.info("Skipping DNS verification for now.");
-      return "pending";
-    }
-  }
-}
-
-async function pollDeployStatus(
-  appId: string,
-  domainIdOrName: string,
-  domain: string,
-  onStatus: DeployProgressHandlers["onStatus"],
-  options: DomainCheckOptions,
-): Promise<DeployStatusOutcome> {
-  return waitForDeployStatus(
-    appId,
-    domainIdOrName,
-    domain,
     {
-      runVerification: async (progressLabel, work) => withSpinner(progressLabel, work),
-      onVerified: () => log.success(deployComponentLabels("dns", domain).done),
-      onStatus,
+      label: snapshot.verification.planLabel,
+      status: snapshot.domainComplete ? "done" : "pending",
     },
-    options,
-  );
-}
-
-async function offerBindZoneExport(
-  domain: string,
-  cnameTargets: readonly CnameTarget[] | undefined,
-): Promise<void> {
-  if (!cnameTargets || cnameTargets.length === 0) return;
-  const accepted = await confirmExportBindZone();
-  if (!accepted) return;
-  const contents = bindZoneFile(domain, cnameTargets, new Date());
-  const filePath = `${process.cwd()}/clerk-${domain}.zone`;
-  await Bun.write(filePath, contents);
-  log.success(`Wrote ${filePath}`);
+  ];
 }
 
 /**
@@ -995,7 +883,7 @@ async function persistProductionInstance(ctx: DeployContext, productionInstanceI
 
 async function finishDeploy(
   ctx: DeployContext,
-  domain: string,
+  { domain, verification }: Pick<DeployOperationState, "domain" | "verification">,
   oauth: OAuthSetupFacts,
   dnsStatus: DnsVerificationResult,
 ): Promise<void> {
@@ -1030,7 +918,7 @@ async function finishDeploy(
     prefix: isInsideGutter() ? `${dim("│")}  ` : "",
     label: "Next steps",
     fallback: bold,
-    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain, dnsStatus, await inAppleProject()))}\n`,
+    body: `${applyPrefix(nextStepsBody(ctx.appId, productionInstanceId, domain, dnsStatus, verification, await inAppleProject()))}\n`,
   });
   // The closing word summarizes how the run ended. After a skipped DNS check
   // the status row four lines up says "DNS pending", and "Success" beneath it
@@ -1050,12 +938,17 @@ export function registerDeploy(program: Program): void {
       "--domain <domain>",
       "Production domain you own (skips the prompt; in agent mode, creates the production instance)",
     )
+    .option("--clerk-app <name>", "Use the free <name>.clerk.app domain without prompting")
     .option("--yes", "Skip the confirmations before the production instance is created")
     .setExamples([
       { command: "clerk deploy", description: "Interactive production setup" },
       {
         command: "clerk deploy --domain example.com",
         description: "Use this domain without prompting",
+      },
+      {
+        command: "clerk deploy --clerk-app acme",
+        description: "Use acme.clerk.app without prompting",
       },
       {
         command: "clerk deploy status --wait",
@@ -1072,10 +965,33 @@ export function registerDeploy(program: Program): void {
     .action(async (options, cmd) => {
       // Commander hands the parent's flags to `deploy` wherever they appear, so
       // `deploy status --domain x` would otherwise report as if it had been used.
-      const { domain, yes } = cmd.optsWithGlobals() as DeployOptions;
-      if (domain !== undefined || yes) {
-        throwUsageError("--domain and --yes apply to `clerk deploy`, not `clerk deploy status`.");
+      const { domain, clerkApp, yes } = cmd.optsWithGlobals() as DeployOptions;
+      if (domain !== undefined || clerkApp !== undefined || yes) {
+        throwUsageError(
+          "--domain, --clerk-app and --yes apply to `clerk deploy`, not `clerk deploy status`.",
+        );
       }
       await deployStatus(options);
     });
+  deployCmd
+    .command("add-domain")
+    .description(
+      "Add a domain you own (like acme.com), your app's domain on a hosting provider (like acme.vercel.app), or a free clerk.app domain (like acme.clerk.app).",
+    )
+    .argument("<domain>", "Domain to add, such as acme.com, acme.vercel.app or acme.clerk.app")
+    .action(async (domain: string) => addDomain(domain));
+  deployCmd
+    .command("use-domain")
+    .description("Make an added domain the primary domain")
+    .argument("<domain>", "Domain to use, such as example.com")
+    .option("-y, --yes", "Switch without prompting")
+    // `--yes` is also a `clerk deploy` flag, so Commander may parse it there.
+    .action(async (domain: string, _options, cmd) => useDomain(domain, cmd.optsWithGlobals()));
+  deployCmd.command("domains").description("List production's domains").action(listDomainsCommand);
+  deployCmd
+    .command("remove-domain")
+    .description("Remove a domain")
+    .argument("<domain>", "Domain to remove, such as acme.netlify.app")
+    .option("-y, --yes", "Remove without prompting")
+    .action(async (domain: string, _options, cmd) => removeDomain(domain, cmd.optsWithGlobals()));
 }

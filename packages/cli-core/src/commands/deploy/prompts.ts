@@ -4,57 +4,86 @@ import { throwUsageError } from "../../lib/errors.ts";
 import { select } from "../../lib/listage.ts";
 import { confirm, password, text } from "../../lib/prompts.ts";
 import { type OAuthPromptField, type OAuthProviderDescriptor } from "./providers.ts";
+import { log } from "../../lib/log.ts";
+import { checkSlugTaken, parseClerkAppSlug, type ClerkAppSlug } from "./clerk-app.ts";
+import { isWebHostName, PROVIDER_DOMAIN_SUFFIXES } from "./domains.ts";
 
 type OAuthCredentialAction = "have-credentials" | "walkthrough" | "google-json" | "skip";
 type DnsVerificationAction = "check" | "skip";
 
-// The Platform API creates production on any of these, though only the provider
-// can add DNS records under them. `.render.com` also covers Render's shared `app.render.com`.
-const PROVIDER_DOMAIN_SUFFIXES = [
-  ".clerk.app",
-  ".vercel.app",
-  ".netlify.app",
-  ".pages.dev",
-  ".workers.dev",
-  ".fly.dev",
-  ".render.com",
-  ".onrender.com",
-  ".herokuapp.com",
-  ".replit.app",
-  ".replit.dev",
-  ".railway.app",
-  ".emergent.host",
-  ".emergentagent.com",
-  ".web.app",
-  ".firebaseapp.com",
-  ".hosted.app",
-  ".github.io",
-  ".lovable.app",
-  ".bolt.host",
-  ".base44.app",
-];
+export const DOMAIN_NAME = /^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i;
 
 export async function confirmProceed(): Promise<boolean> {
   return confirm({ message: "Proceed?", default: true });
 }
 
-export async function collectCustomDomain(): Promise<string> {
+export async function chooseDomainKind(): Promise<"own" | "clerk_app"> {
+  return select({
+    message: "Production domain",
+    choices: [
+      {
+        name: "Use my own domain",
+        value: "own",
+        description: "Use a domain you already own. You'll add a few DNS records.",
+      },
+      {
+        name: "Use a free clerk.app domain",
+        value: "clerk_app",
+        description: "No DNS records to add. You can switch to your own domain later.",
+      },
+    ],
+  });
+}
+
+export async function collectClerkAppSlug(
+  appId: string,
+  suggestion: ClerkAppSlug | undefined,
+): Promise<ClerkAppSlug> {
+  let initial: string | undefined = suggestion;
+  for (;;) {
+    const raw = await text({
+      message: "clerk.app name (your app will use <name>.clerk.app)",
+      default: initial,
+      validate: (value) => {
+        const parsed = parseClerkAppSlug(value ?? "");
+        return parsed.ok || parsed.message;
+      },
+    });
+    const parsed = parseClerkAppSlug(raw);
+    if (!parsed.ok) continue;
+    const taken = await checkSlugTaken(appId, parsed.slug);
+    if (!taken) return parsed.slug;
+    log.warn(taken.message);
+    initial = taken.suggestion;
+  }
+}
+
+export async function collectCustomDomain(
+  options: { clerkAppOffered?: boolean } = {},
+): Promise<string> {
   const domain = await text({
     message: "Production domain (e.g. example.com)",
-    validate: (value) => validateDomain(value),
+    validate: (value) => validateDomain(value, options),
   });
   return domain.trim();
 }
 
-export function validateDomain(value: string | undefined): true | string {
+export function validateDomain(
+  value: string | undefined,
+  options: { clerkAppOffered?: boolean } = {},
+): true | string {
   const domain = value?.trim() ?? "";
   if (!domain) return "Enter a domain.";
   if (domain.startsWith("http://") || domain.startsWith("https://")) {
     return "Enter a valid domain, such as example.com (without https://).";
   }
-  if (!/^([a-z0-9]([a-z0-9-]*[a-z0-9])?\.)+[a-z]{2,}$/i.test(domain)) {
+  if (!DOMAIN_NAME.test(domain)) {
     return "Enter a valid domain, such as example.com (without https://).";
   }
+  if (options.clerkAppOffered && domain.toLowerCase().endsWith(".clerk.app")) {
+    return "For a clerk.app domain, press Ctrl-C, run `clerk deploy` again, and choose Use a free clerk.app domain.";
+  }
+  if (options.clerkAppOffered && isWebHostName(domain.toLowerCase())) return true;
   if (PROVIDER_DOMAIN_SUFFIXES.some((suffix) => domain.toLowerCase().endsWith(suffix))) {
     return `${domain} looks like a hosting provider's domain (e.g. *.vercel.app, *.clerk.app). \`clerk deploy\` sets up production through DNS records, so it needs a domain you can add them to. See https://clerk.com/docs/guides/development/deployment/production`;
   }
@@ -67,8 +96,12 @@ export function validateDomain(value: string | undefined): true | string {
  */
 export function assertValidDomain(value: string): string {
   const verdict = validateDomain(value);
-  if (verdict !== true) throwUsageError(`Invalid --domain "${value}": ${verdict}`);
+  if (verdict !== true) throwInvalidDomainFlag(value, verdict);
   return value.trim().toLowerCase();
+}
+
+export function throwInvalidDomainFlag(value: string, reason: string): never {
+  throwUsageError(`Invalid --domain "${value}": ${reason}`);
 }
 
 export async function confirmCreateProductionInstance(): Promise<boolean> {
@@ -88,11 +121,13 @@ export async function chooseDnsVerificationAction(): Promise<DnsVerificationActi
   });
 }
 
-export async function chooseDnsVerificationRetryAction(): Promise<DnsVerificationAction> {
+export async function chooseDnsVerificationRetryAction(
+  subject: "DNS" | "SSL" = "DNS",
+): Promise<DnsVerificationAction> {
   return select({
-    message: "DNS verification",
+    message: `${subject} verification`,
     choices: [
-      { name: "Skip DNS verification for now", value: "skip" },
+      { name: `Skip ${subject} verification for now`, value: "skip" },
       { name: "Check again", value: "check" },
     ],
   });

@@ -1,6 +1,13 @@
-import { CliError, ERROR_CODE, EXIT_CODE, type ErrorCode } from "../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  EXIT_CODE,
+  UserAbortError,
+  type ErrorCode,
+} from "../../lib/errors.ts";
 import { setTelemetryPauseStep } from "../../lib/telemetry.ts";
 import { pausedMessage } from "./copy.ts";
+import type { DomainVerification } from "./domain-verification.ts";
 import type { CnameTarget } from "../../lib/plapi.ts";
 import { providerLabel, type OAuthProvider } from "./providers.ts";
 import type { Profile } from "../../lib/config.ts";
@@ -11,6 +18,7 @@ export type DeployOperationState = {
   productionInstanceId?: string;
   productionDomainId?: string;
   domain: string;
+  verification: DomainVerification;
   frontendApiUrl?: string;
   pending: { type: "dns" } | { type: "oauth"; provider: string };
   oauthProviders: string[];
@@ -29,7 +37,7 @@ export type DeployContext = {
 
 export function pausedStepDescription(state: DeployOperationState): string {
   if (state.pending.type === "dns") {
-    return `DNS verification for ${state.domain}`;
+    return `${state.verification.subject} verification for ${state.domain}`;
   }
   return `${providerLabel(state.pending.provider as OAuthProvider)} OAuth credential setup`;
 }
@@ -93,4 +101,17 @@ export function throwDeployPaused(state: DeployOperationState, reason: DeployPau
   const { code, exitCode, recordsPauseStep } = PAUSE_REASONS[reason];
   if (recordsPauseStep) setTelemetryPauseStep(state.pending.type);
   throw new DeployPausedError(pausedMessage(pausedStepDescription(state)), { code, exitCode });
+}
+
+/** Runs a prompt step, turning Ctrl-C at the prompt into a `cancelled` pause at `state`. */
+export async function pauseOnAbort<T>(
+  state: DeployOperationState,
+  step: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await step();
+  } catch (error) {
+    if (error instanceof UserAbortError) throwDeployPaused(state, "cancelled");
+    throw error;
+  }
 }

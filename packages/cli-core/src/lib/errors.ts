@@ -66,6 +66,48 @@ export const ERROR_CODE = {
   PROVIDER_DOMAIN_NOT_ALLOWED: "provider_domain_not_allowed",
   /** `home_url` is already claimed by another instance. */
   HOME_URL_TAKEN: "home_url_taken",
+  /** The application may not use a free `<slug>.clerk.app` domain. */
+  CLERK_APP_NOT_ENABLED: "clerk_app_not_enabled",
+  /** A clerk.app name is not one DNS label of 3 to 63 lowercase letters, digits and hyphens. */
+  CLERK_APP_SLUG_INVALID: "clerk_app_slug_invalid",
+  /** A clerk.app name is reserved or already issued. */
+  CLERK_APP_SLUG_UNAVAILABLE: "clerk_app_slug_unavailable",
+  /**
+   * `--clerk-app` names a domain other than the one production already uses,
+   * `use-domain` names one of the application's satellite domains or a
+   * clerk.app domain that isn't the application's, or `add-domain` names a
+   * satellite.
+   */
+  DEPLOY_DOMAIN_CONFLICT: "deploy_domain_conflict",
+  /** `use-domain` names a clerk.app domain while email links are on, which it can't send. */
+  CLERK_MANAGED_DOMAIN_REFUSES_EMAIL_LINKS: "clerk_managed_domain_refuses_email_links",
+  /** `use-domain` names a hosting domain served through the Clerk proxy. */
+  WEB_HOST_CANNOT_BE_PRIMARY: "web_host_cannot_be_primary",
+  /** A hosting provider's URL Clerk doesn't support, such as acme.pages.dev. */
+  KNOWN_HOSTING_DOMAIN: "known_hosting_domain",
+  /** A hosting domain was sent as production's primary for an app that has to put it beside clerk.app. */
+  HOSTING_DOMAIN_NEEDS_CLERK_APP: "hosting_domain_needs_clerk_app",
+  /** The domain is already added to a Clerk instance. */
+  DOMAIN_TAKEN: "domain_taken",
+  /**
+   * `use-domain` switches production off its clerk.app domain or back to it,
+   * and neither production's primary nor the target is Clerk-managed.
+   */
+  PRIMARY_NOT_CLERK_MANAGED: "primary_not_clerk_managed",
+  /** `add-domain` adds domains only to an app with a clerk.app domain. */
+  NO_CLERK_APP_DOMAIN: "no_clerk_app_domain",
+  /** `add-domain` names a clerk.app domain, and production already has another. */
+  CLERK_APP_DOMAIN_EXISTS: "clerk_app_domain_exists",
+  /** `add-domain` names a clerk.app domain for an instance that isn't production. */
+  INSTANCE_TYPE_INVALID: "instance_type_invalid",
+  /** Production already has a domain you own beside its clerk.app domain. */
+  CUSTOM_DOMAIN_BESIDE_CLERK_MANAGED_EXISTS: "custom_domain_beside_clerk_managed_exists",
+  /** `use-domain` names a domain production doesn't have yet. */
+  DOMAIN_NOT_FOUND: "domain_not_found",
+  /** `remove-domain` names production's primary domain or its clerk.app domain. */
+  DOMAIN_NOT_REMOVABLE: "domain_not_removable",
+  /** A domain can't become primary until its DNS, SSL, or email checks pass. */
+  DOMAIN_NOT_READY: "domain_not_ready",
   /** PLAPI rejected a request parameter as malformed. */
   FORM_PARAM_INVALID: "form_param_invalid",
   /** Impersonation isn't enabled on the app's subscription plan. */

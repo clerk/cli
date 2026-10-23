@@ -16,18 +16,127 @@ clerk deploy --verbose    # With debug output
 clerk deploy --domain example.com --yes # Wizard without the domain prompt and confirmations
 clerk deploy --mode agent # Emit a read-only handoff for agents
 clerk deploy --domain example.com --mode agent # Create or resume production, then emit the handoff
+clerk deploy --clerk-app acme             # Use the free acme.clerk.app domain without prompting
+clerk deploy --clerk-app acme --mode agent # Create production on acme.clerk.app, then emit the report
+clerk deploy --domain acme.vercel.app --mode agent # clerk.app primary named after the host, acme.vercel.app beside it
+clerk deploy --domain acme.vercel.app --clerk-app acme # The same, with the clerk.app name chosen
 clerk deploy status        # Verify deploy completion without prompts
 clerk deploy status --mode agent --wait # Agent verification with retrying wait
+clerk deploy add-domain example.com      # Add a domain you own; prints its DNS records
+clerk deploy add-domain acme.netlify.app # Add your app's hosting domain; prints the proxy setup
+clerk deploy add-domain acme.clerk.app   # Add a free clerk.app domain to production on a domain you own
+clerk deploy use-domain example.com      # Make an added domain primary once it is ready
+clerk deploy use-domain example.com --yes # Switch without asking (agents must pass it)
+clerk deploy domains                     # List production's domains
+clerk deploy remove-domain acme.netlify.app # Remove a domain (asks first; agents pass --yes)
 ```
 
 ## Options
 
-| Flag                | Purpose                                                                                                                         |
-| ------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `--domain <domain>` | Production domain. Skips the domain prompt; in agent mode it is what allows creating the production instance.                   |
-| `--yes`             | Skips the wizard's "Proceed?" and "Create production instance?" confirmations, and nothing after them. No effect in agent mode. |
+| Flag                 | Purpose                                                                                                                         |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `--domain <domain>`  | Production domain. Skips the domain prompt; in agent mode it is what allows creating the production instance.                   |
+| `--clerk-app <name>` | Free `<name>.clerk.app` domain. Skips the domain prompts; in agent mode it also allows creating the production instance.        |
+| `--yes`              | Skips the wizard's "Proceed?" and "Create production instance?" confirmations, and nothing after them. No effect in agent mode. |
 
-`--domain` is validated like the prompt (a domain whose DNS records you can add, no scheme, no hosting providers' domains) and only applies when the instance is created. The comparison ignores case and a trailing dot, and only a run that found an existing instance makes it: an application has one production instance, so a run whose own create succeeded is on the requested domain however Clerk spells it back. If the application already has a production instance on another domain, the command fails with `production_instance_exists` instead of reporting on a domain that was not asked for. In the wizard, a domain typed at the prompt is checked the same way when the create finds an instance another run made, and the messages name it as the domain you entered rather than as `--domain`. While Clerk has not yet returned the existing instance's domain (`domain_provisioning`), there is nothing to compare `--domain` against, so a run that did not create the instance fails with `deploy_domain_unchecked` instead, in agent mode and in the wizard alike, even when the domain is the one it was created with. The two codes call for different next steps: `production_instance_exists` means the instance is on another domain, so ask the user; `deploy_domain_unchecked` means wait, since `clerk deploy status` shows the domain once Clerk returns it. Both flags are refused on `clerk deploy status`.
+`--domain` is validated like the prompt (a domain whose DNS records you can add, no scheme, no hosting providers' domains) and only applies when the instance is created. The comparison ignores case and a trailing dot, and only a run that found an existing instance makes it: an application has one production instance, so a run whose own create succeeded is on the requested domain however Clerk spells it back. If the application already has a production instance on another domain, the command fails with `production_instance_exists` instead of reporting on a domain that was not asked for. In the wizard, a domain typed at the prompt is checked the same way when the create finds an instance another run made, and the messages name it as the domain you entered rather than as `--domain`. While Clerk has not yet returned the existing instance's domain (`domain_provisioning`), there is nothing to compare `--domain` against, so a run that did not create the instance fails with `deploy_domain_unchecked` instead, in agent mode and in the wizard alike, even when the domain is the one it was created with. The two codes call for different next steps: `production_instance_exists` means the instance is on another domain, so ask the user; `deploy_domain_unchecked` means wait, since `clerk deploy status` shows the domain once Clerk returns it. `--clerk-app` follows the same rules, except that an instance on another domain fails with `deploy_domain_conflict` when the name came from the flag. Passing it with `--domain` is a usage error, except with a hosting domain (see below). All three flags are refused on `clerk deploy status`.
+
+## Free clerk.app domains
+
+Applications that Clerk lets use a free `<name>.clerk.app` domain get a choice before the domain prompt:
+
+- **Use my own domain.** Use a domain you already own. You'll add a few DNS records.
+- **Use a free clerk.app domain.** No DNS records to add. You can switch to your own domain later.
+
+The wizard decides whether to offer the choice with one `GET clerk_app_slugs/{slug}` call on a name derived from the app's name. If that name is free, it is the default. If it is taken or too short, the check's `suggestion`, a free name such as `acme-3f2a1`, is the default instead. If the call reports `enabled: false` or fails, the wizard runs exactly as before. The name prompt checks the format on each keystroke: one DNS label of 3 to 63 lowercase letters, digits, and hyphens, with no hyphen at either end. It checks availability once per submitted name. When the name is taken it asks again, with the check's `suggestion` as the default.
+
+A clerk.app domain (`is_clerk_managed` on the domain) has no DNS records. The wizard skips the DNS records screen, the zone-file export, and the "Check DNS now" prompt, and goes straight to waiting for the SSL certificate. `clerk deploy status` shows only the SSL row, reports `clerkManaged: true`, skips the DNS check trigger, and returns an empty `pendingDnsRecords`.
+
+A mobile app needs nothing more. A web app on a clerk.app primary also needs its hosting domain added with `clerk deploy add-domain <domain>` and the Clerk proxy served at `https://<domain>/__clerk`. The creation summary, the next steps, and the `complete` next action all say so.
+
+### A hosting domain as the production domain
+
+A hosting domain, such as `acme.vercel.app` (a name in `WEB_HOST_SUFFIXES`), can't be the primary domain of an app that can use clerk.app. As in the Clerk Dashboard, typing one at the domain prompt or passing it as `--domain` gives production a clerk.app primary and adds the hosting domain beside it, in one `POST instances` with both `domain` and `clerk_app_slug`. A person first sees "acme.vercel.app looks like a hosting domain, so your app gets a free clerk.app domain."
+
+The clerk.app name is the host's first label (`acme`), checked with `GET clerk_app_slugs/{slug}`, or the check's `suggestion` when that name is taken. A person confirms or changes it at the name prompt. With `--yes`, or in agent mode, the CLI uses it, and in human mode says which: "Using acme.clerk.app. Pass --clerk-app <name> to choose another name." `--clerk-app <name>` beside the hosting `--domain` names it instead. After the create, the wizard prints the hosting domain's proxy URL and setup, the same block `add-domain` prints, and agent mode adds it to the report as `hostingDomain`, with `add-domain`'s hosting fields. A rerun in agent mode only reports, and accepts any clerk.app primary when `--clerk-app` wasn't passed, since the name was picked at create time. It fails with `deploy_domain_conflict` if the hosting domain isn't one of production's domains.
+
+For an app without clerk.app, a hosting domain is refused as before, with exit 2, after the slug check reports `enabled: false`. If PLAPI's list of hosting providers has a name the CLI's doesn't, PLAPI answers the plain create with `hosting_domain_needs_clerk_app`, and the CLI says to choose a free clerk.app domain and add the hosting domain with `add-domain`.
+
+`--clerk-app <name>` accepts `acme` or `acme.clerk.app`. In human mode it skips the domain prompts. In agent mode it creates the production instance on that domain, as `--domain` does, saves the instance ID to the profile, and prints the usual report. Rerunning it once production exists only reports. If production already uses a different domain, the command fails with a usage error (`deploy_domain_conflict`), and while Clerk has not returned the existing instance's domain it fails with `deploy_domain_unchecked`, as `--domain` does. An invalid name fails before any request.
+
+### Domains beside clerk.app: `add-domain`, `use-domain`, `domains`, `remove-domain`
+
+An app on clerk.app adds other domains with one command, matching the Clerk Dashboard's one "Add domain" button. `add-domain` takes a domain you own, such as `acme.com`, which you can make primary once it's configured, or your app's domain on a hosting provider, such as `acme.vercel.app`. `use-domain` then makes a domain you own primary.
+
+PLAPI decides the kind by the name: a hosting provider's URL becomes a hosting domain, and any other name becomes the one domain you own. Hosting domains can't be made primary. Clerk runs on them through a /__clerk route in your app.
+
+#### `clerk deploy add-domain <domain>`
+
+It accepts `https://Acme.Netlify.app/` and uses `acme.netlify.app`. Before any request it refuses:
+
+- a clerk.app name that isn't one valid label before `.clerk.app`, such as `a.b.clerk.app` (`clerk_app_slug_invalid`, exit 2);
+- a hosting domain on a provider Clerk doesn't support, such as `acme.pages.dev` or `acme.github.io` (`known_hosting_domain`, exit 2). These are the names in `PROVIDER_DOMAIN_SUFFIXES` that aren't in `WEB_HOST_SUFFIXES`, both in `domains.ts`. PLAPI would add most of them as a domain you own, whose DNS records only the provider could add.
+
+It then reads the domain list:
+
+- A name that is already added is reported again without a request, so a rerun is safe. A satellite is refused (`deploy_domain_conflict`).
+- An app with no Clerk-managed domain is refused (`no_clerk_app_domain`, exit 1), with the Dashboard's domains page. PLAPI routes names only on an instance with a clerk.app domain, primary or not. So hosting domains can still be added after the move to a domain you own, until the clerk.app domain is shut down.
+- A `<name>.clerk.app` name is the exception. Production on a domain you own can add one, so it can move to clerk.app later with `clerk deploy use-domain` and no downtime. Production that already has a different clerk.app domain is refused (`clerk_app_domain_exists`, exit 1).
+
+Then it sends `POST domains` with `{"name": "<domain>"}`. PLAPI decides the kind and gives a hosting domain the proxy path `/__clerk`.
+
+The report follows the response's `is_web_host`, not the name:
+
+- **Hosting domain.** It says the name is on a hosting provider, so it's added as a hosting domain that can't be made primary. It prints the proxy URL, the proxy setup steps from the Clerk Dashboard (with apps not using a Clerk SDK pointed at the proxy guide), including that hosted sign-in pages don't work on a hosting domain, and a link to the proxy guide. Its notes say the app on the hosting domain uses the same Clerk setup as the primary domain, that a route in the app passes sign-in requests to Clerk so users, sign-in options and emails are all shared, that a backend checking the session token's issuer also accepts the hosting domain's issuer, and the passkey limit. Agent mode prints `domain`, `kind: "hosting"`, `added`, `proxyUrl`, `proxySetup`, `notes`, `docsUrl`, and `nextAction`.
+- **clerk.app domain.** It says there are no DNS records to add and the app keeps its current domain until this one is made primary with `clerk deploy use-domain <domain>`. Agent mode prints `domain`, `kind: "clerk_app"`, `added`, `primary`, and `nextAction`.
+- **Domain you own.** It prints the DNS records and says to make it primary once it's configured with `clerk deploy use-domain <domain>`, which reports which of DNS, SSL, and email DNS are still pending and switches once they all pass. Agent mode prints `domain`, `kind: "custom"`, `added`, `primary`, `dnsRecords`, and `nextAction`. A rerun after the switch says the domain is already primary.
+
+| PLAPI error                                     | CLI code                                    | Meaning                                                            |
+| ----------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------ |
+| 403 `feature_not_enabled`                       | `clerk_app_not_enabled`                     | The application can't use clerk.app domains, so it can't add here. |
+| 422 `clerk_app_slug_invalid`                    | `clerk_app_slug_invalid`                    | The clerk.app name isn't a valid label.                            |
+| 422 `clerk_app_slug_unavailable`                | `clerk_app_slug_unavailable`                | The clerk.app name is taken.                                       |
+| 422 `clerk_app_domain_exists`                   | `clerk_app_domain_exists`                   | Production already has a clerk.app domain.                         |
+| 400 `instance_type_invalid` (clerk.app names)   | `instance_type_invalid`                     | Only production instances can add a clerk.app domain.              |
+| 422 `known_hosting_domain`                      | `known_hosting_domain`                      | PLAPI refuses the hosting provider, so its suffix list differs.    |
+| 422 `custom_domain_beside_clerk_managed_exists` | `custom_domain_beside_clerk_managed_exists` | Production already has a domain you own. The message names it.     |
+| 422 `form_identifier_exists` on `name`          | `domain_taken`                              | The name is already added to a Clerk instance.                     |
+
+#### `clerk deploy use-domain <domain>`
+
+Makes an added domain you own the primary domain, or switches back to the app's clerk.app domain. It doesn't add domains. Each run reads the live domain list and does the next step:
+
+1. If the domain isn't added, it stops with `domain_not_found` and names `clerk deploy add-domain <domain>`. Nothing changes.
+2. If it is not ready, it prints which of DNS, SSL, and email DNS are still pending, plus the records still to add, and starts a new DNS check for the next run to read. A clerk.app domain has no records and gets no DNS check: only its SSL certificate can be pending.
+3. If it is ready, it asks for confirmation and calls `make_primary`. `--yes` skips the question. In agent mode the switch needs `--yes`: without it the command changes nothing, reports `primary: false` with a `nextAction` naming `clerk deploy use-domain <domain> --yes`, and exits 1. Rechecking a domain needs no flag, and the not-ready `nextAction` never names `--yes`.
+
+Readiness is `make_primary_readiness` on the domain list, which reflects the domain's last DNS check. PLAPI sends it on every non-satellite domain of an application that may switch its primary domain, and on none otherwise, so a list without it stops with `clerk_app_not_enabled` before anything changes, unless the `primary_not_clerk_managed` refusal below applies first. The command exits 0 once the domain is primary and 1 while it is still pending, so `clerk deploy use-domain example.com` can be rerun until it succeeds. In agent mode it prints a JSON report with `domain`, `primary`, `readiness`, `pendingDnsRecords`, and `nextAction`. Passing the app's own `<name>.clerk.app` switches back to it.
+
+The command refuses, before any request that changes anything:
+
+- a domain that is one of the application's satellites (`deploy_domain_conflict`);
+- a domain the list marks `is_web_host`, a hosting domain such as `acme.netlify.app` (`web_host_cannot_be_primary`);
+- any domain when neither the `is_primary` domain nor the target is Clerk-managed (`primary_not_clerk_managed`). PLAPI switches only away from or back to a clerk.app domain;
+- a switch back to the clerk.app domain while email links are on (`clerk_managed_domain_refuses_email_links`). Its readiness has `email_links: false`, since its shared sender can't send email links. The message says to turn them off in the Clerk Dashboard under User & authentication > Email. PLAPI's 422 `clerk_managed_domain_refuses_email_links` maps to the same code if email links were turned on after the list was read.
+
+If production leaves clerk.app after the list is read, PLAPI refuses the switch with 403 `primary_switch_not_allowed`, which maps to `primary_not_clerk_managed`.
+
+Before a ready switch, the report and the prompt name the new domain's session token issuer and say to accept it as well as the current one, because builds already shipped keep sending the old issuer.
+
+A custom domain served through the Clerk proxy can become primary. Once a domain you own is primary, the report says the old clerk.app domain keeps working for builds that still use it and can be shut down in the Clerk Dashboard. If hosting domains exist, it says they keep working after the shutdown, and that before it you redeploy the apps on them with the new keys and point any proxy you wrote yourself at `https://frontend-api.clerk.dev` instead of the clerk.app domain's Frontend API URL. The CLI doesn't shut it down.
+
+#### `clerk deploy domains`
+
+Lists production's domains. A person sees one table under "Domains". Each name has its kind (`Custom` for a domain you own, `Hosting`, `Clerk-managed`, or `Satellite`) and `Primary` on the primary domain. Hosting domains can't be made primary. Clerk runs on them through a /__clerk route in your app. Agent mode prints `{"domains": [{"domain", "kind", "primary", "proxyUrl"}]}`, where `kind` is `clerk_app`, `custom`, `hosting`, or `satellite`.
+
+#### `clerk deploy remove-domain <domain>`
+
+Removes a domain with `DELETE domains/{id}`. It refuses, with `domain_not_removable` and no request:
+
+- production's primary domain, since PLAPI would promote another domain in its place. Make another domain primary first with `use-domain`;
+- the clerk.app domain, since removing it is its permanent shutdown, which the Clerk Dashboard owns.
+
+A person confirms at a prompt; an agent passes `--yes`, and without it the command exits 2 and names the command to run. A domain that is already gone reports `removed: false` and exits 0, so a rerun is safe.
 
 ## Global Options
 
@@ -71,7 +180,7 @@ In agent mode, `clerk deploy status` emits JSON on stdout with:
 
 - `complete`: `true` only when the domain is verified and all supported OAuth providers enabled in development have production credentials.
 - `state`: `complete`, `domain_pending`, `oauth_pending`, `domain_provisioning`, `not_started`, or `interrupted`.
-- `domainStatus`: per-component DNS, SSL, and email DNS status when a domain exists.
+- `domainStatus`: per-component DNS, SSL, and email DNS status when a domain exists. PLAPI omits the mail check for a clerk.app domain, which needs no email DNS, so email DNS reports `complete` there.
 - `pendingDnsRecords`: CNAME records still tied to pending DNS-backed checks, each with `host`, `value`, and Clerk's `required` flag (some targets are optional).
 - `oauth`: configured, pending, and unsupported provider slugs, plus `setup`: one entry per pending provider (except Apple while `nativeAppleReadinessIssue` is present, since native-only Apple needs that fix rather than web credentials) with its `configKey`, credential `fields` (`required`, `secret`, `options`, and `fileContents` when the value is a file's contents, such as Apple's `.p8` key), the `redirectUri` and `authorizedOrigins` the provider's OAuth app must allow, `docsUrl`, a `note`, and the `payload` template (required fields only) and `command` that save the credentials.
 - `nativeAppleReadinessIssue`: present only when Apple is native-only (a `bundle_id` and no hosted credentials) and not yet ready in production. Development's native-only connection counts when production Apple has neither a Bundle ID nor hosted credentials, as creating production leaves it. Holds the `bundleId`, a `reason` (`bundle-id-missing`, `authentication-disabled`, `registration-missing`, `registration-ambiguous`, `registration-bundle-case-mismatch`, `native-api-disabled`, or `verification-unavailable`), and the production Native Applications `dashboardUrl`. `nextAction` includes the matching guidance.
@@ -132,7 +241,7 @@ Human mode, and agent mode with `--domain`, read and write deploy state through 
 
 | Step                       | Endpoint                                                                    | Behavior                                                                                                                                                                                                                                                                                                                                                 |
 | -------------------------- | --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Create production instance | `POST /v1/platform/applications/{appID}/instances`                          | Returns `id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and timestamps. DNS records are read from `active_domain.cname_targets[]`.                                                                                                                                                                                    |
+| Create production instance | `POST /v1/platform/applications/{appID}/instances`                          | Takes `domain` or `clerk_app_slug`, never both. Returns `id`, `environment_type`, `active_domain`, `publishable_key`, `secret_key` (once), and timestamps. DNS records are read from `active_domain.cname_targets[]`, which is empty for a clerk.app domain.                                                                                             |
 |                            |                                                                             | Performs clone feature compatibility validation before creating production resources. 402 `unsupported_subscription_plan_features` → `ERROR_CODE.PLAN_INSUFFICIENT` listing missing features. 409 `production_instance_exists` → CLI re-derives state via `fetchApplication` and falls through to `reconcileExistingDeploy` (agent mode: to the report). |
 | Trigger domain DNS check   | `POST /v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check` | Starts a server-side DNS check. `clerk deploy status` triggers this before resolving the live state. Agent-mode `clerk deploy status` returns after the post-trigger status snapshot by default; `--wait` polls active production domains with the shared retry loop. A 409 conflict means a check is already running.                                   |
 | Poll domain status         | `GET /v1/platform/applications/{appID}/domains/{domainIDOrName}/status`     | Returns aggregate `status` plus nested DNS, SSL, email DNS, and proxy component status. The CLI drives one shared DNS verification loop over the full status response. The aggregate `status` guards proxy and other server-side readiness gates. It performs one immediate status read, then polls every 3s.                                            |
@@ -140,7 +249,25 @@ Human mode, and agent mode with `--domain`, read and write deploy state through 
 
 After displaying the DNS records block, when CNAME records are present the CLI prompts "Export DNS records as a BIND zone file? (y/N)". On yes, it writes `./clerk-<domain>.zone` in the current working directory. The file is a standard BIND fragment containing `$ORIGIN`, `$TTL 300`, and one fully-qualified CNAME per record. The default is "no" and the file is overwritten silently on subsequent runs. Most major DNS providers (Cloudflare, Route 53, Google Cloud DNS, and others) support importing BIND zone fragments. The same prompt appears on both new deploys and resumed deploys.
 
-PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`. The CLI does not auto-retry SSL issuance or email DNS verification beyond the shared DNS verification loop. When domain status polling times out with SSL or email DNS still incomplete, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
+PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`. The clerk.app mappings are:
+
+| PLAPI error                                     | CLI error code                              |
+| ----------------------------------------------- | ------------------------------------------- |
+| 403 `feature_not_enabled` (clerk.app calls)     | `clerk_app_not_enabled`                     |
+| 422 `clerk_app_slug_invalid`                    | `clerk_app_slug_invalid`                    |
+| 422 `clerk_app_slug_unavailable`                | `clerk_app_slug_unavailable`                |
+| 422 `clerk_app_domain_exists`                   | `clerk_app_domain_exists`                   |
+| 400 `instance_type_invalid` (add-domain)        | `instance_type_invalid`                     |
+| 422 `domain_not_ready_for_primary`              | `domain_not_ready`                          |
+| 422 `home_url_taken`                            | `home_url_taken`                            |
+| 422 `known_hosting_domain`                      | `known_hosting_domain`                      |
+| 422 `hosting_domain_needs_clerk_app`            | `hosting_domain_needs_clerk_app`            |
+| 422 `custom_domain_beside_clerk_managed_exists` | `custom_domain_beside_clerk_managed_exists` |
+| 403 `primary_switch_not_allowed`                | `primary_not_clerk_managed`                 |
+| 422 `web_host_cannot_be_primary`                | `web_host_cannot_be_primary`                |
+| 422 `clerk_managed_domain_refuses_email_links`  | `clerk_managed_domain_refuses_email_links`  |
+
+The CLI does not auto-retry SSL issuance or email DNS verification beyond the shared DNS verification loop. When domain status polling times out with SSL or email DNS still incomplete, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
 
 If the user presses Ctrl-C after the production instance has been created — at a prompt or during the DNS wait — the wizard tells them to run `clerk deploy` again and exits with SIGINT code 130. The deploy is unfinished either way, so `clerk deploy && ./cutover.sh` stops rather than proceeding against a half-configured instance. The next run derives the current DNS or OAuth step from API state and resumes without starting another production instance.
 
@@ -197,19 +324,23 @@ sequenceDiagram
 
 All endpoints are on the **Platform API** (`/v1/platform/...`) and are live HTTP calls. The deploy command calls the helpers in `lib/plapi.ts` directly.
 
-| Step                        | Method  | Endpoint                                                                           | Helper                                                                                                                                           |
-| --------------------------- | ------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Auth                        | n/a     | Local config                                                                       | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                                                |
-| Read instance config        | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config`                  | `fetchInstanceConfig` from `lib/plapi.ts`. Discovers enabled `connection_oauth_*` providers.                                                     |
-| Read instance config schema | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/config/schema`           | `fetchInstanceConfigSchema`. Reads schemas for supported OAuth config keys so deploy can derive credential prompts.                              |
-| Patch instance config       | `PATCH` | `/v1/platform/applications/{appID}/instances/{instanceID}/config`                  | `patchInstanceConfig`. Writes production OAuth credentials.                                                                                      |
-| Read application            | `GET`   | `/v1/platform/applications/{appID}`                                                | `fetchApplication`. Resolves development and production instance IDs.                                                                            |
-| List production domains     | `GET`   | `/v1/platform/applications/{appID}/domains`                                        | `listApplicationDomains`. Recovers production domain name and CNAME targets on each run.                                                         |
-| Read native settings        | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/native_settings`         | `getNativeSettings`. Checks Native API for native-only Apple readiness.                                                                          |
-| List iOS registrations      | `GET`   | `/v1/platform/applications/{appID}/instances/{instanceID}/native_applications/ios` | `listIOSApplications`. Checks the production registration for a native-only Apple Bundle ID.                                                     |
-| Create production instance  | `POST`  | `/v1/platform/applications/{appID}/instances`                                      | `createProductionInstance`. Returns prod instance, primary domain, keys, and DNS records nested under `active_domain.cname_targets[]`.           |
-| Trigger domain DNS check    | `POST`  | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`             | `triggerApplicationDomainDNSCheck`. Called by the wizard and by `clerk deploy status`; agent mode waits briefly, then reads one status snapshot. |
-| Poll domain status          | `GET`   | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/status`                | `getApplicationDomainStatus`. Drives the wizard spinner and the human-mode `clerk deploy status` wait loop over the full domain status response. |
+| Step                        | Method   | Endpoint                                                                           | Helper                                                                                                                                                                                                        |
+| --------------------------- | -------- | ---------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth                        | n/a      | Local config                                                                       | Token stored from `clerk auth login` or `CLERK_PLATFORM_API_KEY`.                                                                                                                                             |
+| Read instance config        | `GET`    | `/v1/platform/applications/{appID}/instances/{instanceID}/config`                  | `fetchInstanceConfig` from `lib/plapi.ts`. Discovers enabled `connection_oauth_*` providers.                                                                                                                  |
+| Read instance config schema | `GET`    | `/v1/platform/applications/{appID}/instances/{instanceID}/config/schema`           | `fetchInstanceConfigSchema`. Reads schemas for supported OAuth config keys so deploy can derive credential prompts.                                                                                           |
+| Patch instance config       | `PATCH`  | `/v1/platform/applications/{appID}/instances/{instanceID}/config`                  | `patchInstanceConfig`. Writes production OAuth credentials.                                                                                                                                                   |
+| Read application            | `GET`    | `/v1/platform/applications/{appID}`                                                | `fetchApplication`. Resolves development and production instance IDs.                                                                                                                                         |
+| List production domains     | `GET`    | `/v1/platform/applications/{appID}/domains`                                        | `listApplicationDomains`. Recovers the production domain (the `is_primary` row, else the first non-satellite one) and its CNAME targets on each run, and backs `clerk deploy domains`.                        |
+| Read native settings        | `GET`    | `/v1/platform/applications/{appID}/instances/{instanceID}/native_settings`         | `getNativeSettings`. Checks Native API for native-only Apple readiness.                                                                                                                                       |
+| List iOS registrations      | `GET`    | `/v1/platform/applications/{appID}/instances/{instanceID}/native_applications/ios` | `listIOSApplications`. Checks the production registration for a native-only Apple Bundle ID.                                                                                                                  |
+| Create production instance  | `POST`   | `/v1/platform/applications/{appID}/instances`                                      | `createProductionInstance`. Returns prod instance, primary domain, keys, and DNS records nested under `active_domain.cname_targets[]`.                                                                        |
+| Trigger domain DNS check    | `POST`   | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/dns_check`             | `triggerApplicationDomainDNSCheck`. Called by the wizard and by `clerk deploy status`; agent mode waits briefly, then reads one status snapshot.                                                              |
+| Check clerk.app name        | `GET`    | `/v1/platform/applications/{appID}/clerk_app_slugs/{slug}`                         | `checkClerkAppSlug`. Returns `{enabled, valid, available, suggestion}`. Decides whether the wizard offers clerk.app and whether a name is free; `suggestion` is a free name the wizard offers as the default. |
+| Add domain                  | `POST`   | `/v1/platform/applications/{appID}/domains`                                        | `createApplicationDomain`. Used by `clerk deploy add-domain`, which sends only the name.                                                                                                                      |
+| Remove domain               | `DELETE` | `/v1/platform/applications/{appID}/domains/{domainIDOrName}`                       | `deleteApplicationDomain`. Used by `clerk deploy remove-domain`.                                                                                                                                              |
+| Make domain primary         | `POST`   | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/make_primary`          | `makeApplicationDomainPrimary`. Used by `clerk deploy use-domain`. 422 `domain_not_ready_for_primary` lists the missing checks.                                                                               |
+| Poll domain status          | `GET`    | `/v1/platform/applications/{appID}/domains/{domainIDOrName}/status`                | `getApplicationDomainStatus`. Drives the wizard spinner and the human-mode `clerk deploy status` wait loop over the full domain status response.                                                              |
 
 ## OAuth Provider Config Format
 

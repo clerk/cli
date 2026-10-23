@@ -12,6 +12,7 @@ import {
   keyPullCommand,
   nativeAppleGuidance,
 } from "./copy.ts";
+import { domainVerification } from "./domain-verification.ts";
 import {
   buildDeployStatusReport,
   buildInterruptedDeployStatusReport,
@@ -70,7 +71,7 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
     if (state.kind === "active" && shouldWait) {
       const active = state;
       outcome = await runWait(active, {
-        triggerCheck: !preflightTriggered,
+        checkAlreadyTriggered: preflightTriggered,
         onStatus: (polled) => {
           lastPolled = polled;
           recordDeployPoll(active.snapshot, polled);
@@ -122,7 +123,7 @@ async function runPreflightDeployStatusCheck(ctx: DeployContext): Promise<boolea
   if (!ctx.productionInstanceId) return false;
 
   const domain = await loadProductionDomain(ctx);
-  if (!domain) return false;
+  if (!domain || !domainVerification(domain.is_clerk_managed).triggerDnsCheck) return false;
 
   const domainIdOrName = domain.id ?? domain.name;
   await triggerDeployStatusCheck(ctx.appId, domainIdOrName);
@@ -134,19 +135,25 @@ async function runPreflightDeployStatusCheck(ctx: DeployContext): Promise<boolea
 
 async function runWait(
   state: Extract<DeployState, { kind: "active" }>,
-  options: { triggerCheck?: boolean; onStatus?: (outcome: DeployStatusOutcome) => void } = {},
+  options: {
+    checkAlreadyTriggered?: boolean;
+    onStatus?: (outcome: DeployStatusOutcome) => void;
+  } = {},
 ): Promise<DeployStatusOutcome> {
   const { snapshot } = state;
   const domainIdOrName = snapshot.productionDomainId ?? snapshot.domain;
   const { onStatus, ...waitOptions } = options;
+  const { verification } = snapshot;
   return waitForDeployStatus(
     snapshot.appId,
     domainIdOrName,
     snapshot.domain,
+    verification,
     {
       runVerification: async (progressLabel, work) => withSpinner(progressLabel, work),
       onVerified: () => {
-        if (!isAgent()) log.success(deployComponentLabels("dns", snapshot.domain).done);
+        if (!isAgent())
+          log.success(deployComponentLabels(verification.component, snapshot.domain).done);
       },
       onStatus,
     },
@@ -182,9 +189,12 @@ export function renderHuman(report: DeployStatusReport): void {
   }
 
   if (report.domainStatus) {
-    log.info(
-      `  Domain   DNS: ${report.domainStatus.dns}  SSL: ${report.domainStatus.ssl}  Email DNS: ${report.domainStatus.mail}`,
+    const { dns, ssl, mail } = report.domainStatus;
+    const row = domainVerification(report.clerkManaged).statusRow(
+      { dns: dns === "complete", ssl: ssl === "complete", mail: mail === "complete" },
+      (ok) => (ok ? "complete" : "pending"),
     );
+    log.info(`  Domain   ${row}`);
   }
 
   // No domain status means no production instance was read, so OAuth was
@@ -264,7 +274,8 @@ export function humanNextAction(step: DeployNextStep): string {
         `run \`${keyPullCommand("clerk", step.productionInstanceId)}\` and add ` +
         `the lines it prints to your host's production environment variables, with the other Clerk ` +
         `variables from your env file (it writes no local file, so localhost keeps its development ` +
-        `keys), then redeploy and sign up at https://${step.domain} to confirm.` +
+        `keys), then redeploy and ${step.verification.signUpTarget(step.domain)} to confirm.` +
+        step.verification.webAppNote +
         (step.appleProject ? ` ${appleProjectNextStep()}` : "") +
         (step.instanceUrl
           ? ` Manage users, settings, and billing for this instance: ${step.instanceUrl}`
@@ -301,8 +312,8 @@ export function humanNextAction(step: DeployNextStep): string {
       );
     case "ssl_pending":
       return (
-        `SSL certificate still pending for ${step.domain}. Clerk issues it automatically now that ` +
-        `DNS is verified; re-run \`clerk deploy status\` in a few minutes.` +
+        `SSL certificate still pending for ${step.domain}. Clerk issues it automatically; ` +
+        `re-run \`clerk deploy status\` in a few minutes.` +
         domains(step.domainsUrl) +
         nativeApple
       );

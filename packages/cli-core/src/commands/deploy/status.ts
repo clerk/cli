@@ -39,6 +39,7 @@ import {
   pendingRecordComponents,
   type DeployComponentStatus,
 } from "./copy.ts";
+import { domainVerification, type DomainVerification } from "./domain-verification.ts";
 import { mapDeployError, type MapDeployErrorOptions } from "./errors.ts";
 import {
   OAUTH_KEY_PREFIX,
@@ -142,6 +143,8 @@ export interface DeployStatusReport {
   complete: boolean;
   state: DeployStatusState;
   domain: string | null;
+  /** True for a `<slug>.clerk.app` domain, where only SSL can be pending. */
+  clerkManaged: boolean;
   productionInstanceId: string | null;
   domainStatus: {
     dns: DomainComponentState;
@@ -201,6 +204,7 @@ export type DeployNextStep =
       kind: "complete";
       domain: string;
       productionInstanceId: string | null;
+      verification: DomainVerification;
       oauthUnsupported: readonly string[];
       instanceUrl: string | null;
       appleProject?: boolean;
@@ -337,6 +341,25 @@ export async function resolveDeployContext(): Promise<DeployContext> {
       resolveLiveApplicationContext(resolved.profile),
     )),
   };
+}
+
+/** The linked application and its production instance, which every `clerk deploy <subcommand>` that changes domains needs. */
+export async function resolveProductionApp(
+  subcommand: string,
+): Promise<{ appId: string; productionInstanceId: string }> {
+  const ctx = await resolveDeployContext();
+  if (!ctx.appId || !ctx.developmentInstanceId) {
+    throw new CliError(
+      `No Clerk project linked to this directory. Run \`clerk link\`, then rerun \`clerk deploy ${subcommand}\`.`,
+      { code: ERROR_CODE.NOT_LINKED },
+    );
+  }
+  if (!ctx.productionInstanceId) {
+    throw new CliError("No production instance yet. Run `clerk deploy` first.", {
+      code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED,
+    });
+  }
+  return { appId: ctx.appId, productionInstanceId: ctx.productionInstanceId };
 }
 
 export async function resolveLiveApplicationContext(profile: DeployContext["profile"]): Promise<{
@@ -546,6 +569,7 @@ export async function resolveLiveDeploySnapshot(
     productionInstanceId,
     productionDomainId: domain.id,
     domain: domain.name,
+    verification: domainVerification(domain.is_clerk_managed),
     frontendApiUrl: domain.frontend_api_url,
     oauthProviders,
     oauthProviderDescriptors,
@@ -660,6 +684,7 @@ function buildDeployStatusFacts(
       complete: false,
       state: "not_started",
       domain: null,
+      clerkManaged: false,
       productionInstanceId: null,
       domainStatus: null,
       pendingDnsRecords: [],
@@ -674,6 +699,7 @@ function buildDeployStatusFacts(
       complete: false,
       state: "domain_provisioning",
       domain: null,
+      clerkManaged: false,
       productionInstanceId: state.productionInstanceId,
       domainStatus: null,
       pendingDnsRecords: [],
@@ -703,6 +729,7 @@ function buildDeployStatusFacts(
     complete,
     state: reportState,
     domain: snapshot.domain,
+    clerkManaged: snapshot.verification.clerkManaged,
     productionInstanceId: snapshot.productionInstanceId ?? null,
     domainStatus: {
       dns: domainComponentState(componentStatus.dns),
@@ -856,6 +883,7 @@ export function buildInterruptedDeployStatusReport(
       complete: false,
       state: "interrupted",
       domain: null,
+      clerkManaged: false,
       productionInstanceId: null,
       domainStatus: null,
       pendingDnsRecords: [],
@@ -887,6 +915,7 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
         kind: "complete",
         domain: report.domain ?? "",
         productionInstanceId: report.productionInstanceId,
+        verification: domainVerification(report.clerkManaged),
         oauthUnsupported: report.oauth.unsupported,
         instanceUrl: report.urls?.instance ?? null,
         appleProject: report.appleProject === true,
@@ -1046,7 +1075,8 @@ export function agentNextAction(step: DeployNextStep, cli: string): string {
         `this session (a shell escape such as Claude Code's \`!\` would put the keys in your transcript), ` +
         `and add each line as a production environment variable. On macOS, \`${pull} | pbcopy\` copies ` +
         `the lines to the clipboard without showing them. Set them alongside the other Clerk variables from your env file, ` +
-        `redeploy, then sign up at https://${step.domain} to confirm.` +
+        `redeploy, then ${step.verification.signUpTarget(step.domain)} to confirm.` +
+        step.verification.webAppNote +
         unsupported(step.oauthUnsupported) +
         (step.appleProject ? ` ${appleProjectNextStep()}` : "") +
         (step.instanceUrl
@@ -1111,8 +1141,8 @@ export function agentNextAction(step: DeployNextStep, cli: string): string {
       // Records are verified; the certificate is Clerk's side and nobody can
       // speed it up. Same message the wizard's footer prints for this state.
       return (
-        `SSL certificate still pending for ${step.domain}. Clerk issues it automatically now that ` +
-        `DNS is verified; re-run \`clerk deploy status\` in a few minutes.` +
+        `SSL certificate still pending for ${step.domain}. Clerk issues it automatically; ` +
+        `re-run \`clerk deploy status\` in a few minutes.` +
         domains(step.domainsUrl) +
         nativeApple
       );
@@ -1130,7 +1160,11 @@ export async function loadProductionDomain(
   ctx: DeployContext,
 ): Promise<ApplicationDomain | undefined> {
   const domains = await listApplicationDomains(ctx.appId);
-  return domains.data.find((domain) => !domain.is_satellite) ?? domains.data[0];
+  return (
+    domains.data.find((domain) => domain.is_primary === true) ??
+    domains.data.find((domain) => !domain.is_satellite) ??
+    domains.data[0]
+  );
 }
 
 export function discoverEnabledOAuthProviderSlugs(config: Record<string, unknown>): string[] {
@@ -1148,18 +1182,19 @@ export async function waitForDeployStatus(
   appId: string,
   domainIdOrName: string,
   domain: string,
+  verification: DomainVerification,
   handlers: DeployProgressHandlers,
-  options: { triggerCheck?: boolean } & DomainCheckOptions = {},
+  options: { checkAlreadyTriggered?: boolean } & DomainCheckOptions = {},
 ): Promise<DeployStatusOutcome> {
   const notFound = domainRequest(options);
-  if (options.triggerCheck !== false) {
+  if (verification.triggerDnsCheck && !options.checkAlreadyTriggered) {
     await triggerDeployStatusCheck(appId, domainIdOrName, options);
   }
   let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName), notFound);
   let status = deployComponentStatusFromDomainStatus(response);
   handlers.onStatus?.({ verified: response.status === "complete", status });
 
-  const labels = deployComponentLabels("dns", domain);
+  const labels = deployComponentLabels(verification.component, domain);
   const verified = await handlers.runVerification(labels.progress, async (spinner) => {
     if (response.status === "complete") return true;
 
@@ -1233,7 +1268,9 @@ export function deployComponentStatusFromDomainStatus(
   return {
     dns: checkStatusComplete(response.dns),
     ssl: checkStatusComplete(response.ssl),
-    mail: checkStatusComplete(response.mail),
+    // PLAPI sends mail only for a domain that needs its own email DNS, so a
+    // clerk.app domain, which sends through Clerk's shared sender, has none.
+    mail: response.mail === undefined || checkStatusComplete(response.mail),
   };
 }
 

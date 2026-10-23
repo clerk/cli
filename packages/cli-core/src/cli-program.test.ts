@@ -61,7 +61,7 @@ test("deploy exposes the domain and confirmation options", () => {
   const deploy = program.commands.find((command) => command.name() === "deploy")!;
   const optionNames = deploy.options.map((option) => option.long);
 
-  expect(optionNames).toEqual(["--domain", "--yes"]);
+  expect(optionNames).toEqual(["--domain", "--clerk-app", "--yes"]);
 });
 
 test("deploy --help describes the bare command, not only the status subcommand", () => {
@@ -87,24 +87,48 @@ test("deploy --help describes the bare command, not only the status subcommand",
       "",
       "When run by an agent (or without a TTY), it never prompts. It prints a JSON",
       "status report with the current state and a `nextAction` field saying what to",
-      "do next, and creates the production instance only when `--domain` is passed.",
-      "`clerk deploy status` prints the same report; add `--wait` to keep checking",
-      "until DNS, SSL, and email DNS are verified.",
+      "do next, and creates the production instance only when `--domain` or",
+      "`--clerk-app` is passed. `clerk deploy status` prints the same report; add",
+      "`--wait` to keep checking until DNS, SSL, and email DNS are verified.",
+      "",
+      "`--clerk-app <name>` uses a free <name>.clerk.app domain without prompting,",
+      "if your app can. It has no DNS records to add. A hosting domain such as",
+      "acme.vercel.app, typed at the prompt or passed as `--domain`, gets a free",
+      "clerk.app domain as its primary and is added beside it as a hosting domain.",
+      "",
+      "`clerk deploy add-domain <domain>` adds a domain you own, such as acme.com,",
+      "and prints its DNS records, or your app's domain on a hosting provider, such",
+      "as acme.vercel.app, and prints how to serve Clerk there through a /__clerk",
+      "route in your app.",
+      "",
+      "`clerk deploy use-domain <domain>` makes an added domain you own the",
+      "primary domain, or switches back to clerk.app. Run it again until the domain",
+      "is ready. `clerk deploy domains` lists the domains, and",
+      "`clerk deploy remove-domain <domain>` removes one.",
       "",
       "Options:",
-      "  --domain <domain>  Production domain you own (skips the prompt; in agent mode,",
-      "                     creates the production instance)",
-      "  -h, --help         Display help for command",
-      "  --yes              Skip the confirmations before the production instance is",
-      "                     created",
+      "  --clerk-app <name>  Use the free <name>.clerk.app domain without prompting",
+      "  --domain <domain>   Production domain you own (skips the prompt; in agent",
+      "                      mode, creates the production instance)",
+      "  -h, --help          Display help for command",
+      "  --yes               Skip the confirmations before the production instance is",
+      "                      created",
       "",
       "Commands:",
-      "  help    [command]  Display help for command",
-      "  status  [options]  Show production deploy status (read-only)",
+      "  add-domain     <domain>            Add a domain you own (like acme.com), your",
+      "                                     app's domain on a hosting provider (like",
+      "                                     acme.vercel.app), or a free clerk.app",
+      "                                     domain (like acme.clerk.app).",
+      "  domains                            List production's domains",
+      "  help           [command]           Display help for command",
+      "  remove-domain  [options] <domain>  Remove a domain",
+      "  status         [options]           Show production deploy status (read-only)",
+      "  use-domain     [options] <domain>  Make an added domain the primary domain",
       "",
       "Examples:",
       "  $ clerk deploy                       Interactive production setup",
       "  $ clerk deploy --domain example.com  Use this domain without prompting",
+      "  $ clerk deploy --clerk-app acme      Use acme.clerk.app without prompting",
       "  $ clerk deploy status --wait         Verify DNS, SSL, email DNS, and OAuth",
       "",
     ].join("\n"),
@@ -120,9 +144,26 @@ test("deploy passes its options through to the command", async () => {
   ).rejects.toThrow('Invalid --domain "https://example.com"');
 });
 
-test("deploy status refuses the flags that only create", async () => {
+test("deploy takes --clerk-app on the bare command", async () => {
   await expect(
-    createProgram().parseAsync(["deploy", "status", "--domain", "example.com"], { from: "user" }),
+    createProgram().parseAsync(["deploy", "--clerk-app", "-bad-"], { from: "user" }),
+  ).rejects.toThrow("Invalid --clerk-app name");
+});
+
+test("deploy refuses --domain and --clerk-app together", async () => {
+  await expect(
+    createProgram().parseAsync(["deploy", "--domain", "example.com", "--clerk-app", "acme"], {
+      from: "user",
+    }),
+  ).rejects.toThrow("Pass --domain or --clerk-app, not both.");
+});
+
+test.each([
+  ["--domain", "example.com"],
+  ["--clerk-app", "acme"],
+])("deploy status refuses %s, which only creates", async (flag, value) => {
+  await expect(
+    createProgram().parseAsync(["deploy", "status", flag, value], { from: "user" }),
   ).rejects.toThrow("apply to `clerk deploy`, not `clerk deploy status`");
 });
 

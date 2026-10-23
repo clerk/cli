@@ -465,6 +465,8 @@ describe("plapi", () => {
           name: "example.com",
           is_satellite: false,
           is_provider_domain: false,
+          is_clerk_managed: false,
+          is_web_host: false,
           frontend_api_url: "https://clerk.example.com",
           development_origin: "",
           cname_targets: [
@@ -568,6 +570,8 @@ describe("plapi", () => {
             name: "example.com",
             is_satellite: false,
             is_provider_domain: false,
+            is_clerk_managed: false,
+            is_web_host: false,
             frontend_api_url: "https://clerk.example.com",
             accounts_portal_url: "https://accounts.example.com",
             development_origin: "",

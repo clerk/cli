@@ -3,6 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CliError, ERROR_CODE, EXIT_CODE, PlapiError } from "../../lib/errors.ts";
+import { domainVerification } from "./domain-verification.ts";
 import {
   captureTelemetryPayload,
   fakeTelemetryCommand,
@@ -29,7 +30,7 @@ const { _setConfigDir, setProfile } = await import("../../lib/config.ts");
 const { setMode } = await import("../../mode.ts");
 const { beginInterrupt, interruptedExitCode, _resetInterruptState } =
   await import("../../lib/signals.ts");
-const { deployStatus, humanNextAction } = await import("./status-command.ts");
+const { deployStatus, humanNextAction, renderHuman } = await import("./status-command.ts");
 const { startCommandTelemetry, telemetryResultForSoftExit } =
   await import("../../lib/telemetry.ts");
 // The test process isn't a clerk install, so commands would start with bun
@@ -177,6 +178,44 @@ describe("deploy status", () => {
     expect(payload.state).toBe("not_started");
     expect(payload.complete).toBe(false);
     expect(captured.out).not.toContain("error");
+    expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
+  });
+
+  test("a clerk.app domain waits on SSL alone, since PLAPI sends no mail check for it", async () => {
+    mockFetchApplication.mockResolvedValue(appWith(true));
+    mockListApplicationDomains.mockResolvedValue({
+      data: [
+        {
+          object: "domain",
+          id: "dmn_1",
+          name: "acme.clerk.app",
+          is_satellite: false,
+          is_provider_domain: false,
+          is_clerk_managed: true,
+          frontend_api_url: "https://clerk.acme.clerk.app",
+          development_origin: "",
+          cname_targets: [],
+        },
+      ],
+      total_count: 1,
+    });
+    mockOAuthComplete();
+    mockGetApplicationDomainStatus.mockResolvedValue({
+      dns: { status: "complete", cnames: {} },
+      ssl: { status: "not_started", required: true, failure_hints: null },
+      ssl_hosts: {
+        "clerk.acme.clerk.app": { status: "not_started", required: true, failure_hints: null },
+      },
+      proxy: { status: "not_configured", required: false },
+      status: "incomplete",
+    });
+
+    await deployStatus();
+
+    const payload = JSON.parse(captured.out);
+    expect(payload.domainStatus).toEqual({ dns: "complete", ssl: "pending", mail: "complete" });
+    expect(payload.nextAction).toStartWith("SSL certificate still pending for acme.clerk.app.");
+    expect(payload.nextAction).not.toContain("Email DNS");
     expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
   });
 
@@ -787,7 +826,7 @@ describe("deploy status", () => {
 
     const output = stripAnsi(captured.err);
     expect(output).toContain(
-      "SSL certificate still pending for example.com. Clerk issues it automatically now that DNS is verified; re-run `clerk deploy status` in a few minutes. Visit the Clerk Dashboard domains page to monitor its status there: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
+      "SSL certificate still pending for example.com. Clerk issues it automatically; re-run `clerk deploy status` in a few minutes. Visit the Clerk Dashboard domains page to monitor its status there: https://dashboard.clerk.com/apps/app_1/instances/ins_prod/domains",
     );
     expect(output).not.toContain("Ask the user to visit");
     expect(output).not.toContain("offer to open it");
@@ -1217,6 +1256,7 @@ describe("humanNextAction", () => {
       kind: "complete" as const,
       domain: "example.com",
       productionInstanceId: "ins_prod",
+      verification: domainVerification(false),
       oauthUnsupported: ["x"],
       instanceUrl: URL,
     },
@@ -1251,6 +1291,7 @@ describe("humanNextAction", () => {
       kind: "complete" as const,
       domain: "example.com",
       productionInstanceId: "ins_prod",
+      verification: domainVerification(false),
       oauthUnsupported: [],
       instanceUrl: URL,
     };
@@ -1272,6 +1313,7 @@ describe("humanNextAction", () => {
         kind: "complete",
         domain: "example.com",
         productionInstanceId,
+        verification: domainVerification(false),
         oauthUnsupported: [],
         instanceUrl: URL,
       });
@@ -1298,5 +1340,60 @@ describe("humanNextAction", () => {
       "DNS records not found yet for example.com. Once they're added, run `clerk deploy` again to resume. " +
         `Propagation usually takes minutes. Visit the Clerk Dashboard domains page to monitor its status there: ${URL}/domains`,
     );
+  });
+});
+
+describe("clerk.app domains", () => {
+  const captured = useCaptureLog();
+  const URL = "https://dashboard.clerk.com/apps/app_1/instances/ins_prod";
+
+  test("the human report shows SSL only for a clerk.app domain", () => {
+    renderHuman({
+      complete: false,
+      state: "domain_pending",
+      domain: "acme.clerk.app",
+      clerkManaged: true,
+      productionInstanceId: "ins_prod",
+      domainStatus: { dns: "complete", ssl: "pending", mail: "complete" },
+      pendingDnsRecords: [],
+      oauth: { complete: true, configured: [], pending: [], unsupported: [], setup: [] },
+      urls: { domains: `${URL}/domains`, instance: URL },
+      hostSetup: [],
+      nextAction: "",
+    });
+
+    expect(captured.err).toContain("Domain   SSL: pending");
+    expect(captured.err).not.toContain("DNS: complete");
+    expect(captured.err).toContain("SSL certificate still pending for acme.clerk.app");
+  });
+
+  test.each([
+    [true, "sign up on your deployed app to confirm"],
+    [false, "sign up at https://example.com to confirm"],
+  ])("complete with clerkManaged %p says to %s", (clerkManaged, phrase) => {
+    const line = humanNextAction({
+      kind: "complete",
+      domain: "example.com",
+      productionInstanceId: "ins_prod",
+      verification: domainVerification(clerkManaged),
+      oauthUnsupported: [],
+      instanceUrl: URL,
+    });
+    expect(line).toContain(phrase);
+  });
+
+  test.each([
+    [true, true],
+    [false, false],
+  ])("complete with clerkManaged %p mentions the web proxy: %p", (clerkManaged, mentioned) => {
+    const line = humanNextAction({
+      kind: "complete",
+      domain: "example.com",
+      productionInstanceId: "ins_prod",
+      verification: domainVerification(clerkManaged),
+      oauthUnsupported: [],
+      instanceUrl: URL,
+    });
+    expect(line.includes("https://<domain>/__clerk")).toBe(mentioned);
   });
 });

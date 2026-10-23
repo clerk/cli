@@ -33,6 +33,9 @@ const mockListApplicationDomains = mock();
 const mockCreateProductionInstance = mock();
 const mockGetApplicationDomainStatus = mock();
 const mockTriggerApplicationDomainDNSCheck = mock();
+const mockCheckClerkAppSlug = mock();
+const mockCreateApplicationDomain = mock();
+const mockMakeApplicationDomainPrimary = mock();
 const mockSleep = mock();
 const mockOpenBrowser = mock();
 
@@ -59,6 +62,10 @@ mock.module("../../lib/plapi.ts", () => ({
   triggerApplicationDomainDNSCheck: (...args: unknown[]) =>
     mockTriggerApplicationDomainDNSCheck(...args),
   patchInstanceConfig: (...args: unknown[]) => mockPatchInstanceConfig(...args),
+  checkClerkAppSlug: (...args: unknown[]) => mockCheckClerkAppSlug(...args),
+  createApplicationDomain: (...args: unknown[]) => mockCreateApplicationDomain(...args),
+  makeApplicationDomainPrimary: (...args: unknown[]) => mockMakeApplicationDomainPrimary(...args),
+  deleteApplicationDomain: mock(),
 }));
 
 mock.module("../../lib/sleep.ts", () => ({
@@ -78,6 +85,7 @@ const { deploy } = await import("./index.ts");
 const { deployStatus } = await import("./status-command.ts");
 const { providerSetupIntro, showOAuthWalkthrough } = await import("./providers.ts");
 const { collectCustomDomain } = await import("./prompts.ts");
+const { isWebHostName } = await import("./domains.ts");
 // The test process isn't a clerk install, so commands would start with bun
 // and the test runner. Tests that cover the prefix pass one explicitly.
 const { _setCliPrefix } = await import("../../lib/cli-invocation.ts");
@@ -262,6 +270,12 @@ describe("deploy", () => {
     );
     mockListIOSApplications.mockResolvedValue([]);
     mockGetNativeSettings.mockResolvedValue({ object: "native_settings", api_enabled: true });
+    mockCheckClerkAppSlug.mockResolvedValue({
+      enabled: false,
+      valid: false,
+      available: false,
+      suggestion: null,
+    });
     stubCreateProductionInstance();
     mockTriggerApplicationDomainDNSCheck.mockResolvedValue(
       domainStatus({ status: "complete", dns: true, ssl: true, mail: true }),
@@ -302,6 +316,9 @@ describe("deploy", () => {
     mockCreateProductionInstance.mockReset();
     mockGetApplicationDomainStatus.mockReset();
     mockTriggerApplicationDomainDNSCheck.mockReset();
+    mockCheckClerkAppSlug.mockReset();
+    mockCreateApplicationDomain.mockReset();
+    mockMakeApplicationDomainPrimary.mockReset();
     mockSleep.mockReset();
     mockOpenBrowser.mockReset();
     consoleSpy?.mockRestore();
@@ -447,6 +464,7 @@ describe("deploy", () => {
       productionConfig?: Record<string, unknown>;
       developmentConfig?: Record<string, unknown>;
       cnameTargets?: readonly { host: string; value: string; required: boolean }[];
+      clerkManaged?: boolean;
     } = {},
   ) {
     const instanceId = options.instanceId ?? "ins_prod_mock";
@@ -489,6 +507,7 @@ describe("deploy", () => {
           name: domain,
           is_satellite: false,
           is_provider_domain: false,
+          is_clerk_managed: options.clerkManaged ?? false,
           frontend_api_url: `https://clerk.${domain}`,
           accounts_portal_url: `https://accounts.${domain}`,
           development_origin: "",
@@ -1044,7 +1063,7 @@ describe("deploy", () => {
       expect(captured.out).toBe("");
     });
 
-    test.each(["https://example.com", "my-app.vercel.app", "", ...HOSTING_DOMAINS])(
+    test.each(["https://example.com", "", ...HOSTING_DOMAINS.filter((d) => !isWebHostName(d))])(
       "rejects --domain %p before reading anything",
       async (domain) => {
         mockIsAgent.mockReturnValue(true);
@@ -1054,6 +1073,20 @@ describe("deploy", () => {
 
         expect((error as CliError).exitCode).toBe(EXIT_CODE.USAGE);
         expect(mockFetchApplication).not.toHaveBeenCalled();
+        expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      },
+    );
+
+    test.each(["my-app.vercel.app", ...HOSTING_DOMAINS.filter(isWebHostName)])(
+      "rejects --domain %p for an app without clerk.app, creating nothing",
+      async (domain) => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+
+        const error = await runDeploy({ domain }).catch((e: unknown) => e);
+
+        expect((error as CliError).exitCode).toBe(EXIT_CODE.USAGE);
+        expect((error as CliError).message).toContain(HOSTING_DOMAIN_REASON);
         expect(mockCreateProductionInstance).not.toHaveBeenCalled();
       },
     );
@@ -1779,6 +1812,19 @@ describe("deploy", () => {
         validate: (value: string) => true | string;
       };
       expect(validate(domain)).toContain(HOSTING_DOMAIN_REASON);
+    });
+
+    test("tells a person who typed a clerk.app domain how to choose clerk.app instead", async () => {
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await collectCustomDomain({ clerkAppOffered: true });
+
+      const firstInputArg = mockInput.mock.calls[0]?.[0] as {
+        validate: (value: string) => true | string;
+      };
+      expect(firstInputArg.validate("demo.clerk.app")).toBe(
+        "For a clerk.app domain, press Ctrl-C, run `clerk deploy` again, and choose Use a free clerk.app domain.",
+      );
     });
 
     test("trims the collected production domain before returning it", async () => {
@@ -4266,6 +4312,645 @@ describe("deploy", () => {
         expect(payload.outcome).toBe("success");
         expect(payload.stage).toBe("complete");
       });
+    });
+  });
+  describe("clerk.app domains", () => {
+    function stubCreateClerkAppInstance(options: { liveAfterCreate?: boolean } = {}) {
+      mockCreateProductionInstance.mockImplementation(
+        (_appId: string, params: { clerk_app_slug: string }) => {
+          if (options.liveAfterCreate) {
+            mockLiveProduction({
+              domain: `${params.clerk_app_slug}.clerk.app`,
+              cnameTargets: [],
+              clerkManaged: true,
+            });
+          }
+          return clerkAppInstance(params.clerk_app_slug);
+        },
+      );
+    }
+
+    function clerkAppInstance(slug: string) {
+      const params = { clerk_app_slug: slug };
+      return {
+        object: "instance",
+        id: "ins_prod_mock",
+        environment_type: "production" as const,
+        active_domain: {
+          object: "domain",
+          id: "dmn_prod_mock",
+          name: `${params.clerk_app_slug}.clerk.app`,
+          is_satellite: false,
+          is_provider_domain: false,
+          is_clerk_managed: true,
+          frontend_api_url: `https://clerk.${params.clerk_app_slug}.clerk.app`,
+          development_origin: "",
+          created_at: "2026-05-06T00:00:00Z",
+          updated_at: "2026-05-06T00:00:00Z",
+        },
+        publishable_key: "pk_live_test",
+        created_at: 1770000000000,
+        updated_at: 1770000000000,
+      };
+    }
+
+    function noOAuthProviders() {
+      mockFetchInstanceConfig.mockResolvedValue({});
+      mockFetchInstanceConfigSchema.mockResolvedValue(schemaResponse({}));
+    }
+
+    function clerkAppEnabled(available = true, enabled = true) {
+      mockCheckClerkAppSlug.mockResolvedValue({
+        enabled,
+        valid: true,
+        available,
+        suggestion: null,
+      });
+    }
+
+    const selectMessages = () =>
+      mockSelect.mock.calls.map((call) => (call[0] as { message: string }).message);
+
+    test("offers own domain or a free clerk.app domain with the dashboard's wording", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject();
+      clerkAppEnabled();
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockSelect.mockResolvedValueOnce("own");
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await runDeploy();
+
+      expect(mockCheckClerkAppSlug).toHaveBeenCalledWith("app_xyz789", "my-saas-app");
+      const choices = (mockSelect.mock.calls[0]![0] as { choices: unknown[] }).choices;
+      expect(choices).toEqual([
+        {
+          name: "Use my own domain",
+          value: "own",
+          description: "Use a domain you already own. You'll add a few DNS records.",
+        },
+        {
+          name: "Use a free clerk.app domain",
+          value: "clerk_app",
+          description: "No DNS records to add. You can switch to your own domain later.",
+        },
+      ]);
+    });
+
+    test("does not offer clerk.app when the slug check reports it disabled", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject();
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await runDeploy();
+
+      expect(selectMessages()).not.toContain("Production domain");
+      expect(stripAnsi(captured.err)).toContain("Choose a production domain you own");
+    });
+
+    test("does not offer clerk.app when the slug check fails", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject();
+      mockCheckClerkAppSlug.mockRejectedValue(
+        new PlapiError(404, JSON.stringify({ errors: [{ code: "resource_not_found" }] }), "x"),
+      );
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockInput.mockResolvedValueOnce("example.com");
+
+      await runDeploy();
+
+      expect(selectMessages()).not.toContain("Production domain");
+    });
+
+    test("a clerk.app deploy creates by slug and skips every DNS records step", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject();
+      noOAuthProviders();
+      clerkAppEnabled();
+      stubCreateClerkAppInstance();
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("clerk_app");
+      mockInput.mockResolvedValueOnce("acme");
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "complete", dns: true, ssl: true }),
+      );
+
+      await runDeploy();
+      const err = flat(captured.err);
+
+      expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
+        clerk_app_slug: "acme",
+        environment_type: "production",
+        clone_instance_id: "ins_dev_123",
+      });
+      expect(err).toContain(
+        "Clerk will set up acme.clerk.app for you. There are no DNS records to add.",
+      );
+      expect(err).toContain(
+        "There are no DNS records to add for acme.clerk.app. Clerk is issuing its SSL certificate.",
+      );
+      expect(err).not.toContain("not verified yet");
+      expect(err).toContain("SSL certificate issued for acme.clerk.app");
+      expect(err).toContain("SSL: ✓");
+      expect(err).not.toContain("Email DNS:");
+      expect(err).toContain(
+        "add it with `clerk deploy add-domain <domain>`, then run `clerk deploy use-domain <domain>`",
+      );
+      expect(err).toContain("sign up on your deployed app to confirm it works");
+      expect(err).toContain("Clerk proxy served at https://<domain>/__clerk");
+      expect(selectMessages()).toEqual(["Production domain"]);
+      expect(mockConfirm).toHaveBeenCalledTimes(2);
+      expect(mockTriggerApplicationDomainDNSCheck).not.toHaveBeenCalled();
+    });
+
+    test("clerk.app turned off between the name check and the create says so", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject();
+      noOAuthProviders();
+      clerkAppEnabled();
+      mockCreateProductionInstance.mockRejectedValue(
+        new PlapiError(403, JSON.stringify({ errors: [{ code: "feature_not_enabled" }] }), "x"),
+      );
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("clerk_app");
+      mockInput.mockResolvedValueOnce("acme");
+
+      const error = await runDeploy().catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.CLERK_APP_NOT_ENABLED);
+      expect((error as CliError).message).toContain("No production instance was created.");
+    });
+
+    test("SSL still pending on a clerk.app domain offers a retry without DNS records", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject();
+      noOAuthProviders();
+      clerkAppEnabled();
+      stubCreateClerkAppInstance();
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+      mockSelect.mockResolvedValueOnce("clerk_app").mockResolvedValueOnce("skip");
+      mockInput.mockResolvedValueOnce("acme");
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false }),
+      );
+
+      await runDeploy();
+      const err = flat(captured.err);
+
+      expect(err).toContain("SSL certificate still pending for acme.clerk.app");
+      expect(err).not.toContain("records not found");
+      expect(selectMessages()).toEqual(["Production domain", "SSL verification"]);
+      expect(err).toContain("Skipping SSL verification for now.");
+    });
+
+    test("a taken clerk.app name asks again with a free variant as the default", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject();
+      mockCheckClerkAppSlug.mockImplementation((_appId: string, slug: string) => ({
+        enabled: true,
+        valid: true,
+        available: slug !== "taken",
+        suggestion: slug === "taken" ? "taken-3f2a1" : null,
+      }));
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockSelect.mockResolvedValueOnce("clerk_app");
+      mockInput.mockResolvedValueOnce("taken").mockResolvedValueOnce("taken-3f2a1");
+
+      await runDeploy();
+
+      expect(mockInput).toHaveBeenCalledTimes(2);
+      expect(mockInput.mock.calls[1]?.[0]).toMatchObject({ default: "taken-3f2a1" });
+      expect(stripAnsi(captured.err)).toContain("taken.clerk.app is taken. Try taken-3f2a1.");
+      expect(stripAnsi(captured.err)).toContain("taken-3f2a1.clerk.app");
+    });
+
+    test("the slug prompt checks the format on every keystroke without calling the API", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject();
+      clerkAppEnabled();
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+      mockSelect.mockResolvedValueOnce("clerk_app");
+      mockInput.mockResolvedValueOnce("acme");
+
+      await runDeploy();
+      const validate = (mockInput.mock.calls[0]![0] as { validate: (v: string) => unknown })
+        .validate;
+      const checksBefore = mockCheckClerkAppSlug.mock.calls.length;
+
+      expect(validate("-acme")).toContain("no hyphen at the start or end");
+      expect(validate("ab")).toContain("3 to 63");
+      expect(validate("acme")).toBe(true);
+      expect(mockCheckClerkAppSlug.mock.calls.length).toBe(checksBefore);
+    });
+
+    test("--clerk-app skips the domain prompts in human mode", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject();
+      noOAuthProviders();
+      clerkAppEnabled();
+      stubCreateClerkAppInstance();
+      mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+
+      await runDeploy({ clerkApp: "Acme.clerk.app" });
+
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockInput).not.toHaveBeenCalled();
+      expect(mockCheckClerkAppSlug).toHaveBeenCalledWith("app_xyz789", "acme");
+      expect(mockCreateProductionInstance).toHaveBeenCalledWith(
+        "app_xyz789",
+        expect.objectContaining({ clerk_app_slug: "acme" }),
+      );
+    });
+
+    test("--clerk-app in agent mode creates the instance and emits the report", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      clerkAppEnabled();
+      stubCreateClerkAppInstance({ liveAfterCreate: true });
+      mockGetApplicationDomainStatus.mockResolvedValue(
+        domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
+      );
+
+      await runDeploy({ clerkApp: "acme" });
+      const payload = JSON.parse(captured.out);
+
+      expect(mockCreateProductionInstance).toHaveBeenCalledTimes(1);
+      expect(payload.domain).toBe("acme.clerk.app");
+      expect(payload.clerkManaged).toBe(true);
+      expect(payload.pendingDnsRecords).toEqual([]);
+      expect(payload.nextAction).toContain("SSL certificate still pending for acme.clerk.app");
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect((await readConfig()).profiles[process.cwd()]?.instances.production).toBe(
+        "ins_prod_mock",
+      );
+    });
+
+    test("--clerk-app in agent mode does not create again once production exists", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockLiveProduction({ domain: "acme.clerk.app", cnameTargets: [], clerkManaged: true });
+
+      await runDeploy({ clerkApp: "acme" });
+
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(JSON.parse(captured.out).domain).toBe("acme.clerk.app");
+    });
+
+    test("--clerk-app can't be checked while the existing instance's domain is provisioning", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockLiveProduction({ domain: "acme.clerk.app", cnameTargets: [], clerkManaged: true });
+      mockListApplicationDomains.mockResolvedValue({ data: [], total_count: 0 });
+
+      const error = await runDeploy({ clerkApp: "acme" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_UNCHECKED);
+      expect((error as CliError).message).toContain("so --clerk-app acme could not be checked");
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      expect(captured.out).toBe("");
+    });
+
+    test.each(["human", "agent"] as const)(
+      "--clerk-app against production on another domain is a usage error (%s)",
+      async (mode) => {
+        mockIsAgent.mockReturnValue(mode === "agent");
+        await linkedProject({
+          instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+        });
+
+        const error = await runDeploy({ clerkApp: "acme" }).catch((e: unknown) => e);
+
+        expect(error).toBeInstanceOf(CliError);
+        expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_CONFLICT);
+        expect((error as CliError).exitCode).toBe(EXIT_CODE.USAGE);
+        expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      },
+    );
+
+    const olderPlapi = () =>
+      mockCheckClerkAppSlug.mockRejectedValue(
+        new PlapiError(404, JSON.stringify({ errors: [{ code: "resource_not_found" }] }), "x"),
+      );
+    const featureOff = () => clerkAppEnabled(true, false);
+    test.each([
+      ["a PLAPI without clerk.app", "human", olderPlapi],
+      ["a PLAPI without clerk.app", "agent", olderPlapi],
+      ["clerk.app turned off", "human", featureOff],
+      ["clerk.app turned off", "agent", featureOff],
+    ] as const)("--clerk-app refuses to create production on %s (%s)", async (_, mode, arrange) => {
+      mockIsAgent.mockReturnValue(mode === "agent");
+      await linkedProject();
+      arrange();
+      mockConfirm.mockResolvedValue(true);
+
+      const error = await runDeploy({ clerkApp: "acme" }).catch((e: unknown) => e);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.CLERK_APP_NOT_ENABLED);
+      expect((error as CliError).message).toContain("No production instance was created.");
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+    });
+
+    test("--clerk-app with a taken name refuses in agent mode and names the free variant", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCheckClerkAppSlug.mockResolvedValue({
+        enabled: true,
+        valid: true,
+        available: false,
+        suggestion: "acme-3f2a1",
+      });
+
+      const error = await runDeploy({ clerkApp: "acme" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.CLERK_APP_SLUG_UNAVAILABLE);
+      expect((error as CliError).message).toBe("acme.clerk.app is taken. Try acme-3f2a1.");
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+    });
+
+    test("--clerk-app with a name the server rejects refuses in agent mode and names the free variant", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+      mockCheckClerkAppSlug.mockResolvedValue({
+        enabled: true,
+        valid: false,
+        available: false,
+        suggestion: "acme-app",
+      });
+
+      const error = await runDeploy({ clerkApp: "acme" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.CLERK_APP_SLUG_INVALID);
+      expect((error as CliError).message).toEndWith("Try acme-app.");
+      expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+    });
+
+    test("an invalid --clerk-app name fails before any request", async () => {
+      mockIsAgent.mockReturnValue(true);
+      await linkedProject();
+
+      const error = await runDeploy({ clerkApp: "-bad-" }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.CLERK_APP_SLUG_INVALID);
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+    });
+
+    describe("a hosting domain typed as the production domain", () => {
+      function stubCreateWithHosting() {
+        mockCreateProductionInstance.mockImplementation(
+          (_appId: string, params: { clerk_app_slug: string; domain: string }) => {
+            mockLiveProduction({
+              domain: `${params.clerk_app_slug}.clerk.app`,
+              cnameTargets: [],
+              clerkManaged: true,
+              developmentConfig: {},
+            });
+            const primary = clerkAppInstance(params.clerk_app_slug).active_domain;
+            mockListApplicationDomains.mockResolvedValue({
+              data: [
+                { ...primary, is_primary: true, is_web_host: false },
+                {
+                  ...primary,
+                  id: "dmn_hosting",
+                  name: params.domain,
+                  is_clerk_managed: false,
+                  is_web_host: true,
+                  is_primary: false,
+                  proxy_url: `https://${params.domain}/__clerk`,
+                  frontend_api_url: "https://frontend-api.clerk.dev",
+                },
+              ],
+              total_count: 2,
+            });
+            return clerkAppInstance(params.clerk_app_slug);
+          },
+        );
+      }
+
+      const NOTICE =
+        "my-app.vercel.app looks like a hosting domain, so your app gets a free clerk.app domain.";
+
+      test("the wizard names a clerk.app primary after the host and adds the host beside it", async () => {
+        mockIsAgent.mockReturnValue(false);
+        await linkedProject();
+        noOAuthProviders();
+        clerkAppEnabled();
+        stubCreateWithHosting();
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(true);
+        mockSelect.mockResolvedValueOnce("own");
+        mockInput.mockResolvedValueOnce("My-App.vercel.app").mockResolvedValueOnce("my-app");
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "complete", dns: true, ssl: true }),
+        );
+
+        await runDeploy();
+        const err = flat(captured.err);
+
+        expect(mockCheckClerkAppSlug).toHaveBeenCalledWith("app_xyz789", "my-app");
+        expect(mockInput.mock.calls[1]?.[0]).toMatchObject({
+          default: "my-app",
+        });
+        expect(mockCreateProductionInstance).toHaveBeenCalledWith("app_xyz789", {
+          domain: "my-app.vercel.app",
+          clerk_app_slug: "my-app",
+          environment_type: "production",
+          clone_instance_id: "ins_dev_123",
+        });
+        expect(err).toContain(NOTICE);
+        expect(err).toContain("my-app.vercel.app is added beside it as a hosting domain.");
+        expect(err).toContain("Proxy URL:  https://my-app.vercel.app/__clerk");
+        expect(err).toContain("SSL certificate issued for my-app.clerk.app");
+        expect(err).not.toContain("signs in through the Clerk proxy");
+      });
+
+      test("a taken first label prefills the check's suggestion", async () => {
+        mockIsAgent.mockReturnValue(false);
+        await linkedProject();
+        mockCheckClerkAppSlug.mockImplementation(async (_appId: string, slug: string) => ({
+          enabled: true,
+          valid: true,
+          available: slug !== "my-app",
+          suggestion: slug === "my-app" ? "my-app-3f2a1" : null,
+        }));
+        mockConfirm.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        mockSelect.mockResolvedValueOnce("own");
+        mockInput.mockResolvedValueOnce("my-app.vercel.app").mockResolvedValueOnce("my-app-3f2a1");
+
+        await runDeploy();
+
+        expect(mockInput.mock.calls[1]?.[0]).toMatchObject({
+          default: "my-app-3f2a1",
+        });
+        expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+      });
+
+      test("--domain with --yes uses the picked name and says which", async () => {
+        mockIsAgent.mockReturnValue(false);
+        await linkedProject();
+        noOAuthProviders();
+        clerkAppEnabled();
+        stubCreateWithHosting();
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "complete", dns: true, ssl: true }),
+        );
+
+        await runDeploy({ domain: "my-app.vercel.app", yes: true });
+        const err = flat(captured.err);
+
+        expect(mockInput).not.toHaveBeenCalled();
+        expect(err).toContain(NOTICE);
+        expect(err).toContain(
+          "Using my-app.clerk.app. Pass --clerk-app <name> to choose another name.",
+        );
+        expect(mockCreateProductionInstance).toHaveBeenCalledWith(
+          "app_xyz789",
+          expect.objectContaining({
+            domain: "my-app.vercel.app",
+            clerk_app_slug: "my-app",
+          }),
+        );
+      });
+
+      test("--domain in agent mode creates both and reports the proxy step", async () => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+        clerkAppEnabled();
+        stubCreateWithHosting();
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "incomplete", dns: true, ssl: false }),
+        );
+
+        await runDeploy({ domain: "my-app.vercel.app" });
+        const payload = JSON.parse(captured.out);
+
+        expect(payload.domain).toBe("my-app.clerk.app");
+        expect(payload.hostingDomain).toMatchObject({
+          domain: "my-app.vercel.app",
+          kind: "hosting",
+          added: true,
+          proxyUrl: "https://my-app.vercel.app/__clerk",
+        });
+        expect(payload.hostingDomain.nextAction).toContain(
+          "Serve the Clerk proxy at https://my-app.vercel.app/__clerk",
+        );
+      });
+
+      test("--domain with --clerk-app in agent mode uses that name", async () => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+        clerkAppEnabled();
+        stubCreateWithHosting();
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "complete", dns: true, ssl: true }),
+        );
+
+        await runDeploy({ domain: "my-app.vercel.app", clerkApp: "acme" });
+
+        expect(mockCheckClerkAppSlug).toHaveBeenCalledWith("app_xyz789", "acme");
+        expect(mockCreateProductionInstance).toHaveBeenCalledWith(
+          "app_xyz789",
+          expect.objectContaining({
+            domain: "my-app.vercel.app",
+            clerk_app_slug: "acme",
+          }),
+        );
+        expect(JSON.parse(captured.out).domain).toBe("acme.clerk.app");
+      });
+
+      test("a rerun in agent mode only reports", async () => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject({
+          instances: {
+            development: "ins_dev_123",
+            production: "ins_prod_mock",
+          },
+        });
+        stubCreateWithHosting();
+        await mockCreateProductionInstance("app_xyz789", {
+          domain: "my-app.vercel.app",
+          clerk_app_slug: "my-app",
+        });
+        mockCreateProductionInstance.mockClear();
+        mockGetApplicationDomainStatus.mockResolvedValue(
+          domainStatus({ status: "complete", dns: true, ssl: true }),
+        );
+
+        await runDeploy({ domain: "my-app.vercel.app" });
+
+        expect(mockCreateProductionInstance).not.toHaveBeenCalled();
+        expect(JSON.parse(captured.out).hostingDomain).toMatchObject({
+          added: false,
+        });
+      });
+
+      test("--domain with --clerk-app is a usage error for a domain you own", async () => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+
+        const error = await runDeploy({
+          domain: "example.com",
+          clerkApp: "acme",
+        }).catch((e: unknown) => e);
+
+        expect((error as CliError).exitCode).toBe(EXIT_CODE.USAGE);
+        expect(mockFetchApplication).not.toHaveBeenCalled();
+      });
+
+      test("PLAPI's hosting_domain_needs_clerk_app gets its own code and copy", async () => {
+        mockIsAgent.mockReturnValue(true);
+        await linkedProject();
+        mockCreateProductionInstance.mockRejectedValue(
+          new PlapiError(
+            422,
+            JSON.stringify({
+              errors: [{ code: "hosting_domain_needs_clerk_app" }],
+            }),
+            "x",
+          ),
+        );
+
+        const error = await runDeploy({
+          domain: "my-app.example-host.dev",
+        }).catch((e: unknown) => e);
+
+        expect((error as CliError).code).toBe(ERROR_CODE.HOSTING_DOMAIN_NEEDS_CLERK_APP);
+        expect((error as CliError).message).toContain("No production instance was created.");
+        expect((error as CliError).message).toContain("clerk deploy add-domain <domain>");
+      });
+    });
+
+    test("resume on a clerk.app domain plans an SSL step and skips the DNS handoff", async () => {
+      mockIsAgent.mockReturnValue(false);
+      await linkedProject({
+        instances: { development: "ins_dev_123", production: "ins_prod_mock" },
+      });
+      mockLiveProduction({
+        domain: "acme.clerk.app",
+        cnameTargets: [],
+        clerkManaged: true,
+        developmentConfig: {},
+      });
+      mockFetchInstanceConfigSchema.mockResolvedValue(schemaResponse({}));
+      mockGetApplicationDomainStatus
+        .mockResolvedValueOnce(
+          domainStatus({ status: "incomplete", dns: true, ssl: false, mail: true }),
+        )
+        .mockResolvedValue(domainStatus({ status: "complete", dns: true, ssl: true, mail: true }));
+
+      await runDeploy();
+      const err = flat(captured.err);
+
+      expect(err).toContain("[ ] Issue SSL certificate");
+      expect(err).not.toContain("not verified yet");
+      expect(err).not.toContain("Monitor SSL issuance");
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(err).toContain("SSL certificate issued for acme.clerk.app");
     });
   });
 });

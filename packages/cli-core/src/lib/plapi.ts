@@ -178,13 +178,29 @@ export type CnameTarget = {
   required: boolean;
 };
 
+/** `email_links` is false only on a clerk.app domain while email links are on. */
+export type MakePrimaryReadiness = {
+  dns: boolean;
+  ssl: boolean;
+  email: boolean;
+  email_links: boolean;
+};
+
 export type ApplicationDomain = {
   object: "domain";
   id: string;
   name: string;
   is_satellite: boolean;
   is_provider_domain: boolean;
+  is_clerk_managed: boolean;
+  /** A hosting domain beside a clerk.app domain, served through the Clerk proxy, which can never be primary. */
+  is_web_host: boolean;
+  /** Set only on the list endpoint: the production instance's active domain. */
+  is_primary?: boolean;
+  make_primary_readiness?: MakePrimaryReadiness;
   frontend_api_url: string;
+  /** The `iss` of session tokens minted on this domain. Satellites leave it out: their tokens carry the primary's. */
+  session_token_issuer?: string;
   accounts_portal_url?: string;
   proxy_url?: string;
   development_origin: string;
@@ -210,9 +226,21 @@ export type ProductionInstanceResponse = {
 };
 
 export type CreateProductionInstanceParams = {
-  domain: string;
   environment_type: "production";
   clone_instance_id?: string;
+} & (
+  | { domain: string; clerk_app_slug?: never }
+  | { clerk_app_slug: string; domain?: never }
+  /** A hosting domain such as acme.vercel.app, added beside the `<clerk_app_slug>.clerk.app` primary. */
+  | { clerk_app_slug: string; domain: string }
+);
+
+export type ClerkAppSlugCheck = {
+  enabled: boolean;
+  valid: boolean;
+  available: boolean;
+  /** A free slug made from the one checked, set when that one is malformed or taken. */
+  suggestion: string | null;
 };
 
 export type DeployStatus = "complete" | "incomplete";
@@ -260,6 +288,59 @@ export async function createProductionInstance(
   const url = new URL(`/v1/platform/applications/${applicationId}/instances`, getPlapiBaseUrl());
   const response = await plapiFetch("POST", url, { body: JSON.stringify(params) });
   return response.json() as Promise<ProductionInstanceResponse>;
+}
+
+export type CreateApplicationDomainParams = {
+  name: string;
+  /**
+   * Serves the Frontend API at `https://<name><proxy_path>`. Beside a clerk.app
+   * primary, a hosting provider's name added with it becomes a hosting domain.
+   */
+  proxy_path?: string;
+};
+
+export async function createApplicationDomain(
+  applicationId: string,
+  params: CreateApplicationDomainParams,
+): Promise<ApplicationDomain> {
+  const url = new URL(`/v1/platform/applications/${applicationId}/domains`, getPlapiBaseUrl());
+  const response = await plapiFetch("POST", url, { body: JSON.stringify(params) });
+  return response.json() as Promise<ApplicationDomain>;
+}
+
+export async function deleteApplicationDomain(
+  applicationId: string,
+  domainIdOrName: string,
+): Promise<void> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}`,
+    getPlapiBaseUrl(),
+  );
+  await plapiFetch("DELETE", url);
+}
+
+export async function makeApplicationDomainPrimary(
+  applicationId: string,
+  domainIdOrName: string,
+): Promise<ApplicationDomain> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/domains/${domainIdOrName}/make_primary`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("POST", url);
+  return response.json() as Promise<ApplicationDomain>;
+}
+
+export async function checkClerkAppSlug(
+  applicationId: string,
+  slug: string,
+): Promise<ClerkAppSlugCheck> {
+  const url = new URL(
+    `/v1/platform/applications/${applicationId}/clerk_app_slugs/${encodeURIComponent(slug)}`,
+    getPlapiBaseUrl(),
+  );
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<ClerkAppSlugCheck>;
 }
 
 export async function getApplicationDomainStatus(
