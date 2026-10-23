@@ -229,9 +229,9 @@ interface FileKey extends LocatedKey {
 }
 
 /**
- * Every non-empty key under `names` in `files`, in file order then line order,
- * plus every line that names one of them but can't be parsed. A real comment
- * (`# CLERK_SECRET_KEY=…`) doesn't count: env loaders skip those too.
+ * Every key under `names` in `files`, empty ones included, in file order then
+ * line order, plus every line that names one of them but can't be parsed. A
+ * real comment (`# CLERK_SECRET_KEY=…`) doesn't count: env loaders skip those too.
  */
 async function readKeyLines(
   cwd: string,
@@ -254,9 +254,7 @@ async function readKeyLines(
     for (const line of parseEnvFile(await file.text())) {
       if (line.type === "entry") {
         const kind = kindOf(line.key);
-        if (kind && line.value) {
-          keys.push({ kind, name: line.key, value: line.value, source: envFile });
-        }
+        if (kind) keys.push({ kind, name: line.key, value: line.value, source: envFile });
         continue;
       }
       if (line.type !== "comment" || line.raw.trim().startsWith("#")) continue;
@@ -322,8 +320,11 @@ function effectiveKey(
       return !loadOrder || loadOrder.indexOf(line.source) <= loadOrder.indexOf(key.source);
     });
   // Within one name, each file's last line is its value, and the file highest
-  // in the load order wins.
+  // in the load order wins. Loaders keep an empty value, so a name set empty
+  // in the shell, or in the file that wins, gives the app no key: the files
+  // below don't count.
   for (const name of names) {
+    if (process.env[name] === "") continue;
     const exported = fromEnv(name);
     if (exported) return { key: exported, unreadable: mayOverride(exported) };
     const perFile = new Map<string, LocatedKey>();
@@ -335,6 +336,7 @@ function effectiveKey(
     if (!loadOrder && new Set(values.map((key) => key.value)).size > 1) {
       return { undecided: values, unreadable };
     }
+    if (!values[0]!.value) continue;
     return { key: values[0]!, unreadable: mayOverride(values[0]!) };
   }
   return { unreadable };
@@ -458,7 +460,7 @@ export async function unreadGenericPublishableKey(
     publishable: ["CLERK_PUBLISHABLE_KEY"],
     secret: [],
   });
-  const [first] = keys;
+  const first = keys.find((key) => key.value);
   return (
     first && { location: { name: first.name, source: first.source }, framework: framework.name }
   );
@@ -531,7 +533,7 @@ export async function readAllFolderKeys(cwd: string): Promise<AllFolderKeys> {
   const ofKind = (kind: "publishable" | "secret") => [
     ...fromShell(kind),
     ...keys
-      .filter((key) => key.kind === kind)
+      .filter((key) => key.kind === kind && key.value)
       .map(({ value, name, source }) => ({ value, name, source })),
   ];
   const publishableKeys = ofKind("publishable");

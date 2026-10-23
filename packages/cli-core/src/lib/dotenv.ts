@@ -62,7 +62,8 @@ export function parseEnvFile(content: string): EnvLine[] {
     const match = line.match(ENTRY_RE);
     if (!match) return { type: "comment", raw: line };
     const key = match[2]!;
-    let value = match[3]!;
+    // dotenv trims an unquoted value, so a stray trailing space isn't part of a key.
+    let value = match[3]!.trim();
     // Strip surrounding quotes
     if (
       (value.startsWith('"') && value.endsWith('"')) ||

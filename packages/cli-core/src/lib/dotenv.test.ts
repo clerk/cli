@@ -63,6 +63,12 @@ describe("parseEnvFile", () => {
     expect(lines[0]).toEqual({ type: "entry", key: "FOO", value: "", raw: "FOO=" });
   });
 
+  test("trims an unquoted value, as dotenv does, and keeps a quoted one", () => {
+    expect(
+      parseEnvFile('A= pk_test_a \nB=" b "\n').map((line) => line.type === "entry" && line.value),
+    ).toEqual(["pk_test_a", " b "]);
+  });
+
   test("handles values with equals signs", () => {
     const lines = parseEnvFile("FOO=bar=baz\n");
     expect(lines[0]).toEqual({

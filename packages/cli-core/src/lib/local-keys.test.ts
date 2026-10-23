@@ -171,6 +171,56 @@ describe("readFolderKeys", () => {
   });
 });
 
+// Env loaders keep an empty value and trim an unquoted one, so the key the app
+// loads is read the same way.
+describe("values as the loaders read them", () => {
+  const useNext = () => write("package.json", JSON.stringify({ dependencies: { next: "15.0.0" } }));
+
+  test("Next.js: empty keys in .env.local hide .env's, so the app runs on the SDK keyless file", async () => {
+    await useNext();
+    await write(".env.local", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=\nCLERK_SECRET_KEY=\n");
+    await write(
+      ".env",
+      "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_env\nCLERK_SECRET_KEY=sk_test_env\n",
+    );
+    await writeSdkKeylessFile({ publishableKey: "pk_test_sdk", secretKey: "sk_test_sdk" });
+
+    const keys = await readFolderKeys(dir);
+
+    expect(keys.publishableKey?.value).toBe("pk_test_sdk");
+    expect(keys.secretKey?.value).toBe("sk_test_sdk");
+  });
+
+  test("Next.js: a key exported empty hides the files' key", async () => {
+    await useNext();
+    await write(".env.local", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = "";
+
+    expect((await readFolderKeys(dir)).publishableKey).toBeUndefined();
+  });
+
+  test("Vite: an empty key in .env.development hides .env.local's", async () => {
+    await write("package.json", JSON.stringify({ dependencies: { vite: "6.0.0" } }));
+    await write(".env.development", "VITE_CLERK_PUBLISHABLE_KEY=\n");
+    await write(".env.local", "VITE_CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+
+    expect((await readFolderKeys(dir)).publishableKey).toBeUndefined();
+  });
+
+  test("a trailing space isn't part of the key", async () => {
+    await useNext();
+    await write(".env.local", "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_local \n");
+
+    expect((await readFolderKeys(dir)).publishableKey?.value).toBe("pk_test_local");
+  });
+
+  test("readAllFolderKeys doesn't count an empty line as a key", async () => {
+    await write(".env", "CLERK_SECRET_KEY=\n");
+
+    expect((await readAllFolderKeys(dir)).secretKeys).toEqual([]);
+  });
+});
+
 // Only a publishable line that may hold the key Next.js loads keeps `clerk link`
 // from matching by the publishable key.
 describe("couldntTellReason", () => {
