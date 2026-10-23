@@ -215,6 +215,19 @@ describe("whoami", () => {
     expect(mockFindLocalSecretKey).not.toHaveBeenCalled();
   });
 
+  // Nuxt's reader picks its own name in `.env` over the exported generic key,
+  // but `clerk api` and `clerk users` use the exported one.
+  test("unlinked, names an exported CLERK_SECRET_KEY as the key the Backend API commands use", async () => {
+    mockGetValidToken.mockResolvedValue("valid-token");
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "alice@example.com" });
+    mockFindLocalSecretKey.mockResolvedValue({ secretKey: "sk_test_nuxt", source: ".env" });
+    process.env.CLERK_SECRET_KEY = "sk_test_xxx";
+
+    await runWhoami({ json: true });
+
+    expect(JSON.parse(captured.out).localSecretKeySource).toBe("CLERK_SECRET_KEY env var");
+  });
+
   test("no override warning when linked and no CLERK_SECRET_KEY is exported", async () => {
     mockGetValidToken.mockResolvedValue("valid-token");
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "alice@example.com" });

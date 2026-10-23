@@ -112,17 +112,19 @@ async function resolveIdentity(options: WhoamiOptions): Promise<Identity> {
   // for half the command surface. A linked directory isn't automatically safe
   // from this either — resolveBapiSecretKey lets an exported CLERK_SECRET_KEY
   // win over even a linked profile, so check for that specific override
-  // instead of skipping discovery outright.
-  const localKey = profile
-    ? process.env.CLERK_SECRET_KEY
-      ? { source: "CLERK_SECRET_KEY env var" }
-      : undefined
-    : await findLocalSecretKey(process.cwd()).catch((error: unknown) => {
-        // Best-effort, like the profile above: an env file the CLI can't read
-        // doesn't stop whoami from reporting the account.
-        log.debug(`whoami: couldn't read this folder's keys (${errorMessage(error)})`);
-        return undefined;
-      });
+  // instead of skipping discovery outright. The exported key wins first, as in
+  // resolveBapiSecretKey, even where the folder's reader would pick another
+  // name (Nuxt's own key in `.env`).
+  const localKey = process.env.CLERK_SECRET_KEY
+    ? { source: "CLERK_SECRET_KEY env var" }
+    : profile
+      ? undefined
+      : await findLocalSecretKey(process.cwd()).catch((error: unknown) => {
+          // Best-effort, like the profile above: an env file the CLI can't read
+          // doesn't stop whoami from reporting the account.
+          log.debug(`whoami: couldn't read this folder's keys (${errorMessage(error)})`);
+          return undefined;
+        });
 
   return {
     kind: "account",
