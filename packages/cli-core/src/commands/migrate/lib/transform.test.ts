@@ -2,9 +2,10 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { CliError } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 import clerkSource from "../sources/clerk.ts";
 import type { SourceEntry } from "../types.ts";
+import { __resetCustomSourcesForTesting, registerCustomSource } from "../sources/registry.ts";
 import {
   consolidateClerkIdentifiers,
   flattenObjectSelectively,
@@ -203,6 +204,78 @@ describe("transformUsers", () => {
     });
   });
 
+  test("rejects an async postTransform rather than lose its changes", () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "async-post",
+      // A source file is untyped at runtime, so nothing stops it being async.
+      postTransform: (async (user: Record<string, unknown>) => {
+        await Promise.resolve();
+        user.firstName = "late";
+      }) as unknown as SourceEntry["postTransform"],
+    });
+    try {
+      expect(() => transformUsers([{ id: "u1" }], "async-post")).toThrow(
+        /"async-post" source's postTransform returned a promise/,
+      );
+    } finally {
+      __resetCustomSourcesForTesting();
+    }
+  });
+
+  test("rejects a postTransform that returns a non-native thenable", () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "thenable-post",
+      postTransform: (() => ({ then: () => undefined })) as unknown as SourceEntry["postTransform"],
+    });
+    try {
+      expect(() => transformUsers([{ id: "u1" }], "thenable-post")).toThrow(
+        /"thenable-post" source's postTransform returned a promise/,
+      );
+    } finally {
+      __resetCustomSourcesForTesting();
+    }
+  });
+
+  test("names the source and the row when postTransform throws", () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "throwing-post",
+      postTransform: (user) => {
+        if (user.userId === "u2") throw new Error("boom");
+      },
+    });
+    try {
+      expect(() => transformUsers([{ id: "u1" }, { id: "u2" }], "throwing-post")).toThrow(
+        expect.objectContaining({
+          message: 'The "throwing-post" source\'s postTransform failed on row 2: boom',
+          code: ERROR_CODE.USAGE_ERROR,
+          exitCode: EXIT_CODE.USAGE,
+        }),
+      );
+    } finally {
+      __resetCustomSourcesForTesting();
+    }
+  });
+
+  test("passes a postTransform's own CliError through with its code", () => {
+    const hashed = {
+      localId: "f1",
+      email: "a@example.com",
+      passwordHash: "SGFzaA==",
+      salt: "U2FsdA==",
+    };
+    expect(() => transformUsers([hashed], "firebase")).toThrow(
+      expect.objectContaining({
+        message: expect.stringMatching(/^This export contains Firebase password hashes/),
+        code: ERROR_CODE.USAGE_ERROR,
+        exitCode: EXIT_CODE.USAGE,
+        docsUrl: expect.stringContaining("/migrating/firebase"),
+      }),
+    );
+  });
+
   test("skips validation when asked, so analysis passes see every row", () => {
     const { transformedData, validationFailed } = transformUsers([{ id: "u1" }], "clerk", {
       validate: false,
@@ -295,6 +368,27 @@ describe("loadUsersFromFile", () => {
       expect(users[0]?.passwordHasher).toBe("argon2id");
     } finally {
       delete source.defaults;
+    }
+  });
+
+  test("a custom preTransform's rows win over a CSV file", async () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "rows-from-pretransform",
+      preTransform: (filePath) => ({
+        filePath,
+        data: [{ id: "from-pretransform", primary_email_address: "p@x.dev" }],
+      }),
+    });
+    try {
+      fs.writeFileSync(
+        path.join(workDir, "ignored.csv"),
+        "id,primary_email_address\nfile,f@x.dev\n",
+      );
+      const { users } = await loadUsersFromFile("ignored.csv", "rows-from-pretransform");
+      expect(users.map((user) => user.userId)).toEqual(["from-pretransform"]);
+    } finally {
+      __resetCustomSourcesForTesting();
     }
   });
 
