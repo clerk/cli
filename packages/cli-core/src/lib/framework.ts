@@ -163,6 +163,8 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/expo",
     envVar: "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    // @expo/env loads the same files, in the same order, as Next.js.
+    envLoadOrder: NEXT_LOAD_ORDER,
   },
   {
     dep: "react",

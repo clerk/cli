@@ -228,6 +228,16 @@ describe("the key the app loads, by framework", () => {
     },
   );
 
+  test("Expo loads Next.js's order: .env.local wins over .env", async () => {
+    await useFramework("expo");
+    await write(".env", "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_env\n");
+    await write(".env.local", "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_local\n");
+
+    expect((await readFolderKeys(dir)).publishableKey).toEqual(
+      located("pk_test_local", ".env.local", "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY"),
+    );
+  });
+
   test("Nuxt loads only .env, so a key in .env.local isn't the one it runs on", async () => {
     await useFramework("nuxt");
     await write(".env", "NUXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_env\n");
