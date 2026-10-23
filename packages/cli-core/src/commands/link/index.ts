@@ -158,7 +158,7 @@ export async function link(options: LinkOptions = {}): Promise<LinkOutcome> {
   // every key in the folder belongs to that app before saving the link.
   const checkFolderKeys =
     options.onlyIfFolderKeysMatch && initClaim
-      ? async (target: Application) => requireFolderKeysBelongTo(target, cwd)
+      ? async (target: Application) => requireFolderKeysBelongTo(target, cwd, retry)
       : undefined;
 
   let step: NextStep | undefined;
@@ -434,7 +434,7 @@ function decideNextStep(input: {
     return {
       kind: "stop",
       error: new CliError(
-        `${capitalize(folder.unreadable)}, so no application can be confirmed to own this folder's keys, and it wasn't linked. Make the folder's Clerk keys readable and belong to one application, then run \`clerk init\` again.`,
+        `${capitalize(folder.unreadable)}, so no application can be confirmed to own this folder's keys, and it wasn't linked. Make the folder's Clerk keys readable and belong to one application, then ${input.retry.clause}.`,
         { code: ERROR_CODE.NOT_LINKED },
       ),
     };
@@ -640,7 +640,11 @@ const LINK_SKIPPING_CLAIM = "run `clerk link --app <app_id>`, which skips the cl
  * app's, and the folder would point at an app it doesn't run on. "Couldn't
  * tell" stops too.
  */
-async function requireFolderKeysBelongTo(app: Application, cwd: string): Promise<void> {
+async function requireFolderKeysBelongTo(
+  app: Application,
+  cwd: string,
+  retry: Rerun,
+): Promise<void> {
   const result = await folderKeysBelongTo(app, cwd);
   if (result.verdict === "match") return;
   const label = `\`${app.name || app.application_id}\``;
@@ -650,7 +654,7 @@ async function requireFolderKeysBelongTo(app: Application, cwd: string): Promise
       ? `${which} isn't ${label}'s`
       : `The CLI couldn't confirm ${which} belongs to ${label}`;
   throw new CliError(
-    `${capitalize(problem)}, so this folder wasn't linked to ${label} and no keys were written. Make the folder's Clerk keys, and any exported in your shell, belong to one application, then run \`clerk init\` again.`,
+    `${capitalize(problem)}, so this folder wasn't linked to ${label} and no keys were written. Make the folder's Clerk keys, and any exported in your shell, belong to one application, then ${retry.clause}.`,
     { code: ERROR_CODE.NOT_LINKED },
   );
 }

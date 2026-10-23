@@ -1323,6 +1323,45 @@ describe("when auto-link doesn't link the folder", () => {
       expect(mockSearch).toHaveBeenCalledTimes(1);
     });
 
+    // `init` passes its own rerun, flags and all, so neither stop drops them.
+    test.each([
+      {
+        stop: "a key that isn't the chosen app's",
+        setUp: async () => {
+          mockAutolink.mockResolvedValue({ status: "no_key" });
+          mockListApplications.mockResolvedValue([ACCOUNT_APP]);
+          mockSearch.mockResolvedValue(ACCOUNT_APP.application_id);
+          mockFetchApplication.mockResolvedValue(ACCOUNT_APP);
+          mockFolderKeysBelongTo.mockResolvedValue({
+            verdict: "mismatch",
+            key: { name: "CLERK_SECRET_KEY", source: ".env" },
+          });
+        },
+      },
+      {
+        stop: "a key line it can't read",
+        setUp: async () => {
+          await writeFile("package.json", JSON.stringify({ dependencies: { next: "15.0.0" } }));
+          await writeFile(".env.local", "  NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_indented\n");
+          mockAutolink.mockResolvedValue({ status: "couldnt_tell", reason: "unreadable" });
+          mockListApplications.mockResolvedValue([ACCOUNT_APP]);
+        },
+      },
+    ])("$stop: the stop names init's own rerun", async ({ setUp }) => {
+      await setUp();
+      const rerun = {
+        clause: "run `clerk init --no-skills` again",
+        command: "clerk init --no-skills",
+      };
+
+      const error = await link({ skipIfLinked: true, onlyIfFolderKeysMatch: true, rerun }).catch(
+        (thrown: unknown) => thrown as Error,
+      );
+
+      expect(error).toMatchObject({ code: "not_linked" });
+      expect((error as Error).message).toContain("then run `clerk init --no-skills` again.");
+    });
+
     test("an exported key that isn't the chosen app's is named as an env var", async () => {
       mockAutolink.mockResolvedValue({ status: "no_key" });
       mockListApplications.mockResolvedValue([ACCOUNT_APP]);
