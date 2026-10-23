@@ -83,17 +83,17 @@ failed, or when the folder's secret keys disagree. One decision function in
    - Otherwise, offers to upgrade the profile key to use the git remote if available, or asks to re-link
    - An explicit `--app` or an existing link skips steps 3 and 4: explicit targets win
 3. **Init token: claim first.** When the folder has `.clerk/keyless.json` (the claim token `clerk init` saves for an app it created signed out), `link` claims that app before anything else: it isn't in any account yet, so no picker could show it.
-   - A person is asked first, with the same question `clerk auth login` asks, naming where the app goes: the signed-in account, or the workspace `CLERK_PLATFORM_API_KEY` belongs to when it's set. A signed-out person signs in first, with login's own claim off. A stored session Clerk refuses (expired and not refreshable, or rejected by the account lookup with 401 or 403) means signing in again, as before. One whose account lookup fails for another reason (a network error, a 5xx) counts as signed in: the question then names "the account you're signed in to", without signing in again. Default Yes; No is a user abort (exit 0), before any picker.
+   - A person is asked first, with the same question `clerk auth login` asks, naming where the app goes: the signed-in account, or the workspace `CLERK_PLATFORM_API_KEY` belongs to when it's set. A signed-out person signs in first, with login's own claim off. A stored session Clerk refuses (expired and not refreshable, or rejected by the account lookup with 401 or 403) means signing in again, as before. One whose account lookup fails for another reason (a network error, a 5xx) counts as signed in: the question then names "the account you're signed in to", without signing in again. Default Yes; No is a user abort (exit 0), before any picker; the token stays, so the message names `clerk link --app <app_id>`, which skips the claim.
    - An agent claims without asking; one that isn't signed in can't sign in here, so it skips the claim and gets the usual agent error.
    - The token is read once and only that token is claimed (see `commands/auth/README.md`).
    - **Claimed and linked:** done. The claim check links the app only when every Clerk key in the folder is its own, or there are none.
    - **Claimed but the folder left unlinked** (another app's keys, keys it couldn't read, or a failed link), **or a stale token** (the claim returns not found): `link` goes on to match the folder's own key (steps 5 onward), but never creates an app. The claim report says why the folder wasn't linked and names no command to run next, since `link` carries on in the same run.
-   - **Refused** (a workspace managed by an integration, or no organization): stops with `not_linked`, exit 1. **A temporary failure:** stops with the original error. Neither reaches the picker.
+   - **Refused by a workspace managed by an integration:** stops with `not_linked`, exit 1. The token stays, so the message names `clerk link --app <app_id>`, which skips the claim (for an agent, with `clerk apps list --json`, as `examples`). **A temporary failure:** stops with the original error. Neither reaches the picker.
    - **The credential refused**, agent: the original error, with its code and exit 1, plus what to run next and its `examples`, as for a refused app list (above): replace or unset `CLERK_PLATFORM_API_KEY`; sign out and in again for a session Clerk's API refused (401, 403); or `clerk auth login` for one the CLI can't refresh, whose own message already says so. The token stays on disk, and signing in claims the app.
 4. **SDK-only folder: match or claim page.** When the folder's only Clerk keys are in `.clerk/.tmp/keyless.json`, which a Clerk SDK writes for an app it created for itself, `link` looks for that app in the account by the file's publishable key. The CLI can't claim it: there's no token.
    - **The file has no publishable key or can't be read:** stops with `usage_error`, exit 2, in both modes, offering `clerk link --app <app_id>` (for an agent, after `clerk apps list --json`). Checked before any sign-in or app list. An agent with no credential whose folder still holds an init token is told to run `clerk auth login`, which claims that app, after this reason.
    - **A match:** links it, with or without a usable claim URL. This is also what the rerun after claiming does. When `init` calls `link` after a claim attempt, its every-key check runs first, since the SDK file's secret key needn't be the matched app's.
-   - **No match, and no usable claim URL** (none, or one that isn't https): stops with `usage_error`, exit 2, in both modes. An agent isn't sent to `clerk open`, which would find no link either.
+   - **No match, and no usable claim URL** (none, one that isn't https, or one outside the Clerk Dashboard): stops with `usage_error`, exit 2, in both modes. An agent isn't sent to `clerk open`, which would find no link either.
    - This step also runs after a claim that didn't link the folder: the token is gone then, so a folder whose only keys are the SDK's is SDK-only.
    - An env file the framework doesn't load (Nuxt loads only `.env`) that can't be read doesn't skip this step.
    - **No match, person:** opens the app's claim page in the browser, says to claim it into the account the rerun will search and then rerun the command (`clerk link`; `clerk init` and `clerk migrate import` name themselves, the import without echoing its arguments), and always adds a line pointing at `clerk open --print` for a browser that opened on another screen. It never prints the URL, which carries a claim token. Exits 1 with no error line; telemetry records outcome `incomplete` with `not_linked`, so `clerk link && clerk deploy` stops there. When no browser can be opened, the message leads with "Couldn't open a browser here".
@@ -141,13 +141,15 @@ loads its env files in.
 
    | Framework                                                               | Files                                                              |
    | ----------------------------------------------------------------------- | ------------------------------------------------------------------ |
-   | Next.js                                                                 | `.env.development.local`, `.env.local`, `.env.development`, `.env` |
+   | Next.js, Expo                                                           | `.env.development.local`, `.env.local`, `.env.development`, `.env` |
    | The Vite family (Astro, Vue, React Router, TanStack Start, React, Vite) | `.env.development.local`, `.env.development`, `.env.local`, `.env` |
    | Nuxt                                                                    | `.env` only                                                        |
 
    React counts as the Vite family because the CLI reads only Vite's `VITE_` names for React apps.
 
 3. **Any other framework, or none detected:** all four files are read. When they hold different publishable keys, the key is undecided: the CLI can't tell which one the app loads.
+
+As the loaders do, an empty value (`KEY=`) in the shell or in the file that wins hides that name's key in the files below it, and an unquoted value is trimmed.
 
 A framework's own variable name wins over the generic one, wherever each is: a
 generic `CLERK_PUBLISHABLE_KEY` exported in the shell doesn't beat
@@ -163,7 +165,7 @@ detected framework it's the only name the CLI reads.
 The CLI never auto-links, and a person gets no "Link to this application?"
 suggestion, when:
 
-- a Clerk key line can't be read (indented, spaced around `=`, `KEY: value`): the app may load it;
+- a publishable key line can't be read (indented, spaced around `=`, `KEY: value`) under a higher-priority name, or under the key's own name in a file loaded no later: the app may load it;
 - the files disagree and no documented order picks one;
 - an env file can't be read.
 

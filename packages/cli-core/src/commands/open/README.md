@@ -29,10 +29,10 @@ An unknown `subpath` (not in [`dashboard-paths.ts`](./dashboard-paths.ts)'s allo
 
 ### Unclaimed accountless applications
 
-An application in no account yet has no Dashboard page of its own, so `open` looks for its one-time **claim link**, via [`keyless-claim.ts`](./keyless-claim.ts), checking (in order):
+An application in no account yet has no Dashboard page of its own, so `open` looks for its one-time **claim link**, via [`keyless-claim.ts`](./keyless-claim.ts), in the order the unlinked-folder classifier ranks what a folder holds:
 
-1. `.clerk/.tmp/keyless.json` — an SDK that self-provisioned keys (e.g. `next dev` with none configured) writes its own full `claimUrl` here.
-2. `.clerk/keyless.json` — the legacy-named breadcrumb `clerk init --accountless` writes (see [`lib/keyless.ts`](../../lib/keyless.ts)'s `readKeylessBreadcrumb`), holding just the claim token; the URL is rebuilt as `{dashboardUrl}/apps/claim?token={claimToken}`.
+1. `.clerk/keyless.json` — the legacy-named breadcrumb `clerk init --accountless` writes (see [`lib/keyless.ts`](../../lib/keyless.ts)'s `readKeylessBreadcrumb`), holding just the claim token; the URL is rebuilt as `{dashboardUrl}/apps/claim?token={claimToken}`. `clerk link` and `clerk auth login` claim this app first too.
+2. `.clerk/.tmp/keyless.json` — an SDK that self-provisioned keys (e.g. `next dev` with none configured) writes its own full `claimUrl` here. Used only when the folder holds no plain key (one that's there is the app the folder runs on), and only an https link to the Clerk Dashboard, re-serialized before it reaches the browser launcher.
 
 If a claim link is found, `open` opens/prints/emits **that** URL instead of a dashboard deep-link — an unclaimed app has no `/apps/{appId}/instances/{instanceId}` page to go to. The local secret key (resolved the same way as [`whoami`](../whoami/README.md), via the legacy-named `resolveKeylessTarget()`) is used, best-effort, to look up the instance id/environment type from `GET /v1/instance` purely to decorate the output; a missing or invalid key there never blocks opening the claim link itself.
 
