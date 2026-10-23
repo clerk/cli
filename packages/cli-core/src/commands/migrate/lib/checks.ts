@@ -99,6 +99,8 @@ export type CheckInput = {
   unknownFields?: Record<string, number>;
   /** The raw Supabase rows, for the provider checks. Absent for any other source. */
   supabaseRows?: Record<string, unknown>[];
+  /** Another source's reading of each user's social providers, for the readiness check. */
+  socialProviders?: (user: User) => string[];
   settings: UserSettingsJSON | null;
   /** Users already in the instance, for the quota. Development instances only. */
   existingUsers?: number | null;
@@ -737,6 +739,18 @@ function rowsFor(input: CheckInput, users: User[]): Record<string, unknown>[] {
   return input.supabaseRows.filter((row) => ids.has(String(row.id)));
 }
 
+/** Users per social provider, from Supabase's rows or the source's own reading. */
+function socialCounts(input: CheckInput, users: User[]): Record<string, number> {
+  if (input.supabaseRows) return countSocialProviders(rowsFor(input, users));
+  const counts: Record<string, number> = {};
+  for (const user of users) {
+    for (const provider of input.socialProviders?.(user) ?? []) {
+      counts[provider] = (counts[provider] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
 /** Each readiness row's field, with its article: "an email", not "a email". */
 const FIELD_NOUNS: Record<string, string> = {
   email_address: "an email",
@@ -753,7 +767,7 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
     const report = buildReadinessReport({
       analysis: analyzeFields(importable),
       settings: input.settings,
-      providerCounts: countSocialProviders(rowsFor(input, importable)),
+      providerCounts: socialCounts(input, importable),
     });
     for (const item of report.blocking) {
       if (item.consequence === "stored") {
@@ -833,7 +847,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   const report = buildReadinessReport({
     analysis: analyzeFields(users),
     settings: input.settings,
-    providerCounts: countSocialProviders(rowsFor(input, users)),
+    providerCounts: socialCounts(input, users),
   });
 
   // An unverified email does not satisfy a required one, so a file of only

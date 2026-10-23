@@ -49,6 +49,16 @@ describe("finishExport", () => {
     expect(latestUserLines(runsDir, record.id).get("u1")?.status).toBe("exported");
   });
 
+  // Exit code and --json are gone by the time someone imports the run.
+  test("records a truncated export, and finishes it partial", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "auth0" });
+    run.append({ sourceId: "u1", status: "exported" });
+
+    const { record } = finishExport({ run, options: {}, users, coverage, truncated: true });
+
+    expect(readRun(runsDir, record.id)).toMatchObject({ status: "partial", truncated: true });
+  });
+
   // The file holds password hashes and PII, so no other local account reads it.
   test("writes the file owner-only, in an owner-only run folder", async () => {
     const run = await startExportRun({ runsDir }, { platform: "supabase" });
@@ -136,7 +146,7 @@ describe("finishExport", () => {
   });
 
   test("--output writes somewhere else, and the run still records where", async () => {
-    const run = await startExportRun({ runsDir }, { platform: "supabase" });
+    const run = await startExportRun({ runsDir }, { platform: "auth0" });
 
     const { record, outputPath } = finishExport({
       run,
@@ -161,6 +171,18 @@ describe("finishExport", () => {
     const { outputPath } = finishExport({ run, options: {}, users, coverage, firebase });
 
     expect(readEnvelope(outputPath)?.firebase).toEqual(firebase);
+  });
+
+  // `truncated: true` alone is easy for an agent to miss.
+  test("a truncated export exits 1, with its file still written", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "auth0" });
+    try {
+      const { outputPath } = finishExport({ run, options: {}, users, coverage, truncated: true });
+      expect(process.exitCode).toBe(1);
+      expect(fs.existsSync(outputPath)).toBe(true);
+    } finally {
+      process.exitCode = 0;
+    }
   });
 
   test("prints the import command by run ID", async () => {

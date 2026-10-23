@@ -446,6 +446,24 @@ describe("rejects", () => {
   });
 
   // Each reject names that user's providers, not every disabled one in the file.
+  // Counts only: Auth0 users are never rejected for a provider, but the run
+  // still says which providers to enable before they import.
+  test("a source's own provider reading offers the fix, and rejects no one", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings(
+          { email_address: { enabled: true } },
+          { oauth_google: { enabled: true } },
+        ),
+        socialProviders: (u) => (u.userId.startsWith("github|") ? ["github"] : ["google"]),
+        users: [user("github|1"), user("google-oauth2|2")],
+      }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.fixes.map((fix) => fix.label)).toContain("Enable GitHub sign-in");
+    expect(checks.fixes.map((fix) => fix.label)).not.toContain("Enable Google sign-in");
+  });
+
   test("a supabase reject names only that user's own providers", async () => {
     const rows = [
       { id: "discord", raw_app_meta_data: { providers: ["discord"] } },

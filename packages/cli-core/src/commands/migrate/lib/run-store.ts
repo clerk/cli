@@ -95,6 +95,11 @@ export type RunRecord = {
    * with others is refused.
    */
   firebaseHash?: string;
+  /**
+   * An export the source cut short (Auth0's 1000-user ceiling): its file is
+   * not everyone, so it finishes `partial` and importing it says so.
+   */
+  truncated?: boolean;
   /** The import run an undo reverses. */
   undoes?: string;
   /** The undo run that reversed this one. */
@@ -515,7 +520,7 @@ function openRun(runsDir: string, record: RunRecord): Run {
         (counts.pending ?? 0);
       run.update({
         counts,
-        status: unfinished > 0 ? "partial" : "complete",
+        status: unfinished > 0 || run.record.truncated ? "partial" : "complete",
         finishedAt: new Date().toISOString(),
       });
       run.release();
