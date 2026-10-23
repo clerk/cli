@@ -59,6 +59,17 @@ describe("finishExport", () => {
     expect(readRun(runsDir, record.id)).toMatchObject({ status: "partial", truncated: true });
   });
 
+  // Padding and color codes belong to the terminal, not to --json.
+  test("carries a section's items into --json as plain values", async () => {
+    const run = await startExportRun({ runsDir }, { platform: "workos" });
+    const sections = [{ title: "OAuth providers", items: [{ label: "GoogleOAuth", count: 2 }] }];
+
+    finishExport({ run, options: { json: true }, users, coverage, sections });
+
+    expect(JSON.parse(captured.out).sections).toEqual(sections);
+    expect(captured.out).not.toContain("\u001b");
+  });
+
   // The file holds password hashes and PII, so no other local account reads it.
   test("writes the file owner-only, in an owner-only run folder", async () => {
     const run = await startExportRun({ runsDir }, { platform: "supabase" });

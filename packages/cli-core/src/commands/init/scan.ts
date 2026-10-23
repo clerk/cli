@@ -55,6 +55,19 @@ const AUTH_LIBRARY_SCANS: AuthLibraryScan[] = [
     docsUrl: "https://clerk.com/docs/migrations/overview",
   },
   {
+    // AuthKit only: `@workos-inc/node` also serves SSO, Directory Sync and
+    // Audit Logs for apps that authenticate with something else.
+    packages: [
+      "@workos-inc/authkit-nextjs",
+      "@workos-inc/authkit-react",
+      "@workos-inc/authkit-react-router",
+      "@workos-inc/authkit-remix",
+      "@workos-inc/authkit-js",
+    ],
+    name: "WorkOS",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
+  },
+  {
     packages: ["@kinde-oss/kinde-auth-nextjs"],
     name: "Kinde",
     docsUrl: "https://clerk.com/docs/migrations/overview",
@@ -110,6 +123,13 @@ const CODE_SCANS: CodeScan[] = [
   {
     pattern: "import\\s.*from\\s+['\"]passport['\"]",
     message: "Passport import still in use",
+  },
+  {
+    // WorkOS users through the general Node SDK, which the package scan leaves
+    // out. The `sso` and `directorySync` modules alone hold no users.
+    pattern: "\\bworkos\\.userManagement\\b",
+    message: "WorkOS User Management still in use",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
   },
   {
     pattern: "getServerSession\\s*\\(",
