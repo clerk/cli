@@ -556,7 +556,6 @@ describe("a folder with an init token, not linked", () => {
       refusal: "a workspace managed by an integration",
       claim: { status: "managed_workspace", longMessage: null },
     },
-    { refusal: "an account with no organization", claim: { status: "no_organization" } },
   ])(
     "a refused claim ($refusal) stops with not_linked, never reaching the picker or creating an app",
     async ({ claim }) => {

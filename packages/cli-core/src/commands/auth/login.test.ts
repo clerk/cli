@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
-import { AuthError, ERROR_CODE, UserAbortError } from "../../lib/errors.ts";
+import { AuthError, ERROR_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 import type { AutoclaimResult, FolderSetup } from "../../lib/autoclaim.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -1066,6 +1066,29 @@ describe("login", () => {
     expect(captured.err).toContain(
       "Unable to claim - this workspace is managed by an integration provider.",
     );
+  });
+
+  test("names Clerk's reason when it refuses the credential, and keeps the claim token", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    withInitToken();
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(
+        403,
+        JSON.stringify({
+          errors: [{ code: "authorization_missing_scopes", message: "Missing scopes" }],
+        }),
+      ),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Unable to claim - Clerk refused this credential: Missing scopes. The claim token stays in this folder",
+    );
+    expect(captured.err).not.toContain("temporary error");
   });
 
   test("does not call ensureFirstApplication when existing session is reused", async () => {

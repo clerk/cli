@@ -6,6 +6,7 @@
 
 import type { AutoclaimResult, FolderUnchanged } from "../../lib/autoclaim.ts";
 import { describeClaimDestination } from "../../lib/claim-prompt.ts";
+import { credentialRefusal, errorMessage } from "../../lib/errors.ts";
 import { describeKeyLocation } from "../../lib/local-keys.ts";
 import { buildDashboardUrl } from "../../lib/environment.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -15,12 +16,14 @@ import { capitalize } from "../../lib/text.ts";
 const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
   not_found:
     "Claim token is no longer valid - the application may have been claimed from the dashboard.",
-  no_organization: "Unable to claim - your account does not have an active organization.",
   failed:
     "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
 };
 
 export function claimWarning(result: AutoclaimResult): string | undefined {
+  if (result.status === "failed" && credentialRefusal(result.error)) {
+    return `Unable to claim - Clerk refused this credential: ${errorMessage(result.error)}. The claim token stays in this folder, so the next \`clerk auth login\` tries again.`;
+  }
   if (result.status === "managed_workspace") {
     // The API message already names the provider and says what to do.
     return `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."}`;

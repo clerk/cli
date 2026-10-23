@@ -152,27 +152,24 @@ describe("attemptAutoclaim", () => {
     expect(clearBreadcrumbSpy).toHaveBeenCalled();
   });
 
-  test("returns no_organization and clears breadcrumb on 403", async () => {
+  // Clerk sends 403 for the credential (missing scopes, not a workspace member),
+  // which another sign-in can fix, so the token stays.
+  test.each([
+    { name: "no body", body: "Forbidden" },
+    {
+      name: "missing scopes",
+      body: JSON.stringify({
+        errors: [{ code: "authorization_missing_scopes", message: "Missing scopes" }],
+      }),
+    },
+  ])("returns failed and preserves breadcrumb on 403 ($name)", async ({ body }) => {
     withBreadcrumb("forbidden_token");
-    stubFetch(async () => new Response("Forbidden", { status: 403 }));
-
-    const result = await run();
-
-    expect(result.status).toBe("no_organization");
-    expect(clearBreadcrumbSpy).toHaveBeenCalled();
-  });
-
-  test("returns no_organization and clears breadcrumb on 403 with an unrelated error code", async () => {
-    withBreadcrumb("forbidden_token");
-    const body = JSON.stringify({
-      errors: [{ code: "authorization_invalid", message: "Request not allowed" }],
-    });
     stubFetch(async () => new Response(body, { status: 403 }));
 
     const result = await run();
 
-    expect(result.status).toBe("no_organization");
-    expect(clearBreadcrumbSpy).toHaveBeenCalled();
+    expect(result.status).toBe("failed");
+    expect(clearBreadcrumbSpy).not.toHaveBeenCalled();
   });
 
   test("returns managed_workspace with the API long_message and preserves breadcrumb on 403 accountless_application_managed_workspace", async () => {

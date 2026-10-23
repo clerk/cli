@@ -45,7 +45,7 @@ Known limitations:
 When `clerk init` runs in accountless mode it writes `.clerk/keyless.json` containing a claim token. On the next `clerk auth login`:
 
 - **404** — claim token expired or application already deleted; breadcrumb is cleared and a warning is shown.
-- **403** — authenticated account has no active organization; breadcrumb is cleared and a warning is shown.
+- **403** (other than a managed workspace, below) — Clerk refused the credential, e.g. missing scopes or not a member of the workspace; the breadcrumb is preserved and the warning names Clerk's reason, so a login with another account retries.
 - **Any other error** — treated as transient; breadcrumb is preserved so the next login retries.
 - **Success** — application is claimed and the breadcrumb is deleted, unless it now holds a different token (written since the login read it), which is kept for the next login. The command prints the Dashboard URL of the claimed app's development instance, since this is the first time the app has a home in an account. What happens to the folder depends on what it already holds:
   - **No Clerk keys, or only keys that belong to the claimed app** — the folder is linked to it and its keys are written via `clerk env pull`, into the same folder.

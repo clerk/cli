@@ -384,7 +384,7 @@ async function loginNextSteps(result: AutoclaimResult | undefined): Promise<read
   if (result?.status === "claimed") return claimedNextSteps(result);
   if (result?.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
   if (result?.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
-  if (result?.status === "not_found" || result?.status === "no_organization") {
+  if (result?.status === "not_found") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }
 

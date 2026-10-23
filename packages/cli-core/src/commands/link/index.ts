@@ -597,7 +597,6 @@ async function claimFirst(
       log.warn(claimWarning(result) ?? "");
       return undefined;
     case "managed_workspace":
-    case "no_organization":
       throw new CliError(`${claimWarning(result)} This folder isn't linked.`, {
         code: ERROR_CODE.NOT_LINKED,
       });

@@ -73,7 +73,7 @@ export type FolderSetup =
 /** `app` is the claimed app, completed by one fetch when the claim response lacked its instances. */
 type Claimed = { status: "claimed"; app: Application; local: FolderSetup };
 /** The claim can never succeed with this token; the breadcrumb is cleared. */
-type Terminal = { status: "not_found" | "no_organization" };
+type Terminal = { status: "not_found" };
 /**
  * The token's workspace is provisioned by an integration (Vercel Marketplace,
  * Stripe), so nothing can be claimed into it. The breadcrumb is kept: the user
@@ -89,9 +89,10 @@ type ClaimAttempt = { status: "claimed"; app: Application } | Terminal | Managed
 /** PLAPI error code for a claim into a provider-managed workspace. */
 const MANAGED_WORKSPACE_CODE = "accountless_application_managed_workspace";
 
+// Not 403: apart from a managed workspace, Clerk sends it for the credential
+// (missing scopes, not a workspace member), which a new sign-in can fix.
 const TERMINAL_BY_STATUS: Record<number, Terminal["status"]> = {
   404: "not_found",
-  403: "no_organization",
 };
 
 /**
