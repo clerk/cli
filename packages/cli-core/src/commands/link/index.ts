@@ -577,6 +577,8 @@ async function claimFirst(
     const yes = await confirmClaim({ appName: initClaim.appName, destination });
     if (!yes) {
       reportClaimSkipped(initClaim.appName, account);
+      // The token stays, so plain `clerk link` would ask again.
+      log.info(`To link another application instead, ${LINK_SKIPPING_CLAIM}.`);
       await outro();
       throwUserAbort();
     }
@@ -597,9 +599,25 @@ async function claimFirst(
       log.warn(claimWarning(result) ?? "");
       return undefined;
     case "managed_workspace":
-      throw new CliError(`${claimWarning(result)} This folder isn't linked.`, {
-        code: ERROR_CODE.NOT_LINKED,
-      });
+      // The token stays, so plain `clerk link` would claim, and stop here, again.
+      throw new CliError(
+        `${claimWarning(result)} This folder isn't linked. To link an existing application instead, ${LINK_SKIPPING_CLAIM}${rerun ? `, then ${rerun.clause}` : ""}.`,
+        {
+          code: ERROR_CODE.NOT_LINKED,
+          ...(agent && {
+            examples: [
+              {
+                command: "clerk apps list --json",
+                description: "List your applications, to choose an existing one",
+              },
+              {
+                command: "clerk link --app <app_id>",
+                description: "Link it; this skips the claim",
+              },
+            ],
+          }),
+        },
+      );
     case "failed":
       // A refused credential can't pass on a retry, so an agent gets the fix
       // with the error, which keeps Clerk's code and exit status. The token
@@ -613,6 +631,8 @@ async function claimFirst(
       throw result.error;
   }
 }
+
+const LINK_SKIPPING_CLAIM = "run `clerk link --app <app_id>`, which skips the claim";
 
 /**
  * Stops the link, saving nothing, unless every Clerk key in the folder

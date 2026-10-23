@@ -180,7 +180,9 @@ test("person, a claim refused by a managed workspace: stops with not_linked, no 
   const result = await clerk.raw("link");
 
   expect(result.exitCode).toBe(1);
-  expect(result.stderr).toContain("This folder isn't linked.");
+  expect(result.stderr).toContain(
+    "This folder isn't linked. To link an existing application instead, run `clerk link --app <app_id>`, which skips the claim.",
+  );
   expect(requests("GET", LIST_PATH)).toHaveLength(0);
   expect(requests("POST", LIST_PATH)).toHaveLength(0);
   expect(await linkedAppId()).toBeUndefined();
@@ -196,6 +198,9 @@ test("person, API key only, No: says the app is still unclaimed, and claims noth
 
   expect(result.exitCode).toBe(0);
   const stderr = Bun.stripANSI(result.stderr);
+  expect(stderr).toContain(
+    "To link another application instead, run `clerk link --app <app_id>`, which skips the claim.",
+  );
   expect(stderr).toContain(
     "Skipped the claim, so `my-app` is still unclaimed. Its claim token stays in this folder.",
   );
