@@ -9,7 +9,12 @@
  */
 
 import { readKeylessBreadcrumb } from "../../lib/keyless.ts";
-import { readSdkClaimLink, SDK_KEYLESS_SOURCE } from "../../lib/local-keys.ts";
+import {
+  isSdkOnly,
+  readFolderKeys,
+  readSdkClaimLink,
+  SDK_KEYLESS_SOURCE,
+} from "../../lib/local-keys.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { log } from "../../lib/log.ts";
@@ -38,14 +43,13 @@ export interface KeylessInstanceInfo {
  *    writes the full URL straight into `.clerk/.tmp/keyless.json`, so that one
  *    is used verbatim rather than reconstructed.
  *
- * Returns `undefined` when neither file has a usable claim link.
+ * In the unlinked-folder classifier's order: the init token first, then the
+ * SDK file only when the folder holds no plain key, since a plain key is the
+ * app the folder runs on instead. Returns `undefined` when neither applies.
  */
 export async function findKeylessClaimUrl(
   cwd: string,
 ): Promise<KeylessClaimDestination | undefined> {
-  const sdkClaim = await readSdkClaimLink(cwd);
-  if (sdkClaim.status === "usable") return { url: sdkClaim.url, source: SDK_KEYLESS_SOURCE };
-
   const breadcrumb = await readKeylessBreadcrumb(cwd);
   if (breadcrumb) {
     const host = getDashboardUrl().replace(/\/$/, "");
@@ -55,7 +59,13 @@ export async function findKeylessClaimUrl(
     };
   }
 
-  return undefined;
+  // An env file that can't be read may hold the plain key the app runs on.
+  const keys = await readFolderKeys(cwd).catch(() => undefined);
+  if (!keys || !isSdkOnly(keys)) return undefined;
+  const sdkClaim = await readSdkClaimLink(cwd);
+  return sdkClaim.status === "usable"
+    ? { url: sdkClaim.url, source: SDK_KEYLESS_SOURCE }
+    : undefined;
 }
 
 /**

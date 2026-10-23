@@ -4,9 +4,11 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { setCurrentEnv } from "../../lib/environment.ts";
 import { stubFetch } from "../../test/lib/stubs.ts";
+import { useCleanClerkKeyEnv } from "../../test/lib/clerk-key-env.ts";
 import { describeKeylessInstance, findKeylessClaimUrl } from "./keyless-claim.ts";
 
 describe("findKeylessClaimUrl", () => {
+  useCleanClerkKeyEnv();
   let projectDir: string;
   const originalFetch = globalThis.fetch;
 
@@ -50,7 +52,8 @@ describe("findKeylessClaimUrl", () => {
     });
   });
 
-  test("prefers the SDK's own claimUrl over the CLI breadcrumb", async () => {
+  // `clerk link` and `clerk auth login` claim the init app, so `open` sends a person there too.
+  test("prefers the CLI breadcrumb over the SDK's own claimUrl", async () => {
     await mkdir(join(projectDir, ".clerk", ".tmp"), { recursive: true });
     await writeFile(
       join(projectDir, ".clerk", ".tmp", "keyless.json"),
@@ -62,7 +65,18 @@ describe("findKeylessClaimUrl", () => {
     );
 
     const destination = await findKeylessClaimUrl(projectDir);
-    expect(destination?.source).toBe(".clerk/.tmp/keyless.json");
+    expect(destination?.source).toBe(".clerk/keyless.json");
+  });
+
+  test("ignores a stale SDK claimUrl when the folder runs on plain keys", async () => {
+    await mkdir(join(projectDir, ".clerk", ".tmp"), { recursive: true });
+    await writeFile(
+      join(projectDir, ".clerk", ".tmp", "keyless.json"),
+      JSON.stringify({ claimUrl: "https://dashboard.clerk.com/apps/claim?token=sdk-token" }),
+    );
+    await writeFile(join(projectDir, ".env.local"), "CLERK_SECRET_KEY=sk_test_plain\n");
+
+    expect(await findKeylessClaimUrl(projectDir)).toBeUndefined();
   });
 
   test("falls back to the breadcrumb when the SDK file has no claimUrl", async () => {
