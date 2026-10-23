@@ -89,6 +89,12 @@ export type RunRecord = {
    * continue for those.
    */
   flags?: ImportFlags;
+  /**
+   * A Firebase import's hash parameters, as a scrypt hash of the four (never the
+   * parameters themselves): every digest it builds carries them, so a continue
+   * with others is refused.
+   */
+  firebaseHash?: string;
   /** The import run an undo reverses. */
   undoes?: string;
   /** The undo run that reversed this one. */

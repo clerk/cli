@@ -26,6 +26,7 @@ import { listageStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockSelect = mock(async () => "clerk" as unknown);
 const mockText = mock(async () => "export.json" as unknown);
+const mockPassword = mock(async () => "" as unknown);
 let confirmAnswer = true;
 /** User settings the instance serves, or none (the settings read fails). */
 let instanceSettings: Record<string, unknown> | undefined;
@@ -47,7 +48,7 @@ mock.module("../../lib/prompts.ts", () => ({
   },
   multiselect: async () => [],
   text: (...args: unknown[]) => mockText(...(args as [])),
-  password: async () => "",
+  password: (...args: unknown[]) => mockPassword(...(args as [])),
   editor: async () => "{}",
 }));
 
@@ -104,6 +105,7 @@ beforeEach(() => {
   confirmMessages = [];
   mockSelect.mockReset();
   mockText.mockReset();
+  mockPassword.mockClear();
   mockSelect.mockResolvedValue("clerk");
   mockText.mockResolvedValue("export.json");
   fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
@@ -273,6 +275,64 @@ describe("consent", () => {
 
     await expect(run(importOptions)).rejects.toThrow(/1 user would be rejected/);
     expect(created()).toHaveLength(0);
+  });
+});
+
+describe("firebase hash parameters", () => {
+  // `-y` is "import without prompting", at a terminal too.
+  test("-y never asks for them, and names the flags instead", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify({
+        users: [{ localId: "fb1", email: "a@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" }],
+      }),
+    );
+
+    await expect(run({ ...importOptions, source: "firebase", yes: true })).rejects.toThrow(
+      /--firebase-signer-key --firebase-salt-separator --firebase-rounds --firebase-mem-cost/,
+    );
+    expect(mockPassword).not.toHaveBeenCalled();
+    expect(mockText).not.toHaveBeenCalled();
+    expect(created()).toHaveLength(0);
+  });
+
+  // The suggested retry runs with --yes, which never asks again.
+  test("parameters entered at the prompt go into the retry the import suggests", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify({
+        users: [
+          { localId: "fb1", email: "a@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" },
+          { localId: "fb2", email: "b@x.dev", passwordHash: "SGFzaA==", salt: "U2FsdA==" },
+        ],
+      }),
+    );
+    mockPassword.mockResolvedValueOnce("c2lnbmVy");
+    mockText.mockImplementation((async (prompt: { message: string }) =>
+      prompt.message.includes("salt separator")
+        ? "c2VwYXJhdG9y"
+        : prompt.message === "rounds"
+          ? "8"
+          : "14") as unknown as typeof mockText);
+
+    // fb2's create fails, so the run ends partial and suggests the retry.
+    const clerk = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      return init?.method === "POST" && body.includes('"fb2"')
+        ? Response.json(
+            { errors: [{ message: "taken", code: "form_identifier_exists" }] },
+            { status: 422 },
+          )
+        : clerk(input, init);
+    }) as typeof fetch;
+    await run({ ...importOptions, source: "firebase" });
+
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(
+      "--firebase-signer-key SIGNER_KEY --firebase-salt-separator SALT_SEPARATOR --firebase-rounds ROUNDS --firebase-mem-cost MEM_COST",
+    );
+    expect(err).not.toContain("c2lnbmVy");
   });
 });
 
