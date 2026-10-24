@@ -1,7 +1,9 @@
+import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import {
   addSuspenseImport,
   authFileSpecs,
+  findFirstFile,
   hasTailwindStyles,
   injectHeaderInProvider,
   jsxAuthPageContent,
@@ -12,6 +14,7 @@ import {
   scaffoldNextjsMiddleware,
   SIGN_ROUTE_ENV_VARS,
   srcPrefix,
+  type AuthKind,
   wrapBodyWithProvider,
 } from "./helpers.js";
 import { enrichNextjsContext } from "./nextjs-context.js";
@@ -74,9 +77,79 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
   };
 }
 
-function authPagePath(ctx: ProjectContext, kind: "sign-in" | "sign-up"): string {
+function authPagePath(ctx: ProjectContext, kind: AuthKind): string {
   const localeSegment = ctx.i18nLocaleDir ? `${ctx.i18nLocaleDir}/` : "";
   return `${srcPrefix(ctx)}app/${localeSegment}${kind}/[[...${kind}]]/page.${jsxExt(ctx)}`;
+}
+
+const PAGE_EXTENSIONS = ["tsx", "jsx", "ts", "js"] as const;
+const OPTIONAL_CATCH_ALL = /^\[\[\.\.\.[^\]]+\]\]$/;
+
+function isRouteGroup(segment: string): boolean {
+  return segment.startsWith("(") && segment.endsWith(")");
+}
+
+/** List the directories in `dir`, sorted so the scan is deterministic. A missing `dir` has none. */
+async function listDirs(cwd: string, dir: string): Promise<string[]> {
+  try {
+    const entries = await readdir(join(cwd, dir), { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+/** Find a page in an optional catch-all under `dir`, looking through any route groups in between. */
+async function findCatchAllPage(cwd: string, dir: string): Promise<string | null> {
+  const names = await listDirs(cwd, dir);
+
+  for (const name of names.filter((n) => OPTIONAL_CATCH_ALL.test(n))) {
+    const page = await findFirstFile(
+      cwd,
+      PAGE_EXTENSIONS.map((ext) => `${dir}/${name}/page.${ext}`),
+    );
+    if (page) return page;
+  }
+
+  for (const name of names.filter(isRouteGroup)) {
+    const page = await findCatchAllPage(cwd, `${dir}/${name}`);
+    if (page) return page;
+  }
+
+  return null;
+}
+
+/**
+ * Find an existing optional catch-all auth page that serves the same URL as `authPagePath`.
+ * Route groups like `(marketing)` don't change the URL, so they may appear at any depth,
+ * before or after the i18n locale segment, and between the auth segment and its catch-all.
+ * The catch-all's parameter name doesn't change the URL either, so `sign-in/[[...rest]]`
+ * counts too.
+ */
+async function findExistingAuthPage(ctx: ProjectContext, kind: AuthKind): Promise<string | null> {
+  const pending = [{ dir: `${srcPrefix(ctx)}app`, needsLocale: Boolean(ctx.i18nLocaleDir) }];
+
+  while (pending.length > 0) {
+    const { dir, needsLocale } = pending.shift()!;
+
+    if (!needsLocale) {
+      const page = await findCatchAllPage(ctx.cwd, `${dir}/${kind}`);
+      if (page) return page;
+    }
+
+    for (const name of await listDirs(ctx.cwd, dir)) {
+      if (isRouteGroup(name)) {
+        pending.push({ dir: `${dir}/${name}`, needsLocale });
+      } else if (needsLocale && name === ctx.i18nLocaleDir) {
+        pending.push({ dir: `${dir}/${name}`, needsLocale: false });
+      }
+    }
+  }
+
+  return null;
 }
 
 async function scaffoldAuthPages(ctx: ProjectContext): Promise<FileAction[]> {
@@ -88,6 +161,7 @@ async function scaffoldAuthPages(ctx: ProjectContext): Promise<FileAction[]> {
       content: (kind) => jsxAuthPageContent(kind, "@clerk/nextjs", tailwind, { suspense: true }),
       surface: "page",
     }),
+    { findExisting: async (kind) => findExistingAuthPage(ctx, kind) },
   );
 }
 
