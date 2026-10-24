@@ -213,6 +213,22 @@ test("skips auth pages whose catch-all uses a different parameter name", async (
   });
 });
 
+test("skips auth pages with a route group between the auth segment and its catch-all", async () => {
+  await mkdir(join(tempDir, "app/sign-in/(auth)/[[...sign-in]]"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/sign-in/(auth)/[[...sign-in]]/page.tsx"),
+    "export default function() {}",
+  );
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(findAction(plan.actions, "app/sign-in/[[...sign-in]]/page.tsx")).toMatchObject({
+    type: "skip",
+    skipReason: "Sign-in page already exists at app/sign-in/(auth)/[[...sign-in]]/page.tsx",
+  });
+});
+
 test("ignores auth pages under a non-group segment", async () => {
   await mkdir(join(tempDir, "app/docs/sign-in/[[...sign-in]]"), { recursive: true });
   await Bun.write(

@@ -102,11 +102,32 @@ async function listDirs(cwd: string, dir: string): Promise<string[]> {
   }
 }
 
+/** Find a page in an optional catch-all under `dir`, looking through any route groups in between. */
+async function findCatchAllPage(cwd: string, dir: string): Promise<string | null> {
+  const names = await listDirs(cwd, dir);
+
+  for (const name of names.filter((n) => OPTIONAL_CATCH_ALL.test(n))) {
+    const page = await findFirstFile(
+      cwd,
+      PAGE_EXTENSIONS.map((ext) => `${dir}/${name}/page.${ext}`),
+    );
+    if (page) return page;
+  }
+
+  for (const name of names.filter(isRouteGroup)) {
+    const page = await findCatchAllPage(cwd, `${dir}/${name}`);
+    if (page) return page;
+  }
+
+  return null;
+}
+
 /**
  * Find an existing optional catch-all auth page that serves the same URL as `authPagePath`.
  * Route groups like `(marketing)` don't change the URL, so they may appear at any depth,
- * before or after the i18n locale segment. The catch-all's parameter name doesn't change
- * the URL either, so `sign-in/[[...rest]]` counts too.
+ * before or after the i18n locale segment, and between the auth segment and its catch-all.
+ * The catch-all's parameter name doesn't change the URL either, so `sign-in/[[...rest]]`
+ * counts too.
  */
 async function findExistingAuthPage(ctx: ProjectContext, kind: AuthKind): Promise<string | null> {
   const pending = [{ dir: `${srcPrefix(ctx)}app`, needsLocale: Boolean(ctx.i18nLocaleDir) }];
@@ -115,17 +136,8 @@ async function findExistingAuthPage(ctx: ProjectContext, kind: AuthKind): Promis
     const { dir, needsLocale } = pending.shift()!;
 
     if (!needsLocale) {
-      const kindDir = `${dir}/${kind}`;
-      const catchAlls = (await listDirs(ctx.cwd, kindDir)).filter((name) =>
-        OPTIONAL_CATCH_ALL.test(name),
-      );
-      for (const catchAll of catchAlls) {
-        const page = await findFirstFile(
-          ctx.cwd,
-          PAGE_EXTENSIONS.map((ext) => `${kindDir}/${catchAll}/page.${ext}`),
-        );
-        if (page) return page;
-      }
+      const page = await findCatchAllPage(ctx.cwd, `${dir}/${kind}`);
+      if (page) return page;
     }
 
     for (const name of await listDirs(ctx.cwd, dir)) {
