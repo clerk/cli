@@ -28,17 +28,17 @@ clerk doctor --fix       # Offer to auto-fix issues
 
 ## Checks
 
-| Check                 | Category       | What it verifies                                                                                                                                                                                     |
-| --------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Account credentials   | Authentication | Credential store has a session or a Platform API key is configured                                                                                                                                   |
-| Token validity        | Authentication | OAuth access is verified through `/oauth/userinfo` or an account-scoped application-list fallback; Platform API-key access uses the same read-only application-list request                          |
-| Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                                                                                           |
-| Linked application    | Project        | Linked application ID is accessible via the API                                                                                                                                                      |
-| Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                                                                                   |
-| Environment variables | Environment    | The first env file the app loads that names a Clerk key (else the first that exists) has both keys                                                                                                   |
-| CLI configuration     | Configuration  | CLI config file exists and parses                                                                                                                                                                    |
-| Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                                                                                             |
-| MCP server            | Integration    | If a Clerk MCP entry is installed, every distinct configured server answers the `initialize` handshake; warns on an unreadable client config (skipped when nothing is installed; warns, never fails) |
+| Check                 | Category       | What it verifies                                                                                                                                                                                                            |
+| --------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Account credentials   | Authentication | Credential store has a session or a Platform API key is configured                                                                                                                                                          |
+| Token validity        | Authentication | OAuth access is verified through `/oauth/userinfo` or an account-scoped application-list fallback; Platform API-key access uses the same read-only application-list request                                                 |
+| Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                                                                                                                  |
+| Linked application    | Project        | Linked application ID is accessible via the API                                                                                                                                                                             |
+| Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                                                                                                          |
+| Environment variables | Environment    | The first env file the app loads that names a Clerk key (else the first that exists) has both keys, or the framework documents a load order and the app loads them from two env files with no Clerk line the CLI can't read |
+| CLI configuration     | Configuration  | CLI config file exists and parses                                                                                                                                                                                           |
+| Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                                                                                                                    |
+| MCP server            | Integration    | If a Clerk MCP entry is installed, every distinct configured server answers the `initialize` handshake; warns on an unreadable client config (skipped when nothing is installed; warns, never fails)                        |
 
 ### Accountless applications
 

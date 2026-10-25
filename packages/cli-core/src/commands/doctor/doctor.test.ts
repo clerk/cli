@@ -19,6 +19,8 @@ import type {
 } from "./types.ts";
 import type { Application } from "../../lib/plapi.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import type { FolderKeys } from "../../lib/local-keys.ts";
+import { useCleanClerkKeyEnv } from "../../test/lib/clerk-key-env.ts";
 import type { UnlinkedFolder } from "../../lib/unlinked-folder.ts";
 
 let mockUserInfo: { userId: string; email: string } | null = null;
@@ -116,6 +118,7 @@ function createMockContext(
     platformAPIKey?: boolean;
     platformAPIKeyError?: Error;
     unlinkedFolder?: UnlinkedFolder;
+    folderKeys?: FolderKeys | { readError: string };
   } = {},
 ): DoctorContext {
   return {
@@ -142,7 +145,7 @@ function createMockContext(
     getKeylessInstance: async () => overrides.keylessInstance ?? null,
     hasClaimBreadcrumb: async () => overrides.claimBreadcrumb ?? false,
     getKeylessKeyError: async () => overrides.keylessKeyError,
-    getFolderKeys: async () => ({}),
+    getFolderKeys: async () => overrides.folderKeys ?? {},
     getUnlinkedFolder: async () =>
       overrides.unlinkedFolder ?? { kind: "no_app", credential: "none" },
     fixes: {
@@ -1018,6 +1021,9 @@ describe("checkInstances", () => {
 });
 
 describe("checkEnvVars", () => {
+  // The key reader reads exported Clerk keys before any file.
+  useCleanClerkKeyEnv();
+
   test("pass with environment label when keys match an instance", async () => {
     await Bun.write(
       join(tempDir, ".env.local"),
@@ -1141,6 +1147,98 @@ describe("checkEnvVars", () => {
       name: "Environment variables",
       status: "pass",
       message: ".env.development.local contains VITE_CLERK_PUBLISHABLE_KEY and CLERK_SECRET_KEY",
+    });
+  });
+
+  // Astro loads `.env.development` before `.env`, so the app takes its
+  // publishable key from the first and its secret key from the second.
+  test("passes a pair the app loads from two files, naming each", async () => {
+    const { readFolderKeys } = await import("../../lib/local-keys.ts");
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { astro: "5" } }),
+    );
+    await Bun.write(
+      join(tempDir, ".env"),
+      "PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_astro\nCLERK_SECRET_KEY=sk_test_astro\n",
+    );
+    await Bun.write(
+      join(tempDir, ".env.development"),
+      "PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_astro\n",
+    );
+    const ctx = createMockContext({
+      application: {
+        ...mockApplication,
+        instances: [
+          {
+            ...mockApplication.instances[0]!,
+            publishable_key: "pk_test_astro",
+            secret_key: "sk_test_astro",
+          },
+        ],
+      },
+      folderKeys: await readFolderKeys(tempDir),
+    });
+    const result = await checkEnvVars(ctx);
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "pass",
+      message: [
+        ".env.development contains PUBLIC_CLERK_PUBLISHABLE_KEY, and .env contains CLERK_SECRET_KEY",
+        "development instance",
+      ],
+    });
+  });
+
+  // Each still warns as before: the app may not load the pair the reader found.
+  test.each([
+    {
+      // A loader parses `KEY = value`, so `.env.development`'s secret key wins.
+      why: "a secret key line the CLI can't read in a file loaded first",
+      dep: "astro",
+      files: {
+        ".env.development":
+          "PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_astro\n  CLERK_SECRET_KEY = sk_test_other\n",
+        ".env": "PUBLIC_CLERK_PUBLISHABLE_KEY=pk_test_astro\nCLERK_SECRET_KEY=sk_test_astro\n",
+      },
+      message: ".env.development is missing: CLERK_SECRET_KEY",
+    },
+    {
+      // dotenv's default loads only `.env`.
+      why: "a framework with no documented load order",
+      dep: "express",
+      files: {
+        ".env.local": "CLERK_PUBLISHABLE_KEY=pk_test_express\n",
+        ".env": "CLERK_SECRET_KEY=sk_test_express\n",
+      },
+      message: ".env.local is missing: CLERK_SECRET_KEY",
+    },
+  ])("a pair from two files, $why: warns", async ({ dep, files, message }) => {
+    const { readFolderKeys } = await import("../../lib/local-keys.ts");
+    await Bun.write(
+      join(tempDir, "package.json"),
+      JSON.stringify({ dependencies: { [dep]: "5" } }),
+    );
+    for (const [name, content] of Object.entries(files))
+      await Bun.write(join(tempDir, name), content);
+    const result = await checkEnvVars(
+      createMockContext({ folderKeys: await readFolderKeys(tempDir) }),
+    );
+    expectCheck(result, { name: "Environment variables", status: "warn", message });
+  });
+
+  // The fix, `clerk env pull`, writes env files, so keys found only outside
+  // them (the shell, the SDK keyless file) still warn.
+  test("warns when the secret key is only exported in the shell", async () => {
+    const { readFolderKeys } = await import("../../lib/local-keys.ts");
+    await Bun.write(join(tempDir, ".env.local"), "CLERK_PUBLISHABLE_KEY=pk_test_shell\n");
+    process.env.CLERK_SECRET_KEY = "sk_test_shell";
+    const ctx = createMockContext({ folderKeys: await readFolderKeys(tempDir) });
+    const result = await checkEnvVars(ctx);
+    expectCheck(result, {
+      name: "Environment variables",
+      status: "warn",
+      message: ".env.local is missing: CLERK_SECRET_KEY",
     });
   });
 

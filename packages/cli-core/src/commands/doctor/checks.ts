@@ -11,6 +11,11 @@ import {
 } from "../../lib/framework.ts";
 import { ENV_FILE_CANDIDATES, parseEnvFile } from "../../lib/dotenv.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import {
+  ENV_VAR_SOURCE_SUFFIX,
+  SDK_KEYLESS_SOURCE,
+  type LocatedKey,
+} from "../../lib/local-keys.ts";
 import { appInNoAccount, unlinkedFolderNextStep } from "../../lib/unlinked-folder.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "../../lib/version.ts";
 import {
@@ -478,6 +483,14 @@ export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {
   const hasSecret = secretKeyName in entries && entries[secretKeyName] !== "";
 
   if (!hasPublishable || !hasSecret) {
+    const loaded = await pairFromEnvFiles(ctx, cwd);
+    if (loaded) {
+      const { publishableKey, secretKey } = loaded;
+      const label = await identifyEnvironment(ctx, publishableKey.value, secretKey.value);
+      return check.pass(
+        `${publishableKey.source} contains ${publishableKey.name}, and ${secretKey.source} contains ${secretKey.name}${label ? ` (${label} instance)` : ""}`,
+      );
+    }
     const missing: string[] = [];
     if (!hasPublishable) missing.push(publishableKeyName);
     if (!hasSecret) missing.push(secretKeyName);
@@ -501,6 +514,30 @@ export async function checkEnvVars(ctx: DoctorContext): Promise<CheckResult> {
   }
 
   return check.pass(`${foundFile} contains ${publishableKeyName} and ${secretKeyName}`);
+}
+
+/**
+ * Both keys the app loads, when each comes from an env file: the framework's
+ * order can take them from two files. Keys only in the shell or the SDK
+ * keyless file don't count, since the fix, `clerk env pull`, writes a file.
+ * Without a documented order, or with a Clerk line the CLI can't read (which
+ * the app's loader may parse, and which may win), which keys the app loads
+ * is untold.
+ */
+async function pairFromEnvFiles(
+  ctx: DoctorContext,
+  cwd: string,
+): Promise<{ publishableKey: LocatedKey; secretKey: LocatedKey } | undefined> {
+  if (!(await detectFramework(cwd))?.envLoadOrder) return undefined;
+  const keys = await ctx.getFolderKeys();
+  if ("readError" in keys || keys.unreadableLines?.length) return undefined;
+  const { publishableKey, secretKey } = keys;
+  if (!publishableKey?.value || !secretKey?.value) return undefined;
+  const fromFile = (key: LocatedKey) =>
+    key.source !== SDK_KEYLESS_SOURCE && !key.source.endsWith(ENV_VAR_SOURCE_SUFFIX);
+  return fromFile(publishableKey) && fromFile(secretKey)
+    ? { publishableKey, secretKey }
+    : undefined;
 }
 
 async function identifyEnvironment(
