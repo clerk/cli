@@ -10,6 +10,7 @@ import {
   readFolderKeys,
   readSdkClaimLink,
   readSdkKeylessApp,
+  secretKeysDisagreeReason,
   unreadGenericPublishableKey,
 } from "./local-keys.ts";
 
@@ -366,6 +367,22 @@ describe("the key the app loads, by framework", () => {
       });
     },
   );
+
+  // An empty value is a value, so it disagrees with a key, but it isn't a different key.
+  test("Express: a blank key in .env.local beside a key in .env is named as set empty", async () => {
+    await useFramework("express");
+    await write(".env", "CLERK_PUBLISHABLE_KEY=pk_test_a\nCLERK_SECRET_KEY=sk_test_a\n");
+    await write(".env.local", "CLERK_PUBLISHABLE_KEY=\nCLERK_SECRET_KEY=\n");
+
+    const keys = await readFolderKeys(dir);
+
+    expect(couldntTellReason(keys)).toBe(
+      "`.env.local` sets `CLERK_PUBLISHABLE_KEY` empty and `.env` sets a key, and the CLI doesn't know which one this app loads",
+    );
+    expect(secretKeysDisagreeReason(keys)).toBe(
+      "`.env.local` sets `CLERK_SECRET_KEY` empty and `.env` sets a key, and the CLI doesn't know which one this app loads",
+    );
+  });
 
   test("no documented order: files that agree give that key", async () => {
     await useFramework("express");

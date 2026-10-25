@@ -605,7 +605,7 @@ export function couldntTellReason({ unreadableLines, undecided }: FolderKeys): s
   }
   const conflicting = undecided?.publishable;
   if (conflicting) {
-    return `${listInProse(conflicting.map((key) => `\`${key.source}\``))} hold different Clerk publishable keys, and the CLI doesn't know which one this app loads`;
+    return `${disagreement(conflicting, "publishable")}, and the CLI doesn't know which one this app loads`;
   }
   return undefined;
 }
@@ -614,7 +614,19 @@ export function couldntTellReason({ unreadableLines, undecided }: FolderKeys): s
 export function secretKeysDisagreeReason({ undecided }: FolderKeys): string | undefined {
   const conflicting = undecided?.secret;
   if (!conflicting) return undefined;
-  return `${listInProse(conflicting.map((key) => `\`${key.source}\``))} hold different Clerk secret keys, and the CLI doesn't know which one this app loads`;
+  return `${disagreement(conflicting, "secret")}, and the CLI doesn't know which one this app loads`;
+}
+
+/** How files disagree on a key: an empty value disagrees, but isn't a different key. */
+function disagreement(conflicting: LocatedKey[], kind: "publishable" | "secret"): string {
+  if (conflicting.every((key) => key.value)) {
+    return `${listInProse(conflicting.map((key) => `\`${key.source}\``))} hold different Clerk ${kind} keys`;
+  }
+  return listInProse(
+    conflicting.map((key) =>
+      key.value ? `\`${key.source}\` sets a key` : `\`${key.source}\` sets \`${key.name}\` empty`,
+    ),
+  );
 }
 
 function listInProse(items: string[]): string {
