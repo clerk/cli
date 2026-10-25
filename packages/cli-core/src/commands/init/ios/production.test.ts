@@ -8,6 +8,7 @@ import type { DoctorContext } from "../../doctor/types.ts";
 import * as coordinator from "./coordinator.ts";
 import { doctor } from "./doctor.ts";
 import * as production from "./production.ts";
+import type { IOSNativeAppleAPI } from "./native-apple.ts";
 import { auditProduction } from "./production.ts";
 import type { NativeAPI } from "./remote.ts";
 import { createIOSFixture } from "./test-helpers.ts";
@@ -84,6 +85,20 @@ const api: NativeAPI = {
   },
   async enableNativeApi() {
     throw new Error("Doctor must not enable Native API.");
+  },
+};
+
+// Without it, doctor's Apple connection check uses the real Platform API
+// client, which reads the developer's stored session from the keychain.
+const appleAPI: IOSNativeAppleAPI = {
+  async fetchInstanceConfig() {
+    return { connection_oauth_apple: { enabled: false, authenticatable: true } };
+  },
+  async fetchInstanceConfigSchema() {
+    return { properties: {} };
+  },
+  async patchInstanceConfig() {
+    throw new Error("Doctor must not change the instance config.");
   },
 };
 
@@ -239,7 +254,7 @@ test("a failed production check points at retrying, not clerk init", async () =>
         inspectOnly: true,
         remote: { applicationId: "app_test" },
       },
-      { api, run },
+      { api, run, appleAPI },
     );
     const check = report.checks.find((item) => item.name === "Production instance");
     expect(check).toMatchObject({ status: "warn" });
@@ -382,7 +397,7 @@ test("doctor appends the production checks after the development ones", async ()
       inspectOnly: true,
       remote: { applicationId: "app_test" },
     },
-    { api, run },
+    { api, run, appleAPI },
   );
   const names = report.checks.map((check) => check.name);
   expect(names.slice(-3)).toEqual([
@@ -398,7 +413,7 @@ test("clerk doctor shows each production check's own remedy, not clerk init's", 
   const ctx = {
     getProfile: async () => ({ profile: { appId: "app_test" } }),
   } as unknown as DoctorContext;
-  const results = await runIOSDoctorChecks(ctx, { root }, { api, run });
+  const results = await runIOSDoctorChecks(ctx, { root }, { api, run, appleAPI });
   const domain = results.find((result) => result.name === "Production associated domain: Release");
   expect(domain?.status).toBe("warn");
   expect(domain?.remedy).toContain("Associated Domains for Release");
