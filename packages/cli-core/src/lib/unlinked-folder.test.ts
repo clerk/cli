@@ -13,7 +13,12 @@ import { join } from "node:path";
 import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../test/lib/clerk-key-env.ts";
 import { _setTokenOverride } from "./credential-store.ts";
 import * as localKeys from "./local-keys.ts";
-import { classifyUnlinkedFolder, readUnlinkedFolder, type Credential } from "./unlinked-folder.ts";
+import {
+  classifyUnlinkedFolder,
+  readUnlinkedFolder,
+  unlinkedFolderNextStep,
+  type Credential,
+} from "./unlinked-folder.ts";
 
 useSyntheticShellClerkKeys();
 useCleanClerkKeyEnv();
@@ -229,6 +234,12 @@ const ROWS: {
       couldntTell: expect.stringContaining("couldn't read the `CLERK_PUBLISHABLE_KEY` line"),
     },
   },
+  // Not a reason the publishable key is untold, but the folder holds a key.
+  {
+    row: "only a secret key line the CLI can't parse",
+    files: { ".env": "  CLERK_SECRET_KEY = sk_test_spaced\n" },
+    expected: { kind: "unknown_owner" },
+  },
   { row: "nothing", files: {}, expected: { kind: "no_app" } },
 ];
 
@@ -289,6 +300,19 @@ test("a failed read of the stored session counts as no credential", async () => 
     check.mockRestore();
   }
 });
+
+// A new app would sit beside the key the folder already holds.
+test.each([{ agent: false }, { agent: true }])(
+  "only a secret key line the CLI can't parse, agent $agent: the secret-key step, never `clerk init`",
+  async ({ agent }) => {
+    await write(".env", "  CLERK_SECRET_KEY = sk_test_spaced\n");
+
+    const step = unlinkedFolderNextStep(await readUnlinkedFolder(dir), { agent });
+
+    expect(step.text).toContain("Clerk secret keys but no publishable key");
+    expect(step.text).not.toContain("clerk init");
+  },
+);
 
 // `doctor` builds the facts from its own memoized reads and calls this directly.
 describe("classifyUnlinkedFolder", () => {

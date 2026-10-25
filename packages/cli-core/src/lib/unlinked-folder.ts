@@ -143,7 +143,15 @@ export function classifyUnlinkedFolder({
   }
   const couldntTell = couldntTellReason(keys);
   const secretKeysDisagree = secretKeysDisagreeReason(keys);
-  if (keys.publishableKey || keys.secretKey || couldntTell || keys.undecided) {
+  // An unreadable secret key line isn't a reason the publishable key is
+  // untold, but the folder still holds a key: never "no app".
+  if (
+    keys.publishableKey ||
+    keys.secretKey ||
+    couldntTell ||
+    keys.undecided ||
+    keys.unreadableLines?.length
+  ) {
     return {
       kind: "unknown_owner",
       credential,
