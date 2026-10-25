@@ -101,13 +101,6 @@ export function normalizeGitRemoteUrl(raw: string): string {
   return url.toLowerCase();
 }
 
-/**
- * Adds `entry` to the project's `.gitignore` unless it is already listed.
- *
- * The CLI writes files into a user's repository that must not be committed,
- * such as the keyless breadcrumb. Creating one without this is how a live
- * credential ends up in a tracked file.
- */
 /** Whether git ignores `file` in `cwd`'s repository; undefined outside one, or without git. */
 export async function isGitIgnored(cwd: string, file: string): Promise<boolean | undefined> {
   try {
@@ -118,6 +111,13 @@ export async function isGitIgnored(cwd: string, file: string): Promise<boolean |
   }
 }
 
+/**
+ * Adds `entry` to the project's `.gitignore` unless it is already listed.
+ *
+ * The CLI writes files into a user's repository that must not be committed,
+ * such as the keyless breadcrumb. Creating one without this is how a live
+ * credential ends up in a tracked file.
+ */
 export async function ensureGitignoreEntry(cwd: string, entry: string): Promise<void> {
   const gitignorePath = join(cwd, ".gitignore");
   const content = await Bun.file(gitignorePath)
