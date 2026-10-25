@@ -797,15 +797,17 @@ describe("api command", () => {
   test("rejects an invalid piped body", async () => {
     const restore = pipeStdin("not json at all");
     try {
-      await expect(runApi("/users")).rejects.toThrow("Invalid JSON in the piped request body");
+      await expect(runApi("/users", { file: "-" })).rejects.toThrow(
+        "Invalid JSON in the piped request body",
+      );
     } finally {
       restore();
     }
   });
 
   // CI jobs and cron have a non-TTY stdin with nothing on it; a plain GET must
-  // still go out rather than be rejected as an empty body.
-  test("treats an empty non-TTY stdin as no body, not an empty one", async () => {
+  // still go out rather than wait for stdin to close.
+  test("does not read stdin unless --file -", async () => {
     let capturedMethod = "";
     let capturedBody: unknown = "unset";
     stubFetch(async (_input, init) => {
@@ -814,17 +816,33 @@ describe("api command", () => {
       return new Response(JSON.stringify(mockUsers), { status: 200 });
     });
 
-    const restore = pipeStdin("");
+    Object.defineProperty(process.stdin, "isTTY", {
+      value: false,
+      writable: true,
+      configurable: true,
+    });
+    const original = process.stdin[Symbol.asyncIterator];
+    Object.defineProperty(process.stdin, Symbol.asyncIterator, {
+      value: async function* () {
+        throw new Error("stdin should not be read");
+      },
+      writable: true,
+      configurable: true,
+    });
     try {
       await runApi("/users");
     } finally {
-      restore();
+      Object.defineProperty(process.stdin, Symbol.asyncIterator, {
+        value: original,
+        writable: true,
+        configurable: true,
+      });
     }
     expect(capturedMethod).toBe("GET");
     expect(capturedBody).toBeUndefined();
   });
 
-  test("forwards a piped body untrimmed", async () => {
+  test("forwards a piped body untrimmed when --file -", async () => {
     let capturedBody = "";
     stubFetch(async (_input, init) => {
       capturedBody = init?.body as string;
@@ -834,7 +852,7 @@ describe("api command", () => {
     const raw = '{"first_name": "Alice"}\n';
     const restore = pipeStdin(raw);
     try {
-      await runApi("/users");
+      await runApi("/users", { file: "-" });
     } finally {
       restore();
     }

@@ -186,9 +186,11 @@ export async function api(
 }
 
 /**
- * Resolve the request body from `-d`, `--file`, or piped stdin, and parse-check
- * it before it can reach the API. The request's targeting flags ride along only
- * so the error's suggested command hits the same endpoint; the secret key is
+ * Resolve the request body from `-d` or `--file`, and parse-check it before it
+ * can reach the API. Stdin is only consumed when `--file -` is passed, the same
+ * rule `--input-json -` uses, so an open unread stdin (CI, agents, `sleep |`)
+ * cannot hang a GET. The request's targeting flags ride along only so the
+ * error's suggested command hits the same endpoint; the secret key is
  * deliberately not among them, since the suggestion is printed.
  */
 async function resolveBody(options: ApiOptions, endpoint: string): Promise<string | null> {
@@ -207,25 +209,20 @@ async function resolveBody(options: ApiOptions, endpoint: string): Promise<strin
     return validateJsonBody(options.data, { kind: "data" }, request);
   }
 
+  if (options.file === "-") {
+    const chunks: Buffer[] = [];
+    for await (const chunk of process.stdin) {
+      chunks.push(Buffer.from(chunk));
+    }
+    return validateJsonBody(Buffer.concat(chunks).toString("utf-8"), { kind: "stdin" }, request);
+  }
+
   if (options.file) {
     const file = Bun.file(options.file);
     if (!(await file.exists())) {
       throwUsageError(`File not found: ${options.file}`, undefined, ERROR_CODE.FILE_NOT_FOUND);
     }
     return validateJsonBody(await file.text(), { kind: "file", path: options.file }, request);
-  }
-
-  // Read from stdin if piped. A non-TTY stdin is not proof of a pipe — CI
-  // jobs, cron, and `< /dev/null` look the same and yield nothing — so nothing
-  // (or only whitespace) on stdin means no body rather than an empty one. What
-  // does arrive is forwarded untrimmed, like a --file body.
-  if (!process.stdin.isTTY) {
-    const chunks: Buffer[] = [];
-    for await (const chunk of process.stdin) {
-      chunks.push(Buffer.from(chunk));
-    }
-    const text = Buffer.concat(chunks).toString("utf-8");
-    if (text.trim()) return validateJsonBody(text, { kind: "stdin" }, request);
   }
 
   return null;
@@ -282,7 +279,7 @@ export function registerApi(program: Program): void {
     .argument("[filter]", "Filter keyword (used with 'ls')")
     .option("-X, --method <method>", "HTTP method (default: GET, or POST if body provided)")
     .option("-d, --data <json>", "JSON request body")
-    .option("--file <path>", "Read request body from a file")
+    .option("--file <path>", "Read request body from a file (`-` for stdin)")
     .option("--include", "Show response headers")
     .option("--app <id>", "Application ID to target when resolving keys")
     .option("--secret-key <key>", "Override the secret key")
@@ -313,6 +310,10 @@ export function registerApi(program: Program): void {
         command: "clerk api /users --file body.json",
         description:
           "POST a body from a file — no shell quoting, so it works the same in PowerShell and cmd.exe",
+      },
+      {
+        command: "cat body.json | clerk api /users --file -",
+        description: "POST a body from stdin",
       },
       {
         command: "clerk api --fapi /environment --app <id> --instance dev",
