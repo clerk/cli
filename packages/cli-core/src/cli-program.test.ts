@@ -1,5 +1,12 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
-import { createProgram, formatApiBody, outputJsonError, reportError } from "./cli-program.ts";
+import {
+  applyModeFromArgv,
+  createProgram,
+  formatApiBody,
+  outputJsonError,
+  reportError,
+} from "./cli-program.ts";
+import { getMode, _resetMode } from "./mode.ts";
 import {
   ApiError,
   CliError,
@@ -10,6 +17,22 @@ import {
 } from "./lib/errors.ts";
 import { telemetryResultForError } from "./lib/telemetry.ts";
 import { useCaptureLog } from "./test/lib/stubs.ts";
+
+describe("applyModeFromArgv", () => {
+  afterEach(() => {
+    _resetMode();
+  });
+
+  test("applies --mode agent before Commander parse", () => {
+    applyModeFromArgv(["--mode", "agent", "--input-json", "{", "whoami"]);
+    expect(getMode()).toBe("agent");
+  });
+
+  test("last --mode wins", () => {
+    applyModeFromArgv(["--mode", "agent", "--mode", "human"]);
+    expect(getMode()).toBe("human");
+  });
+});
 
 test("registers users as a top-level command", () => {
   const program = createProgram();

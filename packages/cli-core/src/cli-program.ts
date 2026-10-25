@@ -39,6 +39,7 @@ import {
   ApiError,
   PlapiError,
   FapiError,
+  ERROR_CODE,
   EXIT_CODE,
   throwUsageError,
 } from "./lib/errors.ts";
@@ -96,7 +97,12 @@ export function createProgram(): Program {
     .configureHelp(clerkHelpConfig())
     .configureOutput({
       writeOut: (msg) => log.data(msg.replace(/\n$/, "")),
-      writeErr: (msg) => log.ui(msg),
+      // Commander prints `error: …` then throws. runProgram renders that throw
+      // through reportError, so skip the first copy.
+      writeErr: (msg) => {
+        if (msg.startsWith("error:")) return;
+        log.ui(msg);
+      },
     })
     .version(CURRENT_VERSION, "-v, --version", "Output the version number")
     .helpOption("-h, --help", "Display help for command")
@@ -109,7 +115,8 @@ export function createProgram(): Program {
       "--mode <mode>",
       "Force interaction mode (human or agent). Also settable via the CLERK_MODE environment variable. Defaults to agent when run by a known AI agent or without a TTY.",
     )
-    .option("--verbose", "Show detailed output (enables debug messages)") as Program;
+    .option("--verbose", "Show detailed output (enables debug messages)")
+    .exitOverride() as Program;
 
   program.hook("preAction", async (_thisCommand, actionCommand) => {
     // First so hook-time failures (e.g. invalid --mode) still produce an event.
@@ -245,8 +252,56 @@ async function resolveArgv(
 ): Promise<{ argv: string[]; from: ParseFrom }> {
   const raw = args ?? process.argv;
   const effectiveFrom = from ?? (args === undefined ? "node" : "user");
+  applyModeFromArgv(raw);
   const argv = await expandInputJson([...raw]);
   return { argv, from: effectiveFrom };
+}
+
+/**
+ * Honour `--mode` before `--input-json` expansion and Commander parse, so
+ * agent-mode JSON errors apply to early failures. Last `--mode` wins.
+ */
+export function applyModeFromArgv(argv: string[]): void {
+  let mode: Mode | undefined;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i];
+    if (arg === "--mode") {
+      const value = argv[i + 1];
+      if (value === "human" || value === "agent") mode = value;
+      i += 1;
+    } else if (arg.startsWith("--mode=")) {
+      const value = arg.slice("--mode=".length);
+      if (value === "human" || value === "agent") mode = value;
+    }
+  }
+  if (mode) setMode(mode);
+}
+
+type CommanderLike = { code?: string; message: string; exitCode?: number };
+
+function isCommanderError(error: unknown): error is CommanderLike {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as CommanderLike).code === "string" &&
+    (error as CommanderLike).code!.startsWith("commander.")
+  );
+}
+
+function commanderToCliError(error: CommanderLike): CliError {
+  const message = error.message.replace(/^error: /, "").replace(/\n$/, "");
+  return new CliError(message, {
+    code: ERROR_CODE.USAGE_ERROR,
+    exitCode: EXIT_CODE.USAGE,
+  });
+}
+
+function isCommanderHelpOrVersion(error: unknown): boolean {
+  return (
+    isCommanderError(error) &&
+    (error.code === "commander.helpDisplayed" || error.code === "commander.version")
+  );
 }
 
 /**
@@ -273,6 +328,13 @@ export async function runProgram(
     await finalizeAndSendTelemetry(telemetryResultForSoftExit(softExitCode));
   } catch (error) {
     if (interruptedExitCode() !== null) return;
+    if (isCommanderHelpOrVersion(error)) {
+      await finalizeAndSendTelemetry(telemetryResultForSoftExit(EXIT_CODE.SUCCESS));
+      return;
+    }
+    if (isCommanderError(error)) {
+      error = commanderToCliError(error);
+    }
     // Started before rendering so the message is printed before we block on the
     // send — a slow telemetry endpoint never delays the error output — then
     // awaited once at the single exit below, so no branch can forget to flush.
