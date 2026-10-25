@@ -29,6 +29,10 @@ export const NEXT_STEPS = {
     "Run `clerk auth login` again to retry auto-claim",
     "Run `clerk link` to connect your application manually",
   ],
+  // The account can't claim (403), and plain `clerk link` would claim again.
+  AUTOCLAIM_FORBIDDEN: [
+    "To link an existing application, run `clerk link --app <app_id>`, which skips the claim",
+  ],
   // The claim succeeded but left the folder's link and keys alone. People get
   // the interactive picker here; the warning above names the agent-safe path.
   AUTOCLAIM_LINKED_ELSEWHERE: (claimedAppId: string) => [

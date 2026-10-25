@@ -1068,28 +1068,78 @@ describe("login", () => {
     );
   });
 
-  test("names Clerk's reason when it refuses the credential, and keeps the claim token", async () => {
-    mockGetValidToken.mockResolvedValue("existing-token");
-    mockGetAuth.mockResolvedValue({ userId: "user_123" });
-    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
-    withInitToken();
-    mockAttemptAutoclaim.mockResolvedValue({
-      status: "failed",
-      error: new PlapiError(
-        403,
-        JSON.stringify({
-          errors: [{ code: "authorization_missing_scopes", message: "Missing scopes" }],
-        }),
-      ),
-    });
+  // 401: Clerk refused the credential. 403: the account isn't allowed to claim.
+  test.each([
+    {
+      status: 403,
+      code: "authorization_missing_scopes",
+      message: "Missing scopes",
+      says: "Unable to claim - this account can't claim the app: Missing scopes. The claim token stays in this folder, so signing in with another account tries again.",
+      // Another `clerk link` would claim again and get the same 403.
+      nextStep:
+        "To link an existing application, run `clerk link --app <app_id>`, which skips the claim",
+      notNextStep: "Run `clerk link` to connect your application manually",
+    },
+    {
+      status: 401,
+      code: "authentication_invalid",
+      message: "Invalid session",
+      says: "Unable to claim - Clerk refused this credential: Invalid session. The claim token stays in this folder, so the next `clerk auth login` tries again.",
+      nextStep: "Run `clerk link` to connect your application manually",
+      notNextStep: "skips the claim",
+    },
+  ])(
+    "a claim answered $status names Clerk's reason and its next step, and keeps the claim token",
+    async ({ status, code, message, says, nextStep, notNextStep }) => {
+      // Person mode prints the outro's next steps; the person answers Yes to the claim.
+      mockIsHuman.mockReturnValue(true);
+      mockConfirm.mockResolvedValue(true);
+      mockGetValidToken.mockResolvedValue("existing-token");
+      mockGetAuth.mockResolvedValue({ userId: "user_123" });
+      mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+      withInitToken();
+      mockAttemptAutoclaim.mockResolvedValue({
+        status: "failed",
+        error: new PlapiError(status, JSON.stringify({ errors: [{ code, message }] })),
+      });
 
-    await runLogin();
+      await runLogin();
 
-    expect(captured.err).toContain(
-      "Unable to claim - Clerk refused this credential: Missing scopes. The claim token stays in this folder",
-    );
-    expect(captured.err).not.toContain("temporary error");
-  });
+      expect(captured.err).toContain(says);
+      expect(captured.err).not.toContain("temporary error");
+      expect(captured.err).toContain(nextStep);
+      expect(captured.err).not.toContain(notNextStep);
+    },
+  );
+
+  // `outro` prints next steps only for a person, so an agent's warning names
+  // the way past a claim the account can't make.
+  test.each([
+    { status: 403, code: "authorization_missing_scopes", names: true },
+    { status: 401, code: "authentication_invalid", names: false },
+  ])(
+    "agent, a claim answered $status: the warning names `clerk link --app` ($names)",
+    async ({ status, code, names }) => {
+      mockIsHuman.mockReturnValue(false);
+      mockGetValidToken.mockResolvedValue("existing-token");
+      mockGetAuth.mockResolvedValue({ userId: "user_123" });
+      mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+      withInitToken();
+      mockAttemptAutoclaim.mockResolvedValue({
+        status: "failed",
+        error: new PlapiError(status, JSON.stringify({ errors: [{ code, message: "Refused" }] })),
+      });
+
+      await runLogin();
+
+      expect(captured.err).toContain("Unable to claim");
+      expect(
+        captured.err.includes(
+          "To link an existing application, run `clerk link --app <app_id>`, which skips the claim.",
+        ),
+      ).toBe(names);
+    },
+  );
 
   test("does not call ensureFirstApplication when existing session is reused", async () => {
     mockGetValidToken.mockResolvedValue("existing-token");

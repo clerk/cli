@@ -5,6 +5,7 @@ import { isAgent } from "../../mode.ts";
 import { getToken, hasAccountCredentials } from "../../lib/credential-store.ts";
 import { login } from "../auth/login.ts";
 import {
+  claimForbidden,
   claimWarning,
   claimedNextSteps,
   reportClaimSkipped,
@@ -599,26 +600,9 @@ async function claimFirst(
       log.warn(claimWarning(result) ?? "");
       return undefined;
     case "managed_workspace":
-      // The token stays, so plain `clerk link` would claim, and stop here, again.
-      throw new CliError(
-        `${claimWarning(result)} This folder isn't linked. To link an existing application instead, ${LINK_SKIPPING_CLAIM}${rerun ? `, then ${rerun.clause}` : ""}.`,
-        {
-          code: ERROR_CODE.NOT_LINKED,
-          ...(agent && {
-            examples: [
-              {
-                command: "clerk apps list --json",
-                description: "List your applications, to choose an existing one",
-              },
-              {
-                command: "clerk link --app <app_id>",
-                description: "Link it; this skips the claim",
-              },
-            ],
-          }),
-        },
-      );
+      throw skipTheClaim(claimWarning(result), agent, rerun);
     case "failed":
+      if (claimForbidden(result)) throw skipTheClaim(claimWarning(result), agent, rerun);
       // A refused credential can't pass on a retry, so an agent gets the fix
       // with the error, which keeps Clerk's code and exit status. The token
       // is still on disk, so the folder reads as an init app. A temporary
@@ -633,6 +617,32 @@ async function claimFirst(
 }
 
 const LINK_SKIPPING_CLAIM = "run `clerk link --app <app_id>`, which skips the claim";
+
+/**
+ * A claim the account can't make, in a managed workspace or with an account
+ * Clerk won't let claim. The token stays, so plain `clerk link` would claim,
+ * and stop here, again.
+ */
+function skipTheClaim(warning: string | undefined, agent: boolean, rerun: Rerun | undefined) {
+  return new CliError(
+    `${warning} This folder isn't linked. To link an existing application instead, ${LINK_SKIPPING_CLAIM}${rerun ? `, then ${rerun.clause}` : ""}.`,
+    {
+      code: ERROR_CODE.NOT_LINKED,
+      ...(agent && {
+        examples: [
+          {
+            command: "clerk apps list --json",
+            description: "List your applications, to choose an existing one",
+          },
+          {
+            command: "clerk link --app <app_id>",
+            description: "Link it; this skips the claim",
+          },
+        ],
+      }),
+    },
+  );
+}
 
 /**
  * Stops the link, saving nothing, unless every Clerk key in the folder

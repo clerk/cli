@@ -6,7 +6,7 @@
 
 import type { AutoclaimResult, FolderUnchanged } from "../../lib/autoclaim.ts";
 import { describeClaimDestination } from "../../lib/claim-prompt.ts";
-import { credentialRefusal, errorMessage } from "../../lib/errors.ts";
+import { ApiError, credentialRefusal, errorMessage } from "../../lib/errors.ts";
 import { describeKeyLocation } from "../../lib/local-keys.ts";
 import { buildDashboardUrl } from "../../lib/environment.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
@@ -20,8 +20,27 @@ const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
     "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
 };
 
+/**
+ * Clerk answered the claim 403: the account isn't allowed to claim (missing
+ * scopes, not a member of the workspace), so signing in again with it can't
+ * help. A 401 is a refused credential.
+ */
+export function claimForbidden(result: AutoclaimResult): boolean {
+  return (
+    result.status === "failed" && result.error instanceof ApiError && result.error.status === 403
+  );
+}
+
 export function claimWarning(result: AutoclaimResult): string | undefined {
   if (result.status === "failed" && credentialRefusal(result.error)) {
+    if (claimForbidden(result)) {
+      // The same account gets the same 403, so only another one retries it,
+      // and none can while `CLERK_PLATFORM_API_KEY` wins over any session.
+      const retry = process.env.CLERK_PLATFORM_API_KEY
+        ? ""
+        : ", so signing in with another account tries again";
+      return `Unable to claim - this account can't claim the app: ${errorMessage(result.error)}. The claim token stays in this folder${retry}.`;
+    }
     return `Unable to claim - Clerk refused this credential: ${errorMessage(result.error)}. The claim token stays in this folder, so the next \`clerk auth login\` tries again.`;
   }
   if (result.status === "managed_workspace") {

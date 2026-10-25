@@ -189,6 +189,81 @@ test("person, a claim refused by a managed workspace: stops with not_linked, no 
   expect(await tokenFileExists()).toBe(true);
 });
 
+// Clerk answers 403 when the account isn't allowed to claim (missing scopes,
+// not a member of the workspace). The token stays, so plain `clerk link`
+// would claim again and get the same answer; signing in again with the same
+// account changes nothing.
+const FORBIDDEN_CLAIM = () =>
+  Response.json(
+    { errors: [{ code: "authorization_missing_scopes", message: "Missing scopes" }] },
+    { status: 403 },
+  );
+const CANT_CLAIM =
+  "Unable to claim - this account can't claim the app: Missing scopes. The claim token stays in this folder, so signing in with another account tries again.";
+const SKIP_THE_CLAIM =
+  "This folder isn't linked. To link an existing application instead, run `clerk link --app <app_id>`, which skips the claim.";
+
+test("person, a claim the account can't make (403): says so, names `clerk link --app`, keeps the token", async () => {
+  await useStoredSessionOnly();
+  mockPrompts.confirm(true);
+  claimResponse = FORBIDDEN_CLAIM;
+
+  const result = await clerk.raw("link");
+
+  expect(result.exitCode).toBe(1);
+  const stderr = Bun.stripANSI(result.stderr);
+  expect(stderr).toContain(CANT_CLAIM);
+  expect(stderr).toContain(SKIP_THE_CLAIM);
+  expect(stderr).not.toContain("refused");
+  expect(requests("GET", LIST_PATH)).toHaveLength(0);
+  expect(requests("POST", LIST_PATH)).toHaveLength(0);
+  expect(await linkedAppId()).toBeUndefined();
+  expect(await tokenFileExists()).toBe(true);
+});
+
+// `CLERK_PLATFORM_API_KEY` wins over any session (`lib/plapi.ts`), so with
+// it set, signing in with another account can't retry the claim.
+const CANT_CLAIM_WITH_THE_KEY =
+  "Unable to claim - this account can't claim the app: Missing scopes. The claim token stays in this folder. This folder isn't linked.";
+test.each([
+  { credential: "a stored session", setUp: useStoredSessionOnly, says: CANT_CLAIM },
+  {
+    credential: "the API key",
+    setUp: async () => {
+      mockState.storedToken = null;
+    },
+    says: CANT_CLAIM_WITH_THE_KEY,
+  },
+  {
+    credential: "a stored session and the API key",
+    setUp: async () => {},
+    says: CANT_CLAIM_WITH_THE_KEY,
+  },
+])(
+  "agent, $credential, a claim the account can't make (403): not_linked naming `clerk link --app`, never a sign-out",
+  async ({ setUp, says }) => {
+    await setUp();
+    claimResponse = FORBIDDEN_CLAIM;
+
+    const result = await clerk.raw("--mode", "agent", "link");
+    const line = result.stderr.split("\n").findLast((entry) => entry.startsWith('{"error"'));
+    const { error } = JSON.parse(line ?? "{}") as {
+      error: { code: string; message: string; examples?: { command: string }[] };
+    };
+
+    expect(result.exitCode).toBe(1);
+    expect(error.code).toBe("not_linked");
+    expect(error.message).toContain(says);
+    expect(error.message).toContain(SKIP_THE_CLAIM);
+    expect(error.message).not.toContain("clerk auth logout");
+    expect(error.examples?.map((example) => example.command)).toEqual([
+      "clerk apps list --json",
+      "clerk link --app <app_id>",
+    ]);
+    expect(await tokenFileExists()).toBe(true);
+  },
+);
+
 // No session to name, but the app is still unclaimed, as `clerk auth login` says.
 test("person, API key only, No: says the app is still unclaimed, and claims nothing", async () => {
   mockState.storedToken = null;

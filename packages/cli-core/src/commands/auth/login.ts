@@ -28,6 +28,7 @@ import {
 } from "../../lib/autoclaim.ts";
 import { claimDestination, confirmClaim, currentAccount } from "../../lib/claim-prompt.ts";
 import {
+  claimForbidden,
   claimWarning,
   claimedNextSteps,
   reportClaimSkipped,
@@ -375,14 +376,22 @@ async function handleAutoclaim(cwd: string, initClaim: InitClaim): Promise<Autoc
   if (result.status === "claimed") reportClaimed(result);
 
   const warning = claimWarning(result);
-  if (warning) log.warn(warning);
+  // `outro` shows next steps only to a person, so an agent's warning names
+  // the way past a claim the account can't make.
+  if (warning && !isHuman() && claimForbidden(result)) {
+    log.warn(`${warning} ${NEXT_STEPS.AUTOCLAIM_FORBIDDEN[0]}.`);
+  } else if (warning) {
+    log.warn(warning);
+  }
 
   return result;
 }
 
 async function loginNextSteps(result: AutoclaimResult | undefined): Promise<readonly string[]> {
   if (result?.status === "claimed") return claimedNextSteps(result);
-  if (result?.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
+  if (result?.status === "failed") {
+    return claimForbidden(result) ? NEXT_STEPS.AUTOCLAIM_FORBIDDEN : NEXT_STEPS.AUTOCLAIM_RETRY;
+  }
   if (result?.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
   if (result?.status === "not_found") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
