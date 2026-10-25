@@ -22,7 +22,7 @@ clerk whoami --json
 - Calls `resolveProfile(cwd)` (best-effort — failures are swallowed) to determine whether the working directory is linked to a Clerk application.
 - When linked, prints a `Linked to ...` line on **stderr** above the next-steps, where `...` is the app label rendered by `profileLabel()` from `lib/config.ts` — for example, `Linked to MyApp (app_xxx)`.
 - When not linked, only the existing `WHOAMI` next-steps are printed.
-- If no token exists, falls back to the accountless path below; when that finds nothing either, throws an `AuthError` ("Not logged in").
+- If no token exists, falls back to the accountless path below; when that finds nothing either, throws an `AuthError` ("Not logged in"). In an unlinked folder with an env file the CLI can't read, it stops with `not_linked` instead, naming the file and saying to make it readable, since signing in can't fix the file.
 
 ### Accountless applications
 

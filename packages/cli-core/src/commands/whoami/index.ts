@@ -80,8 +80,19 @@ async function resolveIdentity(options: WhoamiOptions): Promise<Identity> {
   // No usable account, but the directory may still hold a working keyless
   // application. Report what it is instead of a flat "not logged in".
   if (!token) {
-    const keyless = await resolveKeylessTarget({ cwd: process.cwd() });
+    const cwd = process.cwd();
+    const keyless = await resolveKeylessTarget({ cwd });
     if (!keyless) {
+      // An unlinked folder's env file the CLI can't read may hold the key to
+      // run on, and signing in can't fix the file.
+      if (!(await resolveProfile(cwd))) {
+        await findLocalSecretKey(cwd).catch(async (error: unknown) => {
+          throw await unreadableEnvFilesError(cwd, error, {
+            lead: "No Clerk project linked to this directory.",
+            rerun: rerunOf(["clerk whoami", options.json && "--json"]),
+          });
+        });
+      }
       // Nothing to fall back to, so the distinction matters again: a session
       // that expired is fixed by logging in again, not by logging in for the
       // first time.

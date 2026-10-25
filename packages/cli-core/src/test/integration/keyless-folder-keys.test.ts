@@ -17,6 +17,7 @@ import {
   http,
   mockState,
   publishableKeyFor,
+  setProfile,
   useIntegrationTestHarness,
   type CLIResult,
 } from "./lib/harness.ts";
@@ -329,6 +330,32 @@ describe("a Next.js folder whose .env.development.local can't be read", () => {
     expect(error.message).toContain(
       "The CLI couldn't read this folder's env files (EACCES: permission denied, open '.env.development.local').",
     );
+  });
+
+  // Signing in can't fix a file the CLI can't read, so the file comes first.
+  test("whoami, signed out, no exported key: not_linked, naming the unreadable file", async () => {
+    signOut();
+
+    const error = agentError(await run("--mode", "agent", "whoami"));
+
+    expect(error.code).toBe("not_linked");
+    expect(error.message).toBe(
+      `${READ_ERROR} Make that file readable, then run \`clerk whoami\` again.`,
+    );
+  });
+
+  // A linked folder doesn't depend on its env files to name an app.
+  test("whoami, signed out, a linked folder: still says to sign in", async () => {
+    signOut();
+    await setProfile("github.com/test/project", {
+      workspaceId: "",
+      appId: "app_linked",
+      instances: { development: "ins_linked" },
+    });
+
+    const error = agentError(await run("--mode", "agent", "whoami"));
+
+    expect(error.code).toBe("auth_required");
   });
 
   // Signed in, whoami reports the account; the file can only change which
