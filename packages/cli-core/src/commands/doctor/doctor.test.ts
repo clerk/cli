@@ -224,7 +224,7 @@ const SIGNED_OUT_CASES: {
     kind: "an SDK app",
     mode: "agent",
     folder: { kind: "sdk_app", credential: "none" },
-    says: ["unclaimed accountless application", "they run `clerk open` in their own terminal"],
+    says: ["unclaimed accountless application", "Run `clerk open`"],
     saysNot: [],
   },
   {

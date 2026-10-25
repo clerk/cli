@@ -218,43 +218,6 @@ describe("clerk open", () => {
     );
     expect(stderr(result)).not.toContain("Examples:");
   });
-
-  const CLAIM_LINK_FOLDERS = [
-    { folder: "an init token", setUp: writeInitToken },
-    { folder: "an SDK file with a working claim link", setUp: writeClaimableSdkFile },
-  ];
-
-  test.each(CLAIM_LINK_FOLDERS)(
-    "person, $folder, a subpath: run `clerk open` with no subpath to claim it",
-    async ({ setUp }) => {
-      await setUp();
-
-      const result = await run("open", "users");
-
-      expect(result.exitCode).toBe(1);
-      expect(stderr(result)).toContain(
-        "Run `clerk open` (no subpath) to claim it, then retry the subpath once it's linked.",
-      );
-    },
-  );
-
-  // Run by an agent, `clerk open` prints the claim link, which carries a claim
-  // token, into the agent's transcript.
-  test.each(CLAIM_LINK_FOLDERS)(
-    "agent, $folder, a subpath: a person runs `clerk open` in their own terminal",
-    async ({ setUp }) => {
-      await setUp();
-
-      const error = agentError(await run("--mode", "agent", "open", "users"));
-
-      expect(error.code).toBe("not_linked");
-      expect(error.message).toContain(`"users" isn't reachable yet`);
-      expect(error.message).toContain(
-        "Have a person claim it: they run `clerk open` (no subpath) in their own terminal, which opens the claim page in their browser. Then retry the subpath once it's linked.",
-      );
-      expect(error.message).not.toContain("Run `clerk open`");
-    },
-  );
 });
 
 describe("the covers-fewer-settings warning", () => {

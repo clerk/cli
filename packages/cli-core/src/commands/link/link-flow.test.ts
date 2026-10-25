@@ -791,7 +791,7 @@ describe("an SDK-only folder", () => {
       link({ cwd: dir, skipIfLinked: true, createIfMissing: "my-project" }),
     ).rejects.toMatchObject({
       code: "usage_error",
-      message: expect.stringContaining("they run `clerk open` in their own terminal"),
+      message: expect.stringContaining("Run `clerk open`"),
     });
 
     expect(mockOpenBrowser).not.toHaveBeenCalled();

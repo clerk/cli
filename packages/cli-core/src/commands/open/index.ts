@@ -132,13 +132,9 @@ async function openKeylessDashboard(
   }
 
   if (subpath) {
-    // A person runs `clerk open`: an agent's run prints the claim link, which
-    // carries a claim token, into its transcript.
-    const claim = isAgent()
-      ? "Have a person claim it: they run `clerk open` (no subpath) in their own terminal, which opens the claim page in their browser. Then retry the subpath once it's linked."
-      : "Run `clerk open` (no subpath) to claim it, then retry the subpath once it's linked.";
     throw new CliError(
-      `"${subpath}" isn't reachable yet — this application hasn't been claimed, so it has no dashboard pages beyond the claim link. ${claim}`,
+      `"${subpath}" isn't reachable yet — this application hasn't been claimed, so it has no dashboard pages beyond the claim link. ` +
+        "Run `clerk open` (no subpath) to claim it, then retry the subpath once it's linked.",
       { code: ERROR_CODE.NOT_LINKED },
     );
   }

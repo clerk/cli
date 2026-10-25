@@ -10,8 +10,8 @@
  * `clerk init` is the alternative to linking an existing app ("or"), so the
  * test follows the link.
  *
- * A person runs `clerk open` and claims the app in the Dashboard; the test
- * stands in for that claim by adding the app to the mocked account.
+ * `clerk open` prints the claim link for a person; the test stands in for the
+ * person's claim in the Dashboard by adding the app to the mocked account.
  * Each test names its credential: a stored session only, the API key only, or
  * none.
  */

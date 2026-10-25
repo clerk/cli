@@ -6,10 +6,9 @@
  * The CLI can't claim that app (there's no claim token), so it looks for the
  * app in the account by the SDK file's publishable key. When the app isn't
  * there, a person is sent to its claim page in the Dashboard and reruns
- * `clerk link` after claiming; an agent is told to have a person run
- * `clerk open` in their own terminal, which opens the claim page in their
- * browser. Never the picker or a new app: any app chosen there isn't the one
- * the SDK runs.
+ * `clerk link` after claiming; an agent is told to run `clerk open`, which
+ * prints the claim link for a person. Never the picker or a new app: any app
+ * chosen there isn't the one the SDK runs.
  */
 
 import { linkApp, matchKeyToApp } from "../../lib/autolink.ts";
