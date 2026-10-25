@@ -26,9 +26,11 @@ import {
   AuthError,
   CliError,
   ERROR_CODE,
+  EXIT_CODE,
   throwUsageError,
   throwUserAbort,
 } from "../../lib/errors.ts";
+import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
 import { resolveKeylessTarget } from "../../lib/keyless-target.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import {
@@ -238,17 +240,22 @@ export function explainErrors(errors: Iterable<string>, instanceType: InstanceTy
  * agent cannot answer a browser login or an application picker, so it gets the
  * error naming whichever half is missing.
  */
-async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
+async function ensureImportTarget(
+  options: MigrateRunOptions,
+): Promise<"ready" | "claim_page_opened"> {
   // A secret key names the destination instance on its own, with no account
   // and no linked directory involved — mirroring resolveBapiSecretKey, which
   // takes `--app` over an exported CLERK_SECRET_KEY.
-  if (options.secretKey || (!options.app && process.env.CLERK_SECRET_KEY)) return;
+  if (options.secretKey || (!options.app && process.env.CLERK_SECRET_KEY)) return "ready";
   // `--app` names it too, but resolves its key through the Platform API, which
   // needs an account: it goes through the sign-in below, though not the link.
   // An unclaimed accountless application keeps its only secret key on disk.
-  if (!options.app && (await resolveKeylessTarget({ instance: options.instance }))) return;
+  if (!options.app && (await resolveKeylessTarget({ instance: options.instance }))) return "ready";
 
   const interactive = canPrompt(options);
+  // Left to the secret-key chain when non-interactive: its `not_linked` error
+  // is the one every other command raises, and there is nothing to add to it.
+  const linkNext = interactive && !options.app && !(await resolveProfile(process.cwd()));
 
   if (!(await hasAccountCredentials())) {
     if (!interactive) {
@@ -267,15 +274,22 @@ async function ensureImportTarget(options: MigrateRunOptions): Promise<void> {
       });
     }
     log.info("Not logged in. Signing in first...");
-    await login({ showNextSteps: false });
+    // On the way to `link`, which claims under its own rule, login doesn't
+    // claim. With `--app` nothing is linked, so login's own claim stays on.
+    await login(linkNext ? { showNextSteps: false, claim: false } : { showNextSteps: false });
   }
 
-  // Left to the secret-key chain when non-interactive: its `not_linked` error
-  // is the one every other command raises, and there is nothing to add to it.
-  if (interactive && !options.app && !(await resolveProfile(process.cwd()))) {
+  if (linkNext) {
     log.info("This directory isn't linked to a Clerk application. Linking one first...");
-    await link({ skipIfLinked: true });
+    // After a claim page the person reruns the import, not just the link. Its
+    // arguments aren't echoed: they can hold a secret key.
+    const linked = await link({
+      skipIfLinked: true,
+      rerun: { clause: "run the same `clerk migrate import` command again" },
+    });
+    if (linked.status === "claim_page_opened") return "claim_page_opened";
   }
+  return "ready";
 }
 
 /**
@@ -756,7 +770,13 @@ function recordRejects(run: Run, checks: ImportChecks): void {
 export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   // A mistyped --source fails before any sign-in or link.
   let options = await applySource(rawOptions);
-  await ensureImportTarget(options);
+  // A person is claiming the SDK's app in the Dashboard: there is nothing to
+  // import into until they rerun. Same exit and telemetry as `clerk link`.
+  if ((await ensureImportTarget(options)) === "claim_page_opened") {
+    declareSoftExitOutcome("incomplete", ERROR_CODE.NOT_LINKED);
+    process.exitCode = EXIT_CODE.GENERAL;
+    return;
+  }
 
   const input = await resolveInput(options);
   options = { ...options, file: input.file };

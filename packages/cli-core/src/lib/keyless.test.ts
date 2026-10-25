@@ -97,6 +97,22 @@ describe("breadcrumb", () => {
     expect(result).toBeUndefined();
   });
 
+  // A claim deletes the token file only while it still holds the claimed
+  // token; a replacement written meanwhile is another app's.
+  test("clear with the claimed token removes the file while it holds that token", async () => {
+    await writeKeylessBreadcrumb(tempDir, "token_abc");
+    await clearKeylessBreadcrumb(tempDir, "token_abc");
+
+    expect(await readKeylessBreadcrumb(tempDir)).toBeUndefined();
+  });
+
+  test("clear with the claimed token keeps a file that now holds another token", async () => {
+    await writeKeylessBreadcrumb(tempDir, "token_replacement");
+    await clearKeylessBreadcrumb(tempDir, "token_abc");
+
+    expect((await readKeylessBreadcrumb(tempDir))?.claimToken).toBe("token_replacement");
+  });
+
   test("clear does not throw when file is already gone", async () => {
     await clearKeylessBreadcrumb(tempDir);
     // Should not throw

@@ -410,6 +410,11 @@ export class ApiError extends Error {
   public longMessage: string | null;
   public meta: Record<string, unknown> | null;
   public clerkTraceId: string | null;
+  /**
+   * What to run next, set by a caller that knows (`withNextStep`). Printed
+   * after Clerk's message, with its commands as examples.
+   */
+  public nextStep?: NextStepAdvice;
 
   constructor(
     public status: number,
@@ -424,6 +429,31 @@ export class ApiError extends Error {
     this.meta = parsed.meta;
     this.clerkTraceId = parsed.clerkTraceId;
   }
+}
+
+/** A next step for an error: the text to print after its message, and the commands it names. */
+export interface NextStepAdvice {
+  text: string;
+  /** The commands `text` names, in order. Sites attach them to the error in agent mode only. */
+  examples: Example[];
+}
+
+/**
+ * Adds what to run next to an error that is rethrown as it is, keeping its
+ * class, code, and exit code. A CLI error gains the step in its message and
+ * its commands in its examples. An API error carries the step beside Clerk's
+ * own message and structured errors, which stay untouched.
+ */
+export function withNextStep<E extends Error>(error: E, step: NextStepAdvice): E {
+  if (error instanceof ApiError) {
+    error.nextStep = step;
+  } else if (error instanceof CliError) {
+    // Some of the CLI's own messages end without a period.
+    const ended = /[.!?]$/.test(error.message) ? error.message : `${error.message}.`;
+    error.message = `${ended}\n${step.text}`;
+    error.examples = [...(error.examples ?? []), ...step.examples];
+  }
+  return error;
 }
 
 /**
@@ -522,6 +552,31 @@ export function isAuthError(error: unknown): error is AuthError | ApiError {
     (error instanceof CliError && error.code === ERROR_CODE.AUTH_REQUIRED) ||
     (error instanceof ApiError && (error.status === 401 || error.status === 403))
   );
+}
+
+/**
+ * Who refused a Platform API call's credential, when that's why it failed:
+ * - `clerk`: Clerk's API answered 401 or 403.
+ * - `cli`: the CLI had none it could use: no credential, a session it can't
+ *   refresh, or a `CLERK_PLATFORM_API_KEY` of the wrong kind.
+ *
+ * Retrying can't fix either; the credential has to change. Who refused it
+ * decides how a stored session changes: one the CLI can't use already reads
+ * as signed out, so signing in replaces it, while one Clerk's API refused may
+ * still pass the account lookup, which keeps it. Undefined for anything else
+ * (a network error, a 5xx, a 429), which may pass on its own.
+ */
+export type CredentialRefusal = "clerk" | "cli";
+
+export function credentialRefusal(error: unknown): CredentialRefusal | undefined {
+  if (error instanceof ApiError && (error.status === 401 || error.status === 403)) return "clerk";
+  if (
+    error instanceof CliError &&
+    (error.code === ERROR_CODE.AUTH_REQUIRED || error.code === ERROR_CODE.INVALID_KEY_FORMAT)
+  ) {
+    return "cli";
+  }
+  return undefined;
 }
 
 /**

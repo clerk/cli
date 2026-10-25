@@ -7,6 +7,8 @@ import type { resolveProfile } from "../../lib/config.ts";
 import type { CliError } from "../../lib/errors.ts";
 import type { Application } from "../../lib/plapi.ts";
 import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import type { FolderKeys } from "../../lib/local-keys.ts";
+import type { UnlinkedFolder } from "../../lib/unlinked-folder.ts";
 
 /**
  * The display name of every check, in one place.
@@ -101,6 +103,17 @@ export interface DoctorContext {
    * independently could otherwise print contradictory claim hints.
    */
   hasClaimBreadcrumb(): Promise<boolean>;
+  /**
+   * The keys the folder's app loads (`readFolderKeys`), or why they couldn't
+   * be read, as a clause. Read once.
+   */
+  getFolderKeys(): Promise<FolderKeys | { readError: string }>;
+  /**
+   * What the folder holds, for the advice when it isn't linked, classified
+   * from the facts above (init token, credential, keys, claim link). Read once
+   * and changes nothing.
+   */
+  getUnlinkedFolder(): Promise<UnlinkedFolder>;
   fixes: {
     login: () => FixAction;
     link: () => FixAction;

@@ -1,57 +1,57 @@
-import { join } from "node:path";
 import { setProfile, type Profile } from "./config.ts";
 import { listApplications, type Application, type ApplicationInstance } from "./plapi.ts";
 import { getGitRepoIdentifier, getGitNormalizedRemote } from "./git.ts";
-import { parseEnvFile } from "./dotenv.ts";
-import { detectPublishableKeyName } from "./framework.ts";
+import { errorMessage } from "./errors.ts";
+import {
+  couldntTellReason,
+  readFolderKeys,
+  SDK_KEYLESS_SOURCE,
+  unreadableFolderReason,
+  type FolderKeys,
+  type FolderRead,
+  type LocatedKey,
+} from "./local-keys.ts";
 import { dim, cyan } from "./color.ts";
 import { log } from "./log.ts";
-
-const ENV_FILES = [".env", ".env.local"];
 
 interface DetectedKey {
   key: string;
   source: string;
 }
 
+export type { FolderRead };
+
+/** The publishable key `clerk link` matches the folder by, or why there isn't one. */
+export type LinkKey =
+  | { status: "found"; key: LocatedKey }
+  | { status: "none" }
+  | { status: "couldnt_tell"; reason: string };
+
 /**
- * Collects Clerk publishable keys from the environment and .env files.
- * Sources are checked in order: process.env, .env, .env.local (last wins for duplicates).
+ * The one publishable key `clerk link` matches the folder by: the one its app
+ * loads, in the framework's load order (`readFolderKeys`). Never a list of
+ * fallbacks: matching a key the app doesn't load would link an app the folder
+ * doesn't run on.
+ *
+ * "Couldn't tell" when a Clerk key line can't be read (the app may load it),
+ * when the files disagree with no documented order to pick one, or when an
+ * env file can't be read. The SDK keyless file's key isn't used here: an
+ * SDK-only folder has its own step in `clerk link`. `reason` reads as a
+ * clause, for a message to build on.
  */
-export async function findClerkKeys(cwd: string): Promise<DetectedKey[]> {
-  const keys: DetectedKey[] = [];
-  const publishableKeyName = await detectPublishableKeyName(cwd);
-
-  function add(key: string, source: string) {
-    if (!key) return;
-    const existing = keys.findIndex((k) => k.key === key);
-    if (existing !== -1) {
-      keys[existing]!.source = source;
-    } else {
-      keys.push({ key, source });
-    }
+export async function findLinkKey(cwd: string, read?: FolderRead): Promise<LinkKey> {
+  if (read && "readError" in read) return { status: "couldnt_tell", reason: read.readError };
+  let keys: FolderKeys;
+  try {
+    keys = read ?? (await readFolderKeys(cwd));
+  } catch (error) {
+    return { status: "couldnt_tell", reason: unreadableFolderReason(error) };
   }
-
-  if (process.env[publishableKeyName]) {
-    add(process.env[publishableKeyName]!, `${publishableKeyName} env var`);
-  }
-
-  for (const envFile of ENV_FILES) {
-    const filePath = join(cwd, envFile);
-    const file = Bun.file(filePath);
-    if (!(await file.exists())) continue;
-
-    const content = await file.text();
-    const lines = parseEnvFile(content);
-    for (const line of lines) {
-      if (line.type !== "entry") continue;
-      if (line.key === publishableKeyName) {
-        add(line.value, envFile);
-      }
-    }
-  }
-
-  return keys;
+  const reason = couldntTellReason(keys);
+  if (reason) return { status: "couldnt_tell", reason };
+  const key = keys.publishableKey;
+  if (!key || key.source === SDK_KEYLESS_SOURCE) return { status: "none" };
+  return { status: "found", key };
 }
 
 /**
@@ -104,44 +104,67 @@ export async function linkApp(
   return { path: profileKey, profile };
 }
 
+/** What auto-linking did, or why it didn't link. */
+export type AutolinkResult =
+  | { status: "linked"; path: string; profile: Profile }
+  | { status: "no_key" }
+  | { status: "couldnt_tell"; reason: string }
+  | { status: "list_failed"; error: unknown }
+  | { status: "no_match"; source: string }
+  | { status: "no_development_instance"; appId: string };
+
+/**
+ * Links the folder to the account's app whose publishable key is the one the
+ * folder's app loads (`findLinkKey`). Never throws for a failed app list: it
+ * reports `list_failed` with the error, so each caller decides what that means.
+ *
+ * `beforeLink` runs on the matched app before the link is saved, and may throw
+ * to stop the link with nothing saved. `read` is the caller's read of the
+ * folder's keys; without it, the folder is read here.
+ */
 export async function autolink(
   cwd: string,
-): Promise<{ path: string; profile: Profile } | undefined> {
-  const detectedKeys = await findClerkKeys(cwd);
-  if (detectedKeys.length === 0) {
-    log.debug("autolink: no clerk publishable keys found in env or .env files");
-    return undefined;
+  options: { beforeLink?: (app: Application) => Promise<void>; read?: FolderRead } = {},
+): Promise<AutolinkResult> {
+  const found = await findLinkKey(cwd, options.read);
+  if (found.status === "none") {
+    log.debug("autolink: no clerk publishable key found in env or .env files");
+    return { status: "no_key" };
   }
-  log.debug(
-    `autolink: found ${detectedKeys.length} key(s) (sources: ${detectedKeys.map((k) => k.source).join(", ")})`,
-  );
+  if (found.status === "couldnt_tell") {
+    log.debug(`autolink: couldn't tell which key the app loads: ${found.reason}`);
+    return { status: "couldnt_tell", reason: found.reason };
+  }
+  const { key } = found;
+  log.debug(`autolink: matching the key from ${key.source}`);
 
   let apps: Application[];
   try {
     apps = await listApplications();
-  } catch (err) {
-    // Autolink is a best-effort fallback — swallow the failure at debug level
-    // so callers can gracefully proceed to the interactive picker.
-    log.debug(`autolink: listApplications failed — ${err}`);
-    return undefined;
+  } catch (error) {
+    log.debug(`autolink: listApplications failed — ${errorMessage(error)}`);
+    return { status: "list_failed", error };
   }
 
-  if (!Array.isArray(apps)) return undefined;
+  if (!Array.isArray(apps)) {
+    return { status: "list_failed", error: new Error("the application list wasn't a list") };
+  }
 
-  const match = matchKeyToApp(detectedKeys, apps);
+  const match = matchKeyToApp([{ key: key.value, source: key.source }], apps);
   if (!match) {
-    log.debug(`autolink: no app matched any detected key (checked ${apps.length} app(s))`);
-    return undefined;
+    log.debug(`autolink: no app matched the key (checked ${apps.length} app(s))`);
+    return { status: "no_match", source: key.source };
   }
   log.debug(
     `autolink: matched key from ${match.source} → app ${match.app.application_id} (${match.app.name ?? "unnamed"})`,
   );
 
+  await options.beforeLink?.(match.app);
   const result = await linkApp(match.app, cwd);
-  if (!result) return undefined;
+  if (!result) return { status: "no_development_instance", appId: match.app.application_id };
 
   const label = match.app.name || match.app.application_id;
   log.info(`Auto-linked to ${cyan(label)} ${dim(`(detected key in ${match.source})`)}`);
 
-  return result;
+  return { status: "linked", ...result };
 }

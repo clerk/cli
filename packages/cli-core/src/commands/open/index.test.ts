@@ -1,4 +1,4 @@
-import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
+import { test, expect, describe, afterAll, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
 import { configStubs, keylessTargetStubs, useCaptureLog } from "../../test/lib/stubs.ts";
@@ -36,6 +36,21 @@ mock.module("./keyless-claim.ts", () => ({
 }));
 
 const { openDashboard, buildDashboardUrl } = await import("./index.ts");
+const unlinkedFolder = await import("../../lib/unlinked-folder.ts");
+type UnlinkedFolder = import("../../lib/unlinked-folder.ts").UnlinkedFolder;
+
+// What the folder holds, for the advice when there's no claim link: never the
+// real working directory or credential store.
+const readUnlinkedFolderSpy = spyOn(unlinkedFolder, "readUnlinkedFolder");
+beforeEach(() => {
+  readUnlinkedFolderSpy.mockResolvedValue({ kind: "no_app", credential: "session" });
+});
+afterAll(() => readUnlinkedFolderSpy.mockRestore());
+
+// No stored session, read from the token override instead of the keychain.
+const { _setTokenOverride } = await import("../../lib/credential-store.ts");
+_setTokenOverride(null);
+afterAll(() => _setTokenOverride(undefined));
 
 const PROFILE = {
   path: "/test/project",
@@ -235,6 +250,17 @@ describe("openDashboard: unclaimed keyless application", () => {
     url: "https://dashboard.clerk.com/apps/claim?token=abc123",
     source: ".clerk/keyless.json",
   };
+  const SDK_DESTINATION = {
+    url: "https://dashboard.clerk.com/apps/claim?token=sdk123",
+    source: ".clerk/.tmp/keyless.json",
+  };
+
+  const PLAIN_KEYS: UnlinkedFolder = {
+    kind: "unknown_owner",
+    credential: "session",
+    publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
+    secretKey: { name: "CLERK_SECRET_KEY", source: ".env.local" },
+  };
 
   beforeEach(() => {
     setMode("human");
@@ -256,15 +282,64 @@ describe("openDashboard: unclaimed keyless application", () => {
   });
 
   test("human mode: opens the claim link, not a dashboard deep-link", async () => {
-    mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
-    mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env" });
+    mockFindKeylessClaimUrl.mockResolvedValue(SDK_DESTINATION);
+    mockResolveKeylessTarget.mockResolvedValue({
+      secretKey: "sk_test_x",
+      source: ".clerk/.tmp/keyless.json",
+    });
 
     await openDashboard(undefined);
 
     expect(captured.err).toContain("hasn't been claimed");
     expect(captured.err).toContain("ins_keyless123");
+    expect(captured.err).toContain(SDK_DESTINATION.url);
+    expect(mockOpenBrowser).toHaveBeenCalledWith(SDK_DESTINATION.url);
+  });
+
+  // The init token holds no keys, so a key elsewhere in the folder may be
+  // another app's: only the claim link's own file names its instance.
+  test.each([
+    { claim: "an init token", key: "in .env", source: ".env", shown: false },
+    {
+      claim: "an init token",
+      key: "in the SDK keyless file",
+      source: ".clerk/.tmp/keyless.json",
+      shown: false,
+    },
+    {
+      claim: "the SDK keyless file",
+      key: "in the same file",
+      source: ".clerk/.tmp/keyless.json",
+      shown: true,
+    },
+  ])(
+    "claim link from $claim, secret key $key: instance details shown is $shown",
+    async ({ claim, source, shown }) => {
+      setMode("agent");
+      mockFindKeylessClaimUrl.mockResolvedValue(
+        claim === "an init token" ? CLAIM_DESTINATION : SDK_DESTINATION,
+      );
+      mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source });
+
+      await openDashboard(undefined);
+
+      const payload = JSON.parse(captured.out) as {
+        instanceId: string | null;
+        environmentType: string | null;
+      };
+      expect(payload.instanceId).toBe(shown ? "ins_keyless123" : null);
+      expect(payload.environmentType).toBe(shown ? "development" : null);
+    },
+  );
+
+  test("human mode, an init token's claim link: names no instance", async () => {
+    mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
+    mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env" });
+
+    await openDashboard(undefined);
+
     expect(captured.err).toContain(CLAIM_DESTINATION.url);
-    expect(mockOpenBrowser).toHaveBeenCalledWith(CLAIM_DESTINATION.url);
+    expect(captured.err).not.toContain("ins_keyless123");
   });
 
   test("--print: prints only the claim URL, no browser", async () => {
@@ -279,17 +354,20 @@ describe("openDashboard: unclaimed keyless application", () => {
 
   test("agent mode: emits structured JSON with accountless: true (and the deprecated keyless alias), no browser", async () => {
     setMode("agent");
-    mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
-    mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env" });
+    mockFindKeylessClaimUrl.mockResolvedValue(SDK_DESTINATION);
+    mockResolveKeylessTarget.mockResolvedValue({
+      secretKey: "sk_test_x",
+      source: ".clerk/.tmp/keyless.json",
+    });
 
     await openDashboard(undefined);
 
     const payload = JSON.parse(captured.out);
     expect(payload).toEqual({
-      url: CLAIM_DESTINATION.url,
+      url: SDK_DESTINATION.url,
       accountless: true,
       keyless: true,
-      claimSource: CLAIM_DESTINATION.source,
+      claimSource: SDK_DESTINATION.source,
       instanceId: "ins_keyless123",
       environmentType: "development",
       subpath: null,
@@ -326,11 +404,17 @@ describe("openDashboard: unclaimed keyless application", () => {
     expect(message).not.toMatch(/clerk link/);
   });
 
-  test("no claim link found, but a secret key is on disk: doesn't blindly say `clerk link`", async () => {
+  // `clerk init --accountless` would create a new app and overwrite the keys.
+  test("no claim link found, but plain keys are on disk: finds the app by key, never `init --accountless`", async () => {
     mockFindKeylessClaimUrl.mockResolvedValue(undefined);
     mockResolveKeylessTarget.mockResolvedValue({ secretKey: "sk_test_x", source: ".env.local" });
+    readUnlinkedFolderSpy.mockResolvedValue(PLAIN_KEYS);
 
-    await expect(openDashboard(undefined)).rejects.toThrow(/clerk init --accountless/);
+    await expect(openDashboard(undefined)).rejects.toMatchObject({
+      code: "not_linked",
+      message:
+        "Found a secret key (from .env.local) but no claim link on disk, and this folder isn't linked, so there's no dashboard page to open. This folder's Clerk publishable key is `CLERK_PUBLISHABLE_KEY` in .env.local. Run `clerk link`: it finds the app in your account by that key. If none uses it, link one with `clerk link --app <app_id>`.",
+    });
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 

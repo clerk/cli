@@ -14,7 +14,8 @@
 
 import { bapiRequest } from "../../lib/bapi.ts";
 import { ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
-import type { KeylessTarget } from "../../lib/keyless-target.ts";
+import type { KeylessInstanceTarget, KeylessTarget } from "../../lib/keyless-target.ts";
+import { keylessRefusal } from "../../lib/unlinked-folder.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { log } from "../../lib/log.ts";
 
@@ -116,12 +117,16 @@ const ACCOUNT_ONLY_INSTANCE_FIELDS: Record<string, string> = {
  * Rejects `instance` fields BAPI would silently discard, before the request is
  * sent. Runs only for that group — see `INSTANCE_FIELDS`.
  */
-function assertInstanceFields(fields: Record<string, unknown>): void {
+function assertInstanceFields(
+  fields: Record<string, unknown>,
+  target: KeylessInstanceTarget,
+): void {
   const unknown = Object.keys(fields).filter((field) => !INSTANCE_FIELDS.has(field));
   if (unknown.length === 0) return;
 
+  const { subject, step, examples } = keylessRefusal(target.folder, target.keyless.source);
   const lines = [
-    keylessCopy.unsupportedInstanceFieldsLine(unknown),
+    keylessCopy.unsupportedInstanceFieldsLine(unknown, subject),
     keylessCopy.supportedInstanceFieldsLine([...INSTANCE_FIELDS]),
   ];
 
@@ -134,20 +139,27 @@ function assertInstanceFields(fields: Record<string, unknown>): void {
     ),
   ];
   for (const reason of reasons) {
-    lines.push(keylessCopy.noRouteForInstanceFieldLine(reason));
+    lines.push(keylessCopy.noRouteForInstanceFieldLine(reason, subject));
   }
+  if (reasons.length > 0) lines.push(keylessCopy.linkForFullConfigLine(step));
 
-  throwUsageError(lines.join("\n"));
+  throwUsageError(
+    lines.join("\n"),
+    undefined,
+    undefined,
+    reasons.length > 0 ? examples : undefined,
+  );
 }
 
 /**
  * Validates caller-supplied names once, at the boundary, so everything
  * downstream works with a known group instead of re-checking strings.
  */
-function asGroupNames(names: string[]): KeylessGroup[] {
+function asGroupNames(names: string[], target: KeylessInstanceTarget): KeylessGroup[] {
   const unknown = names.filter((name) => !isGroupName(name));
   if (unknown.length > 0) {
-    throwUsageError(keylessCopy.unsupportedConfigKeys(unknown, KEYLESS_GROUP_NAMES));
+    const { subject } = keylessRefusal(target.folder, target.keyless.source);
+    throwUsageError(keylessCopy.unsupportedConfigKeys(unknown, KEYLESS_GROUP_NAMES, subject));
   }
   return names.filter(isGroupName);
 }
@@ -155,29 +167,36 @@ function asGroupNames(names: string[]): KeylessGroup[] {
 /** Rejects payload keys that don't name a BAPI resource, before anything is sent. */
 export function assertKeylessPayload(
   payload: Record<string, unknown>,
+  target: KeylessInstanceTarget,
 ): asserts payload is Record<KeylessGroup, Record<string, unknown>> {
   const unknown = Object.keys(payload).filter((key) => !(key in KEYLESS_GROUPS));
   if (unknown.length > 0) {
     const apiReachable = unknown.filter((key) => API_REACHABLE_KEYLESS_KEYS.has(key));
     const accountOnly = unknown.filter((key) => !API_REACHABLE_KEYLESS_KEYS.has(key));
+    const { subject, step, examples } = keylessRefusal(target.folder, target.keyless.source);
 
     const lines = [
-      keylessCopy.unsupportedPayloadKeysLine(unknown),
+      keylessCopy.unsupportedPayloadKeysLine(unknown, subject),
       keylessCopy.supportedPayloadKeysLine(KEYLESS_GROUP_NAMES),
     ];
 
-    // Point these at `clerk api` — they're reachable today, and claiming the
+    // Point these at `clerk api` — they're reachable today, and linking the
     // application wouldn't move them into the config document anyway.
     if (apiReachable.length > 0) {
-      lines.push(keylessCopy.apiReachableKeysLine(apiReachable));
+      lines.push(keylessCopy.apiReachableKeysLine(apiReachable, subject));
     }
 
     // Everything left really is part of the account-mode config document.
     if (accountOnly.length > 0) {
-      lines.push(keylessCopy.claimForFullConfigLine());
+      lines.push(keylessCopy.linkForFullConfigLine(step));
     }
 
-    throwUsageError(lines.join("\n"));
+    throwUsageError(
+      lines.join("\n"),
+      undefined,
+      undefined,
+      accountOnly.length > 0 ? examples : undefined,
+    );
   }
 
   for (const [key, value] of Object.entries(payload)) {
@@ -187,7 +206,7 @@ export function assertKeylessPayload(
   }
 
   if (payload.instance) {
-    assertInstanceFields(payload.instance as Record<string, unknown>);
+    assertInstanceFields(payload.instance as Record<string, unknown>, target);
   }
 }
 
@@ -197,10 +216,10 @@ export function assertKeylessPayload(
  * wonder where it went.
  */
 export async function pullKeylessConfig(
-  target: KeylessTarget,
+  target: KeylessInstanceTarget,
   keys?: string[],
 ): Promise<Record<string, unknown>> {
-  const requested = keys?.length ? asGroupNames(keys) : KEYLESS_GROUP_NAMES;
+  const requested = keys?.length ? asGroupNames(keys, target) : KEYLESS_GROUP_NAMES;
 
   // Only worth saying when the caller named a write-only group. A default pull
   // asks for everything, and reporting the same omission every time is noise.
@@ -214,7 +233,11 @@ export async function pullKeylessConfig(
   const config: Record<string, unknown> = {};
   for (const name of requested.filter(isReadable)) {
     const response = await withApiContext(
-      bapiRequest({ method: "GET", path: KEYLESS_GROUPS[name].path, secretKey: target.secretKey }),
+      bapiRequest({
+        method: "GET",
+        path: KEYLESS_GROUPS[name].path,
+        secretKey: target.keyless.secretKey,
+      }),
       `Failed to fetch ${name}`,
     );
     config[name] = response.body;
@@ -352,7 +375,7 @@ export async function patchKeylessConfig(
 
 /** Current state of the groups a payload touches, for diffing before a write. */
 export async function readCurrentGroups(
-  target: KeylessTarget,
+  target: KeylessInstanceTarget,
   payload: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const readable = Object.keys(payload).filter(isGroupName).filter(isReadable);

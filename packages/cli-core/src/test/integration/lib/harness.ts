@@ -7,7 +7,7 @@
  *
  * WARNING: Do NOT add static imports of modules that transitively import any
  * mocked module (credential-store, git, mode, prompts/listage, token-exchange,
- * auth-server, pkce). Bun's `mock.module()` must be registered before any
+ * auth-server, pkce, open). Bun's `mock.module()` must be registered before any
  * consumer loads the real module. All consuming imports must use dynamic
  * `await import(...)` AFTER the mock.module() calls below.
  */
@@ -19,11 +19,15 @@ import { tmpdir } from "node:os";
 import { capturedOutput } from "../../lib/stubs.ts";
 import { setActiveCapture } from "../../../lib/log.ts";
 import { http } from "../../lib/http.ts";
+import { ApiError, AUTH_ERROR_REASON, AuthError } from "../../../lib/errors.ts";
 import type { Application, ApplicationInstance } from "../../../lib/plapi.ts";
+import type { OpenResult } from "../../../lib/open.ts";
 
 export { capturedOutput, http };
 
 // ── Controllable mock state ──────────────────────────────────────────────────
+
+const BROWSER_OPENED: OpenResult = { ok: true, launcher: "test-browser" };
 
 /**
  * Mutable state shared across module mocks. Tests can modify these values
@@ -36,7 +40,36 @@ export const mockState = {
   gitNormalizedRemote: "github.com/test/project" as string | undefined,
   gitRepoRoot: "/repo" as string | undefined,
   gitRepoIdentifier: "/repo/.git" as string | undefined,
+  /**
+   * What the stubbed browser launcher reports. Set `{ ok: false, reason: "no-launcher" }`
+   * to simulate a machine with no browser.
+   */
+  openBrowserResult: BROWSER_OPENED as OpenResult,
+  /**
+   * What the stubbed account lookup (`fetchUserInfo`) throws instead of
+   * answering, e.g. `new ApiError(503, "...")` for Clerk being unreachable.
+   */
+  userInfoError: null as Error | null,
+  /**
+   * The stored session expired and can't be refreshed: reading it throws the
+   * CLI's own "Session expired" error. A new sign-in replaces it.
+   */
+  sessionUnrefreshable: false,
 };
+
+/** What reading the stored session gives: the token, or the CLI's error for one it can't refresh. */
+async function validStoredToken(): Promise<string | null> {
+  if (mockState.sessionUnrefreshable && mockState.storedToken) {
+    throw new AuthError({ reason: AUTH_ERROR_REASON.SESSION_EXPIRED });
+  }
+  return mockState.storedToken;
+}
+
+/**
+ * URLs the CLI asked the browser launcher to open, in order. Cleared in
+ * {@link setupTest}.
+ */
+export const openedUrls: string[] = [];
 
 // ── Module mocks (executed at import time) ───────────────────────────────────
 
@@ -45,7 +78,7 @@ mock.module(
   () =>
     ({
       getToken: async () => mockState.storedToken,
-      getValidToken: async () => mockState.storedToken,
+      getValidToken: validStoredToken,
       getStoredSession: async () =>
         mockState.storedToken
           ? {
@@ -60,6 +93,7 @@ mock.module(
         Boolean(process.env.CLERK_PLATFORM_API_KEY) || mockState.storedToken !== null,
       storeToken: async (value: { accessToken: string }) => {
         mockState.storedToken = value.accessToken;
+        mockState.sessionUnrefreshable = false;
       },
       deleteToken: async () => {
         mockState.storedToken = null;
@@ -97,10 +131,22 @@ mock.module(
       getGitNormalizedRemote: async () => mockState.gitNormalizedRemote,
       normalizeGitRemoteUrl: (url: string) => url,
       ensureGitignoreEntry: async () => {},
+      isGitIgnored: async () => undefined,
     }) satisfies typeof import("../../../lib/git.ts"),
 );
 
+/** Person mode, as for a run in a terminal. Reset in {@link setupTest}. */
 let _mode: "human" | "agent" = "human";
+
+/**
+ * Starts the current test's runs in agent mode, as a run without a terminal
+ * starts. `--mode` takes effect in a hook that runs before each command, so an
+ * error raised earlier (a bad `--input-json`, an invalid `--mode`, `clerk help
+ * <command>`) is reported in this starting mode, whatever `--mode` says.
+ */
+export function startInAgentMode(): void {
+  _mode = "agent";
+}
 mock.module(
   "../../../mode.ts",
   () =>
@@ -132,8 +178,16 @@ const promptQueues: Record<PromptType, unknown[]> = {
   multiselect: [],
 };
 
+/**
+ * Every prompt the command showed, in order, with its message: a test can
+ * check what was asked, not only how many answers were used. Cleared in
+ * {@link setupTest}.
+ */
+export const promptsShown: { type: PromptType; message?: string }[] = [];
+
 function dequeuePrompt(name: PromptType) {
-  return async () => {
+  return async (config?: { message?: string }) => {
+    promptsShown.push({ type: name, message: config?.message });
     const queue = promptQueues[name];
     if (queue.length === 0) {
       throw new Error(
@@ -177,6 +231,7 @@ function resetPromptQueues() {
   for (const queue of Object.values(promptQueues)) {
     queue.length = 0;
   }
+  promptsShown.length = 0;
 }
 
 function assertPromptQueuesEmpty() {
@@ -256,7 +311,9 @@ mock.module(
       }),
       revokeToken: async () => "revoked" as const,
       fetchUserInfo: async (token: string) => {
-        if (!token || token === "expired_token") throw new Error("Unauthorized");
+        if (mockState.userInfoError) throw mockState.userInfoError;
+        // What the real lookup throws for a token Clerk refuses.
+        if (!token || token === "expired_token") throw new ApiError(401, "Unauthorized");
         return { userId: "user_123", email: "test@example.com" };
       },
     }) satisfies typeof import("../../../lib/token-exchange.ts"),
@@ -283,6 +340,20 @@ mock.module(
       generateCodeChallenge: () => "mock_challenge",
       generateState: () => "mock_state",
     }) satisfies typeof import("../../../lib/pkce.ts"),
+);
+
+// The real launcher spawns the developer's browser (`open` on macOS), so a test
+// that signs in or opens a claim page would open real pages on their screen.
+// Record the URL instead and report whatever the test asked for.
+mock.module(
+  "../../../lib/open.ts",
+  () =>
+    ({
+      openBrowser: async (url: string) => {
+        openedUrls.push(url);
+        return mockState.openBrowserResult;
+      },
+    }) satisfies typeof import("../../../lib/open.ts"),
 );
 
 // ── Real config module ───────────────────────────────────────────────────────
@@ -329,6 +400,19 @@ export function getInstance(app: Application, env: string): ApplicationInstance 
     );
   }
   return matches[0]!;
+}
+
+/**
+ * A publishable key in the real format: the Frontend API host plus `$`, base64
+ * encoded behind `pk_test_` or `pk_live_`. `MOCK_APP`'s keys predate code that
+ * decodes keys; use this wherever a key's host is compared.
+ */
+export function publishableKeyFor(
+  frontendApiHost: string,
+  environment: "development" | "production" = "development",
+): string {
+  const prefix = environment === "development" ? "pk_test_" : "pk_live_";
+  return `${prefix}${btoa(`${frontendApiHost}$`)}`;
 }
 
 export const MOCK_APP: Application = {
@@ -495,7 +579,7 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
   // early before telemetry, and the failure would read as a signals bug.
   _resetInterruptState();
 
-  let exitCode = 0;
+  let exitCode: number | undefined;
 
   try {
     await runProgram(program, args, { from: "user" });
@@ -508,6 +592,20 @@ async function execCLI(...args: string[]): Promise<CLIResult> {
     } else {
       throw error;
     }
+  } finally {
+    // A command can report failure by setting process.exitCode and returning
+    // (`clerk deploy status` on an unfinished deploy); a real process exits
+    // with it. Each `clerk()` call stands in for one process, so the code ends
+    // with the run and the next run starts at 0. Bun ignores assigning
+    // `undefined`; only a number resets it.
+    //
+    // The code is deliberately not cleared before the run. A code a test sets
+    // before calling `clerk()` is visible to that run: test-only injection
+    // (a fresh process never inherits one) that the telemetry soft-failure
+    // test uses to stand in for a command that sets the code without
+    // declaring what it meant.
+    exitCode ??= Number(process.exitCode ?? 0);
+    process.exitCode = 0;
   }
 
   // Merge output from both console spies (non-migrated code) and scoped log capture.
@@ -587,9 +685,19 @@ export async function setupTest(): Promise<TestHarness> {
   mockState.gitNormalizedRemote = "github.com/test/project";
   mockState.gitRepoRoot = "/repo";
   mockState.gitRepoIdentifier = "/repo/.git";
+  mockState.openBrowserResult = BROWSER_OPENED;
+  mockState.userInfoError = null;
+  mockState.sessionUnrefreshable = false;
+  openedUrls.length = 0;
+  // `--mode agent` sets the mocked mode for the rest of the process; without
+  // this, every later test in the file would run as an agent.
+  _mode = "human";
   resetPromptQueues();
   http.reset();
   process.stdin.isTTY = true;
+  // A soft exit code left by earlier code in the file would otherwise read as
+  // this test's first run failing.
+  process.exitCode = 0;
 
   const logSpy = spyOn(console, "log").mockImplementation(() => {});
   const errorSpy = spyOn(console, "error").mockImplementation(() => {});
@@ -628,6 +736,9 @@ export async function teardownTest(harness: TestHarness): Promise<void> {
   envMutations = new Map();
   globalThis.fetch = originalFetch;
   process.stdin.isTTY = originalStdinIsTTY;
+  // A test that set process.exitCode outside `clerk()` would otherwise fail the
+  // whole `bun test` run after every test passed.
+  process.exitCode = 0;
   harness.logSpy.mockRestore();
   harness.errorSpy.mockRestore();
   harness.exitSpy.mockRestore();

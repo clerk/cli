@@ -1,0 +1,187 @@
+/**
+ * What a claim of the app `clerk init` created did, in words: shared by
+ * `clerk auth login` and `clerk link`, which both claim and must say the same
+ * thing about the app and the folder.
+ */
+
+import type { AutoclaimResult, FolderUnchanged } from "../../lib/autoclaim.ts";
+import { describeClaimDestination } from "../../lib/claim-prompt.ts";
+import { ApiError, credentialRefusal, errorMessage } from "../../lib/errors.ts";
+import { describeKeyLocation } from "../../lib/local-keys.ts";
+import { buildDashboardUrl } from "../../lib/environment.ts";
+import { NEXT_STEPS } from "../../lib/next-steps.ts";
+import { log } from "../../lib/log.ts";
+import { capitalize } from "../../lib/text.ts";
+
+const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
+  not_found:
+    "Claim token is no longer valid - the application may have been claimed from the dashboard.",
+  failed:
+    "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
+};
+
+/**
+ * Clerk answered the claim 403: the account isn't allowed to claim (missing
+ * scopes, not a member of the workspace), so signing in again with it can't
+ * help. A 401 is a refused credential.
+ */
+export function claimForbidden(result: AutoclaimResult): boolean {
+  return (
+    result.status === "failed" && result.error instanceof ApiError && result.error.status === 403
+  );
+}
+
+export function claimWarning(result: AutoclaimResult): string | undefined {
+  if (result.status === "failed" && credentialRefusal(result.error)) {
+    if (claimForbidden(result)) {
+      // The same account gets the same 403, so only another one retries it,
+      // and none can while `CLERK_PLATFORM_API_KEY` wins over any session.
+      const retry = process.env.CLERK_PLATFORM_API_KEY
+        ? ""
+        : ", so signing in with another account tries again";
+      return `Unable to claim - this account can't claim the app: ${errorMessage(result.error)}. The claim token stays in this folder${retry}.`;
+    }
+    return `Unable to claim - Clerk refused this credential: ${errorMessage(result.error)}. The claim token stays in this folder, so the next \`clerk auth login\` tries again.`;
+  }
+  if (result.status === "managed_workspace") {
+    // The API message already names the provider and says what to do.
+    return `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."}`;
+  }
+  return CLAIM_WARNINGS[result.status];
+}
+
+export type ClaimedResult = Extract<AutoclaimResult, { status: "claimed" }>;
+
+/**
+ * `insideLink`: for `clerk link`, which goes on to link the folder in the
+ * same run. The report then says what the claim did and why, and names no
+ * command to run next.
+ */
+export function reportClaimed(
+  { app, local }: ClaimedResult,
+  { insideLink = false }: { insideLink?: boolean } = {},
+): void {
+  const label = app.name || app.application_id;
+  log.success(
+    local.kind === "linked"
+      ? `Claimed and linked application: \`${label}\``
+      : `Claimed application: \`${label}\``,
+  );
+  // First time this app has a home in an account; say where it is.
+  // Deserialized API JSON; a missing array must not fail a claim that
+  // already succeeded server-side.
+  const development = app.instances?.find(
+    (instance) => instance.environment_type === "development",
+  );
+  if (development) {
+    // URL on its own line: with it, the sentence is wider than the frame.
+    log.info("Your app now lives in your Clerk account:");
+    log.info(`  ${buildDashboardUrl(app.application_id, development.instance_id)}`);
+  }
+  // After the claim line, so the output says what was claimed before what
+  // happened to the folder.
+  if (local.kind === "link_failed") {
+    const finish = insideLink ? "" : " Run `clerk link` to finish setup.";
+    log.warn(`Linking this folder failed: ${local.reason}.${finish}`);
+  }
+  if (local.kind === "unchanged") {
+    const { why, next } = folderLeftAlone(local, { id: app.application_id, label });
+    log.warn(insideLink ? why : `${why} ${next}`);
+  }
+}
+
+/**
+ * Why the claim left the folder alone, and the next command, as two parts.
+ * The warning names the next command itself, not only in the outro's next
+ * steps: agents see warnings but never the outro. So the commands here must
+ * work without a prompt. Plain `clerk link` is suggested only when it can try
+ * to match the folder's key by itself (`linkCanTryKey`); otherwise the warning
+ * names `clerk link --app`, and the person's next steps add the picker.
+ *
+ * Each sentence says only what the comparison established: that a key isn't
+ * the claimed app's, never which app it does belong to, and never that
+ * `clerk link` or `clerk apps list` will identify that app.
+ */
+function folderLeftAlone(
+  local: FolderUnchanged,
+  claimed: { id: string; label: string },
+): { why: string; next: string } {
+  const leftAlone = "so this folder's link and keys were left alone.";
+  const chooseById =
+    "Choose the application this folder should use: `clerk apps list --json` lists your applications' IDs, then run `clerk link --app <app_id>`";
+  switch (local.reason) {
+    case "linked_elsewhere": {
+      const linkedLabel = local.linkedTo.appName
+        ? `${local.linkedTo.appName} (${local.linkedTo.appId})`
+        : local.linkedTo.appId;
+      return {
+        why: `This folder stays linked to \`${linkedLabel}\`, so its link and keys were left alone.`,
+        next: `Run \`clerk link --app ${claimed.id}\` to switch it to \`${claimed.label}\`.`,
+      };
+    }
+    case "different_keys": {
+      const where = describeKeyLocation(local);
+      if (local.mixed) {
+        return {
+          why: `This folder holds keys for \`${claimed.label}\` and ${where}, which isn't \`${claimed.label}\`'s, so its link and keys were left alone.`,
+          next: `Make the folder's Clerk keys belong to one application, then link it. ${chooseById}.`,
+        };
+      }
+      const why = `${capitalize(where)} isn't \`${claimed.label}\`'s, ${leftAlone}`;
+      if (local.linkCanTryKey) {
+        return {
+          why,
+          next: "Run `clerk link`; it tries to match that key to an application in your account.",
+        };
+      }
+      return { why, next: `${chooseById}.` };
+    }
+    case "unverified":
+      return {
+        why: `Couldn't confirm this folder's Clerk keys belong to \`${claimed.label}\`, ${leftAlone}`,
+        next: `${chooseById}, or run \`clerk link --app ${claimed.id}\` to use \`${claimed.label}\`.`,
+      };
+  }
+}
+
+export function claimedNextSteps({ app, local }: ClaimedResult): readonly string[] {
+  switch (local.kind) {
+    case "linked":
+      return local.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
+    case "link_failed":
+      return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
+    case "unchanged":
+      switch (local.reason) {
+        case "linked_elsewhere":
+          return NEXT_STEPS.AUTOCLAIM_LINKED_ELSEWHERE(app.application_id);
+        case "different_keys":
+          if (local.mixed) return NEXT_STEPS.AUTOCLAIM_MIXED_KEYS;
+          return local.linkCanTryKey
+            ? NEXT_STEPS.AUTOCLAIM_UNMATCHED_PUBLISHABLE_KEY
+            : NEXT_STEPS.AUTOCLAIM_CHOOSE_APP;
+        case "unverified":
+          return NEXT_STEPS.AUTOCLAIM_UNVERIFIED(app.application_id);
+      }
+  }
+}
+
+/**
+ * Login exits 0 after a declined claim, so this says plainly that the app
+ * wasn't claimed. With the API key set, it also says how to claim into the
+ * signed-in account instead, or the account they sign in to when nobody is
+ * signed in (`account` null).
+ */
+export function reportClaimSkipped(appName: string, account: { email?: string } | null): void {
+  log.warn(
+    `Skipped the claim, so \`${appName}\` is still unclaimed. Its claim token stays in this folder.`,
+  );
+  if (process.env.CLERK_PLATFORM_API_KEY) {
+    const own = account
+      ? describeClaimDestination({ kind: "account", email: account.email || undefined })
+      : "the account you sign in to";
+    log.info(
+      "Claims go to the workspace your `CLERK_PLATFORM_API_KEY` belongs to while it's set. " +
+        `Unset it to claim \`${appName}\` into ${own} instead.`,
+    );
+  }
+}

@@ -427,16 +427,9 @@ export async function resolveAppContext(
     };
   }
 
-  const resolved = await resolveProfile(options.cwd ?? process.cwd());
-  if (!resolved) {
-    throw new CliError(
-      "No Clerk project linked to this directory.\n" +
-        "Either:\n" +
-        "  - Run `clerk link` from your project directory\n" +
-        "  - Pass --app <app_id> to target an app directly",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
-  }
+  const cwd = options.cwd ?? process.cwd();
+  const resolved = await resolveProfile(cwd);
+  if (!resolved) throw await notLinkedError(cwd);
 
   const instance = resolveInstanceId(resolved.profile, options.instance);
   return {
@@ -445,6 +438,24 @@ export async function resolveAppContext(
     instanceId: instance.id,
     instanceLabel: instance.label,
   };
+}
+
+/**
+ * The error for an account command run with no linked app and no `--app`.
+ * Loaded lazily: the unlinked-folder module's readers import `lib/fetch.ts`,
+ * which imports this file. There's no rerun, because the command isn't known
+ * here and its arguments may hold a secret.
+ */
+async function notLinkedError(cwd: string): Promise<CliError> {
+  const { appInNoAccount, readUnlinkedFolder, unlinkedFolderError } =
+    await import("./unlinked-folder.ts");
+  const folder = await readUnlinkedFolder(cwd);
+  return unlinkedFolderError(folder, {
+    lead: "No Clerk project linked to this directory.",
+    tail: appInNoAccount(folder)
+      ? undefined
+      : "Or pass `--app <app_id>` to target an app directly.",
+  });
 }
 
 export type { Auth, Profile, ClerkConfig, AppContextOptions };

@@ -1,4 +1,4 @@
-import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
+import { test, expect, describe, afterAll, afterEach, beforeEach, mock, spyOn } from "bun:test";
 import { setMode } from "../../mode.ts";
 import { setCurrentEnv } from "../../lib/environment.ts";
 import { configStubs, keylessTargetStubs, useCaptureLog } from "../../test/lib/stubs.ts";
@@ -44,6 +44,20 @@ mock.module("../../lib/spinner.ts", () => ({
 }));
 
 const { open } = await import("./open.ts");
+const unlinkedFolder = await import("../../lib/unlinked-folder.ts");
+
+// What the folder holds, for the refusal: never the real working directory or
+// credential store.
+const readUnlinkedFolderSpy = spyOn(unlinkedFolder, "readUnlinkedFolder").mockResolvedValue({
+  kind: "init_app",
+  credential: "session",
+});
+afterAll(() => readUnlinkedFolderSpy.mockRestore());
+
+// No stored session, read from the token override instead of the keychain.
+const { _setTokenOverride } = await import("../../lib/credential-store.ts");
+_setTokenOverride(null);
+afterAll(() => _setTokenOverride(undefined));
 
 const CTX = {
   secretKey: "sk_test_123",
@@ -98,17 +112,41 @@ describe("users open", () => {
       });
     });
 
+    beforeEach(() => {
+      readUnlinkedFolderSpy.mockResolvedValue({ kind: "init_app", credential: "session" });
+    });
+
     test("says the application is unclaimed rather than that nothing is linked", async () => {
       await expect(open({ userId: "user_abc" })).rejects.toThrow(
         /unclaimed accountless application \(secret key from \.env\.local\).*no Dashboard page/s,
       );
     });
 
-    test("suggests claiming, and a command that works right now", async () => {
+    test("gives the claim step, then the rerun, and a command that works right now", async () => {
       const error = await open({ userId: "user_abc" }).catch((thrown: unknown) => thrown);
+      const message = (error as Error).message;
+      expect(message).toContain(
+        "Run `clerk link`: it claims the app into your account and links this folder. Then run `clerk users open user_abc` again.",
+      );
       // `clerk users get` does not exist; `clerk api` is the reader that does.
-      expect((error as Error).message).toContain("clerk auth login");
-      expect((error as Error).message).toContain("clerk api /users/user_abc");
+      expect(message).toContain("clerk api /users/user_abc");
+    });
+
+    // Plain keys may belong to an app already in an account.
+    test("plain keys: says the folder isn't linked, never unclaimed, and finds the app by key", async () => {
+      readUnlinkedFolderSpy.mockResolvedValue({
+        kind: "unknown_owner",
+        credential: "session",
+        publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
+      });
+
+      const error = await open({ userId: "user_abc" }).catch((thrown: unknown) => thrown);
+      const message = (error as Error).message;
+      expect(message).toContain(
+        "This directory isn't linked, so the CLI doesn't know the ID of the application the secret key from .env.local belongs to",
+      );
+      expect(message).toContain("Run `clerk link`: it finds the app in your account by that key.");
+      expect(message).not.toContain("unclaimed");
     });
 
     test("does not hijack an explicit --app target", async () => {

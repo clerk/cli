@@ -101,6 +101,16 @@ export function normalizeGitRemoteUrl(raw: string): string {
   return url.toLowerCase();
 }
 
+/** Whether git ignores `file` in `cwd`'s repository; undefined outside one, or without git. */
+export async function isGitIgnored(cwd: string, file: string): Promise<boolean | undefined> {
+  try {
+    const { exitCode } = await $`git check-ignore -q ${file}`.cwd(cwd).quiet().nothrow();
+    return exitCode === 0 ? true : exitCode === 1 ? false : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Adds `entry` to the project's `.gitignore` unless it is already listed.
  *

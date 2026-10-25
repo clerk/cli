@@ -35,6 +35,7 @@ import * as linkModule from "../../commands/link/index.ts";
 import * as pullModule from "../../commands/env/pull.ts";
 import * as modeModule from "../../mode.ts";
 import * as configModule from "../../lib/config.ts";
+import * as claimPromptModule from "../../lib/claim-prompt.ts";
 import * as frameworkModule from "../../lib/framework.ts";
 import * as contextModule from "../../commands/init/context.ts";
 import * as scaffoldModule from "../../commands/init/scaffold.ts";
@@ -45,6 +46,9 @@ import * as heuristicsModule from "../../commands/init/heuristics.ts";
 import * as skillsModule from "../../commands/init/skills.ts";
 import * as bootstrapModule from "../../commands/init/bootstrap.ts";
 import * as keylessModule from "../../lib/keyless.ts";
+import * as unlinkedFolderModule from "../../lib/unlinked-folder.ts";
+import { _setTokenOverride } from "../../lib/credential-store.ts";
+import type { UnlinkedFolder } from "../../lib/unlinked-folder.ts";
 
 export const FAKE_CTX = {
   cwd: "/tmp/test",
@@ -105,6 +109,10 @@ export interface SetupOverrides {
   email?: string | null;
   apiKey?: boolean;
   isAgent?: boolean;
+  /** What the folder holds, for `init`'s advice; never read from the real working directory. */
+  unlinkedFolder?: UnlinkedFolder;
+  /** False: the token works, but the config file has no auth entry, so the account lookup reads signed out. */
+  configAuth?: boolean;
   /**
    * Leave `mode.ts` unfaked so the test exercises real mode detection
    * (env markers + TTY). The test owns the env and `process.stdout.isTTY` it
@@ -135,6 +143,7 @@ export function useInitHarness(): InitHarness {
   afterEach(() => {
     for (const s of spies) s.mockRestore();
     spies = [];
+    _setTokenOverride(undefined);
   });
 
   function setup(overrides: SetupOverrides = {}) {
@@ -143,6 +152,8 @@ export function useInitHarness(): InitHarness {
     const agent = overrides.isAgent ?? false;
     const authed = email != null || apiKey;
     const gatherContextSpy = spyOn(contextModule, "gatherContext").mockResolvedValue(null);
+    // No stored session, read from the token override instead of the keychain.
+    _setTokenOverride(null);
 
     spies = [
       ...(overrides.realMode
@@ -163,6 +174,11 @@ export function useInitHarness(): InitHarness {
       spyOn(scanModule, "detectAuthLibraries").mockReturnValue(undefined),
       spyOn(scanModule, "scanForIssues").mockResolvedValue([]),
       spyOn(heuristicsModule, "getAuthenticatedEmail").mockResolvedValue(email),
+      spyOn(claimPromptModule, "lookUpAccount").mockResolvedValue(
+        email != null && overrides.configAuth !== false
+          ? { status: "account", account: { userId: "user_test", email } }
+          : { status: "signed_out" },
+      ),
       spyOn(heuristicsModule, "isAuthenticated").mockResolvedValue(authed),
       spyOn(heuristicsModule, "printKeylessInfo").mockReturnValue(undefined),
       spyOn(heuristicsModule, "installSdk").mockResolvedValue(undefined),
@@ -172,7 +188,7 @@ export function useInitHarness(): InitHarness {
       spyOn(heuristicsModule, "printOutro").mockReturnValue(undefined),
       spyOn(skillsModule, "installSkills").mockResolvedValue(undefined),
       spyOn(loginModule, "login").mockResolvedValue(undefined as never),
-      spyOn(linkModule, "link").mockResolvedValue(undefined),
+      spyOn(linkModule, "link").mockResolvedValue({ status: "linked", appId: "app_stub" }),
       spyOn(pullModule, "pull").mockResolvedValue(undefined),
       spyOn(bootstrapModule, "promptAndBootstrap").mockResolvedValue(FAKE_BOOTSTRAP),
       spyOn(bootstrapModule, "confirmOverwrite").mockResolvedValue(undefined),
@@ -183,6 +199,9 @@ export function useInitHarness(): InitHarness {
       }),
       spyOn(keylessModule, "writeKeysToEnvFile").mockResolvedValue(undefined),
       spyOn(keylessModule, "writeKeylessBreadcrumb").mockResolvedValue(undefined),
+      spyOn(unlinkedFolderModule, "readUnlinkedFolder").mockResolvedValue(
+        overrides.unlinkedFolder ?? { kind: "init_app", credential: authed ? "session" : "none" },
+      ),
     ];
 
     return { gatherContextSpy, captured };

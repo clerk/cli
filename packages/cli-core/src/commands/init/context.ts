@@ -55,7 +55,7 @@ export async function gatherContext(
   const deps = await readDeps(cwd);
   const existingClerk = deps ? framework.sdk in deps : false;
 
-  const envFile = await findExistingEnvFile(cwd, framework.envFile);
+  const envFile = await findExistingEnvFile(cwd, framework.envFile, framework.envLoadOrder);
 
   return {
     cwd,

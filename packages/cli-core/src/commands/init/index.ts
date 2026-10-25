@@ -1,7 +1,7 @@
 import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { login } from "../auth/login.js";
-import { link } from "../link/index.js";
+import { link, type LinkOutcome } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
@@ -10,6 +10,7 @@ import {
   throwUsageError,
   CliError,
   ERROR_CODE,
+  EXIT_CODE,
   errorMessage,
 } from "../../lib/errors.js";
 import {
@@ -19,10 +20,12 @@ import {
   type FrameworkInfo,
 } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
+import { readInitClaim } from "../../lib/autoclaim.js";
+import { lookUpAccount } from "../../lib/claim-prompt.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
 import { quoteArg } from "../../lib/json-body.ts";
-import { setTelemetryStage } from "../../lib/telemetry.ts";
+import { declareSoftExitOutcome, setTelemetryStage } from "../../lib/telemetry.ts";
 import { confirm } from "../../lib/prompts.ts";
 import {
   createAccountlessApp,
@@ -69,9 +72,23 @@ import {
   type AppleInitOptions,
 } from "./ios/coordinator.js";
 import { withNativeProgress } from "./ios/progress.js";
+import { APPLE_FLAGS } from "./flags.ts";
 import type { AppleStarter } from "./ios/starter-bootstrap.js";
+import { initRerun } from "./rerun.ts";
+import {
+  appInNoAccount,
+  isUnclaimedApp,
+  readUnlinkedFolder,
+  unlinkedFolderNextStep,
+  type Rerun,
+  type UnlinkedFolder,
+} from "../../lib/unlinked-folder.ts";
+import { describeKeyLocation, SDK_KEYLESS_SOURCE } from "../../lib/local-keys.ts";
 
-type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
+/** Where the existing app `init` keeps came from: its init token, or the SDK's keyless file. */
+type KeptKeylessApp = "init_token" | "sdk_file";
+
+export type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   /** Framework to set up (skips auto-detection). */
   framework?: string;
   pm?: PackageManager;
@@ -93,7 +110,7 @@ type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   login?: boolean;
   /** Pre-configure the accountless application from a Clerk application template. */
   template?: KeylessTemplate;
-  /** Replace an existing unclaimed accountless application instead of keeping it. */
+  /** Replace this folder's existing accountless app instead of keeping it. */
   fresh?: boolean;
 };
 
@@ -215,13 +232,25 @@ export async function init(options: InitOptions = {}) {
     const createIfMissing = agent
       ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
       : undefined;
-    await authenticateAndLink(
+    const linked = await authenticateAndLink(
       ctx.cwd,
       options.app,
       createIfMissing,
+      // A project `init` just created is a new folder below this one.
+      initRerun(options, bootstrap ? { from: cwd, projectDir: ctx.cwd } : undefined),
       // Native setup continues right after linking, so link's `clerk env pull` advice doesn't apply.
       ctx.framework.dep === "ios" && canSetUpXcode() ? { showNextSteps: false } : {},
     );
+    // A person is claiming the SDK's app in the Dashboard: nothing is linked,
+    // so there are no keys to write yet. Same exit and telemetry as `clerk
+    // link`, and no error line: the person did their part.
+    if (linked?.status === "claim_page_opened") {
+      declareSoftExitOutcome("incomplete", ERROR_CODE.NOT_LINKED);
+      process.exitCode = EXIT_CODE.GENERAL;
+      // `link` already said to claim the app and rerun `clerk init`.
+      await outro();
+      return;
+    }
   }
 
   // Native Apple setup edits the Xcode project and registers the app instead of
@@ -350,18 +379,6 @@ async function assertUsableFlags(
     );
   }
 }
-
-const APPLE_FLAGS = [
-  ["xcodeProject", "--xcode-project"],
-  ["xcodeTarget", "--xcode-target"],
-  ["xcodeConfiguration", "--xcode-configuration"],
-  ["appleSdk", "--apple-sdk"],
-  ["bundleId", "--bundle-id"],
-  ["appIdPrefix", "--app-id-prefix"],
-  ["teamId", "--team-id"],
-  ["signInWithApple", "--sign-in-with-apple"],
-  ["prebuiltAuthUi", "--prebuilt-auth-ui"],
-] as const;
 
 /** `--framework macos` creates a macOS starter; for an existing app it means the iOS (Swift) setup. */
 const MACOS = "macos";
@@ -705,38 +722,78 @@ async function runStrategy(
 
 // --- Auth ---
 
-async function resolveAuthLabel(): Promise<string> {
+async function resolveAuthLabel(cwd: string, app: string | undefined): Promise<string> {
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
   if (hasApiKey) return "Using API key";
 
+  const lookup = await lookUpAccount();
+  if (lookup.status === "account") {
+    return lookup.account.email ? `Logged in as ${lookup.account.email}` : "Logged in";
+  }
+  // A stored session whose account lookup didn't reach an answer (a network
+  // error, a 5xx) is still a sign-in: `link` asks about "the account you're
+  // signed in to" rather than starting a browser sign-in here.
+  if (lookup.status === "lookup_failed") return "Logged in";
+  // The strategy pick counts a valid token as signed in even without the
+  // config's auth entry (a fresh `CLERK_CONFIG_DIR`, a reset config); a
+  // login here would leave an agent waiting on a browser.
   const email = await getAuthenticatedEmail();
-  if (email) return `Logged in as ${email}`;
+  if (email !== null) return email ? `Logged in as ${email}` : "Logged in";
 
-  await login({ showNextSteps: false });
+  // `link`, called next, claims the app `clerk init` created only in a folder
+  // that isn't linked and without `--app`; login's claim would run first and
+  // leave it nothing to decide. In an already-linked folder `link` doesn't
+  // claim, so login does. With `--app`, the named app is
+  // the person's choice, so nothing claims, and they're told how to.
+  if (!app && (await resolveProfile(cwd))) {
+    await login({ showNextSteps: false });
+    return "";
+  }
+  await login({ showNextSteps: false, claim: false });
+  const initClaim = app ? await readInitClaim(cwd) : undefined;
+  if (initClaim) {
+    log.info(
+      `\`${initClaim.appName}\`, the app \`clerk init\` created in this folder, is still unclaimed: \`clerk auth login\` claims it.`,
+    );
+  }
   return "";
 }
 
+/** Undefined when the folder was already linked to the requested app. */
 async function authenticateAndLink(
   cwd: string,
   app: string | undefined,
   createIfMissing: string | undefined,
+  rerun: Rerun,
   linkOptions: { showNextSteps?: false } = {},
-): Promise<void> {
-  const label = await resolveAuthLabel();
+): Promise<LinkOutcome | undefined> {
+  const label = await resolveAuthLabel(cwd, app);
   const profile = await resolveProfile(cwd);
 
   const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);
 
   if (label && alreadyOnRequestedApp) {
     log.info(dim(`${label} · Linked to ${profile.profile.appId}`));
-    return;
+    return undefined;
   }
 
   if (label) {
     log.info(dim(label));
   }
 
-  await link({ skipIfLinked: true, app, cwd, createIfMissing, ...linkOptions });
+  // `init` writes the linked app's keys next, so after a claim attempt `link`
+  // saves the link only if every key in the folder is that app's.
+  return link({
+    skipIfLinked: true,
+    app,
+    cwd,
+    createIfMissing,
+    onlyIfFolderKeysMatch: true,
+    // After claiming an SDK-created app, rerunning `init`, flags and all,
+    // finishes setup.
+    rerun,
+    ...linkOptions,
+  });
 }
 
 // --- Keyless app setup ---
@@ -754,18 +811,23 @@ async function authenticateAndLink(
  * since neither can consent to a destructive default. `--fresh` is the
  * explicit "I know, replace it anyway" escape hatch.
  */
-async function shouldKeepExistingKeyless(
+async function keptKeylessApp(
   cwd: string,
   skipConfirm: boolean,
   fresh: boolean,
-): Promise<boolean> {
-  if (fresh) return false;
+): Promise<{ kept: KeptKeylessApp; folder: UnlinkedFolder } | undefined> {
+  if (fresh) return undefined;
 
   const existing = await readKeylessBreadcrumb(cwd);
   const sdkApp = existing ? undefined : await readSdkKeylessApp(cwd);
-  if (!existing && !sdkApp?.secretKey) return false;
+  if (!existing && !sdkApp?.secretKey) return undefined;
+  const kept = existing ? "init_token" : "sdk_file";
+  const folder = await readUnlinkedFolder(cwd);
 
-  if (skipConfirm) return true;
+  // Offer to replace only an app in no account yet. Replacing anything else
+  // would overwrite keys pasted from the Dashboard, or an SDK app that may
+  // already be claimed.
+  if (skipConfirm || !appInNoAccount(folder)) return { kept, folder };
 
   const replace = await confirm({
     message: existing
@@ -773,7 +835,15 @@ async function shouldKeepExistingKeyless(
       : "This project already has an unclaimed accountless application (minted by its Clerk SDK in `.clerk/.tmp/keyless.json`). Replace it with a new one?",
     default: false,
   });
-  return !replace;
+  return replace ? undefined : { kept, folder };
+}
+
+/** Where the keys init kept are, for the line that names them. */
+function keptKeysLocation(kept: KeptKeylessApp, folder: UnlinkedFolder, envFile: string): string {
+  const plainKey =
+    folder.kind === "unknown_owner" ? (folder.secretKey ?? folder.publishableKey) : undefined;
+  if (plainKey) return describeKeyLocation(plainKey);
+  return `in ${kept === "sdk_file" ? SDK_KEYLESS_SOURCE : envFile}`;
 }
 
 async function setupKeylessApp(
@@ -782,8 +852,16 @@ async function setupKeylessApp(
   envFile: string,
   { template, fresh, skipConfirm }: KeylessRunOptions,
 ): Promise<void> {
-  if (await shouldKeepExistingKeyless(cwd, skipConfirm, fresh)) {
-    printExistingKeylessInfo(envFile);
+  const existing = await keptKeylessApp(cwd, skipConfirm, fresh);
+  if (existing) {
+    const { kept, folder } = existing;
+    printExistingKeylessInfo({
+      keys: keptKeysLocation(kept, folder, envFile),
+      unclaimed: appInNoAccount(folder),
+      // Plain keys may be pasted from the Dashboard; `--fresh` would overwrite them.
+      offerFresh: isUnclaimedApp(folder),
+      step: unlinkedFolderNextStep(folder, { agent: isAgent() }).text,
+    });
     return;
   }
 
@@ -929,7 +1007,7 @@ export function registerInit(program: Program): void {
     )
     .option(
       "--fresh",
-      "Replace an existing unclaimed accountless application with a new one, instead of keeping it. Only applies when the strategy resolves to accountless — errors otherwise",
+      "Replace this folder's existing accountless app with a new one, including one a Clerk SDK created whose claim link can't be used, which may already be claimed. Only applies when the strategy resolves to accountless — errors otherwise",
     )
     .option(
       "--dry-run",
@@ -959,7 +1037,10 @@ export function registerInit(program: Program): void {
       "--prebuilt-auth-ui",
       "Add ClerkKitUI's prebuilt sign-in screen to an unchanged SwiftUI starter",
     )
-    .option("-y, --yes", "Skip confirmation prompts")
+    .option(
+      "-y, --yes",
+      "Skip init's own confirmation prompts. Choosing or claiming an app still asks.",
+    )
     .option("--no-skills", "Skip the optional agent skills install prompt")
     .setExamples([
       { command: "clerk init", description: "Auto-detect framework and set up Clerk" },
@@ -994,7 +1075,7 @@ export function registerInit(program: Program): void {
       },
       {
         command: "clerk init --accountless --fresh",
-        description: "Replace an existing unclaimed accountless app with a new one",
+        description: "Replace this folder's existing accountless app with a new one",
       },
       {
         command: "clerk init --dry-run --json",

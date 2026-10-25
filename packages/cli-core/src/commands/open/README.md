@@ -29,12 +29,12 @@ An unknown `subpath` (not in [`dashboard-paths.ts`](./dashboard-paths.ts)'s allo
 
 ### Unclaimed accountless applications
 
-`clerk link` cannot help an accountless application that has never been claimed — there is no application in any account yet to link to. For that case `open` instead looks for the application's **claim link**, via [`keyless-claim.ts`](./keyless-claim.ts), checking (in order):
+An application in no account yet has no Dashboard page of its own, so `open` looks for its one-time **claim link**, via [`keyless-claim.ts`](./keyless-claim.ts), in the order the unlinked-folder classifier ranks what a folder holds:
 
-1. `.clerk/.tmp/keyless.json` — an SDK that self-provisioned keys (e.g. `next dev` with none configured) writes its own full `claimUrl` here.
-2. `.clerk/keyless.json` — the legacy-named breadcrumb `clerk init --accountless` writes (see [`lib/keyless.ts`](../../lib/keyless.ts)'s `readKeylessBreadcrumb`), holding just the claim token; the URL is rebuilt as `{dashboardUrl}/apps/claim?token={claimToken}`.
+1. `.clerk/keyless.json` — the legacy-named breadcrumb `clerk init --accountless` writes (see [`lib/keyless.ts`](../../lib/keyless.ts)'s `readKeylessBreadcrumb`), holding just the claim token; the URL is rebuilt as `{dashboardUrl}/apps/claim?token={claimToken}`. `clerk link` and `clerk auth login` claim this app first too.
+2. `.clerk/.tmp/keyless.json` — an SDK that self-provisioned keys (e.g. `next dev` with none configured) writes its own full `claimUrl` here. Used only when the folder holds no plain key (one that's there is the app the folder runs on), and only an https link to the Clerk Dashboard, re-serialized before it reaches the browser launcher.
 
-If a claim link is found, `open` opens/prints/emits **that** URL instead of a dashboard deep-link — an unclaimed app has no `/apps/{appId}/instances/{instanceId}` page to go to. The local secret key (resolved the same way as [`whoami`](../whoami/README.md), via the legacy-named `resolveKeylessTarget()`) is used, best-effort, to look up the instance id/environment type from `GET /v1/instance` purely to decorate the output; a missing or invalid key there never blocks opening the claim link itself.
+If a claim link is found, `open` opens/prints/emits **that** URL instead of a dashboard deep-link — an unclaimed app has no `/apps/{appId}/instances/{instanceId}` page to go to. The local secret key (resolved the same way as [`whoami`](../whoami/README.md), via the legacy-named `resolveKeylessTarget()`) is used, best-effort, to look up the instance id/environment type from `GET /v1/instance` purely to decorate the output, and only when the key comes from the claim link's own file (the SDK keyless file). An init token holds no keys, so its claim link names no instance: another key in the folder may belong to another app. A missing or invalid key never blocks opening the claim link itself.
 
 A `subpath` cannot be honored for an unclaimed application (there is no dashboard page beyond the claim link yet), so `open users` on an unclaimed app throws instead of silently opening the claim link at the wrong URL:
 
@@ -44,10 +44,10 @@ no dashboard pages beyond the claim link. Run `clerk open` (no subpath) to
 claim it, then retry the subpath once it's linked.
 ```
 
-When **no** claim link can be found at all, the error differs depending on what is on disk, and deliberately does not send the user solely to `clerk link` (a dead end for a genuinely unclaimed app):
+When **no** claim link can be found at all, `open` fails with `not_linked`. The lead depends on whether a secret key is on disk, and the advice after it is the step for what the folder holds, from [`lib/unlinked-folder.ts`](../../lib/unlinked-folder.ts), as every not-linked message gives (in agent mode, its commands come as `examples`):
 
-- A secret key exists locally but no claim source does (e.g. `CLERK_SECRET_KEY` set by hand with no `.clerk` files) — names both possibilities: the key may belong to an already-claimed app (`clerk link` / `--app <app_id>`) or the claim breadcrumb was lost (`clerk init --accountless` regenerates one).
-- Nothing at all is found — the original message, pointing at both `clerk link` (if an application already exists in your account) and `clerk init` (to create one).
+- A secret key exists locally but no claim source does (e.g. Dashboard keys pasted into `.env`) — "Found a secret key (from `<source>`) but no claim link on disk, and this folder isn't linked, so there's no dashboard page to open." For an app in no account yet (an init app, or an SDK app whose claim link works), it ends "so there's no dashboard page to open yet." instead. For plain keys the step is `clerk link`, which finds the app in your account by the publishable key. It never suggests `clerk init --accountless`: that creates a new app and overwrites the folder's keys.
+- Nothing at all is found — "No Clerk project linked to this directory, and no accountless application was found either.", then `clerk link` to choose one of your apps, or `clerk init` to create one.
 
 | Method | Endpoint       | Description                                                                                                                              |
 | ------ | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |

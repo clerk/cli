@@ -165,6 +165,8 @@ export async function fetchUserInfo(accessToken: string): Promise<UserInfo> {
 
       const data = (await response.json()) as Record<string, unknown>;
 
+      // Not checked: a reply without an email yields undefined here despite
+      // the type. Callers that name the account must allow for that.
       return {
         userId: data.sub as string,
         email: data.email as string,

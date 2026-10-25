@@ -324,6 +324,8 @@ export function reportError(error: unknown, verbose: boolean): number {
   if (error instanceof ApiError) {
     const detail = formatApiBody(error.body, verbose);
     const prefix = error.context ?? "Request failed";
+    // Absent on every API error the CLI doesn't advise on.
+    const nextStep = error.nextStep ? `\n${error.nextStep.text}` : "";
     if (isAgent()) {
       const apiErrors: ApiErrorEntry[] | undefined =
         error.code || error.meta
@@ -337,17 +339,21 @@ export function reportError(error: unknown, verbose: boolean): number {
           : undefined;
       outputJsonError(
         error.code ?? "api_error",
-        `${prefix} (${error.status}): ${detail}`,
+        `${prefix} (${error.status}): ${detail}${nextStep}`,
         undefined,
         apiErrors,
+        error.nextStep?.examples,
       );
     } else {
-      log.error(`${prefix} (${error.status}): ${detail}`);
+      log.error(`${prefix} (${error.status}): ${detail}${nextStep}`);
       if (verbose && (error instanceof PlapiError || error instanceof FapiError) && error.url) {
         log.error(`       URL: ${error.url}`);
       }
       if (verbose && error.clerkTraceId) {
         log.error(`       Trace: ${error.clerkTraceId}`);
+      }
+      if (error.nextStep?.examples.length) {
+        log.info(`\n${formatExamplesBlock(error.nextStep.examples)}`);
       }
     }
     return EXIT_CODE.GENERAL;

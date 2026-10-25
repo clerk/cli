@@ -7,15 +7,35 @@
  * are decided once, the same way, everywhere.
  */
 
-import { join } from "node:path";
 import { bapiRequest } from "./bapi.ts";
 import { resolveAppContext, resolveProfile } from "./config.ts";
 import { getStoredSession, hasAccountCredentials, type OAuthSession } from "./credential-store.ts";
-import { parseEnvFile } from "./dotenv.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { decodePublishableKey } from "./fapi.ts";
-import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
+import {
+  ENV_VAR_SOURCE_SUFFIX,
+  exportedFolderKey,
+  readFolderKeys,
+  readSdkKeylessApp,
+  SDK_KEYLESS_SOURCE,
+  unreadableFolderReason,
+  type FolderKeys,
+  type FolderRead,
+  type LocatedKey,
+} from "./local-keys.ts";
 import { log } from "./log.ts";
+import { keylessCopy } from "./copy.ts";
+import {
+  keylessAppLabel,
+  keylessRefusal,
+  readUnlinkedFolder,
+  unlinkedFolderNextStep,
+  type UnlinkedFolder,
+} from "./unlinked-folder.ts";
+import { isAgent } from "../mode.ts";
+
+// Defined in the leaf module `local-keys.ts`; re-exported for this module's importers.
+export { ENV_VAR_SOURCE_SUFFIX, readSdkKeylessApp, SDK_KEYLESS_SOURCE };
 
 export interface KeylessTarget {
   secretKey: string;
@@ -36,126 +56,57 @@ export interface AccountContext {
  */
 export type InstanceTarget =
   | { kind: "account"; ctx: AccountContext; label: string }
-  | { kind: "keyless"; keyless: KeylessTarget; label: string };
+  | { kind: "keyless"; keyless: KeylessTarget; label: string; folder: UnlinkedFolder };
 
-const ENV_FILES = [".env", ".env.local"];
-
-/**
- * Where the Clerk SDKs park the keys for a keyless app they created themselves
- * (running `next dev` with no keys configured). Shape:
- * `{ publishableKey, secretKey, claimUrl, apiKeysUrl }`.
- */
-const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
+export type KeylessInstanceTarget = Extract<InstanceTarget, { kind: "keyless" }>;
 
 /**
- * The `source` a key found in the SDK's own keyless file carries. Exported so
- * a caller can tell that source apart without restating the path.
+ * The secret key the folder's app loads (`readFolderKeys`), the key `clerk
+ * link` and the unlinked-folder advice read: in the framework's env load
+ * order, or from the SDK keyless file when the folder holds no plain key.
+ * Undefined when there's none, or when the files disagree and no load order
+ * says which the app loads.
  */
-export const SDK_KEYLESS_SOURCE = SDK_KEYLESS_FILE.join("/");
-
-/**
- * Reads the SDK's own keyless file, ignoring a partially-written one.
- * Exported for `init`, whose keep-the-existing-app guard must recognise an
- * application the SDK minted for itself just as readily as one `clerk init`
- * minted — the two files describe the same kind of unclaimed app.
- */
-export async function readSdkKeylessApp(
+export async function findLocalSecretKey(
   cwd: string,
-): Promise<{ secretKey?: string; publishableKey?: string } | undefined> {
-  const file = Bun.file(join(cwd, ...SDK_KEYLESS_FILE));
-  if (!(await file.exists())) return undefined;
+  keys?: FolderKeys,
+): Promise<KeylessTarget | undefined> {
+  return (await readSecretKey(cwd, keys)).target;
+}
 
+/** `findLocalSecretKey`, and the read of the folder's keys it made. */
+async function readSecretKey(
+  cwd: string,
+  keys: FolderKeys | undefined,
+): Promise<{ target?: KeylessTarget; read: FolderRead }> {
+  let read: FolderRead;
+  let secretKey: LocatedKey | undefined;
   try {
-    const parsed = (await file.json()) as { secretKey?: unknown; publishableKey?: unknown };
-    return {
-      secretKey: typeof parsed.secretKey === "string" ? parsed.secretKey : undefined,
-      publishableKey: typeof parsed.publishableKey === "string" ? parsed.publishableKey : undefined,
-    };
-  } catch {
-    // A half-written file during an SDK refresh isn't worth failing over.
-    return undefined;
+    const folderKeys = keys ?? (await readFolderKeys(cwd));
+    read = folderKeys;
+    secretKey = folderKeys.secretKey;
+  } catch (error) {
+    // An exported key is the one the app loads, so an env file that can't be
+    // read doesn't stop a command that needs only that key.
+    secretKey = await exportedFolderKey(cwd, "secret");
+    if (!secretKey) throw error;
+    read = { readError: unreadableFolderReason(error) };
   }
+  if (!secretKey) return { read };
+  log.debug(`accountless: secret key from ${secretKey.source}`);
+  return { target: { secretKey: secretKey.value, source: secretKey.source }, read };
 }
 
-interface LocatedKey {
-  value: string;
-  source: string;
-}
-
-/** How an exported variable is named as a key's source: `NUXT_CLERK_SECRET_KEY env var`. */
-export const ENV_VAR_SOURCE_SUFFIX = " env var";
-
-/**
- * Looks for a key under any of `names`, in the order the app itself would
- * resolve one: the environment first, then env files with a later file
- * overriding an earlier one.
- */
-async function findKeyInProject(cwd: string, names: string[]): Promise<LocatedKey | undefined> {
-  for (const name of new Set(names)) {
-    const value = process.env[name];
-    if (value) return { value, source: `${name}${ENV_VAR_SOURCE_SUFFIX}` };
-  }
-
-  // Priority is by name, not by position: the framework-specific name beats
-  // the generic fallback even when the generic one appears later in the same
-  // file. Within one name, a later file still overrides an earlier one.
-  const foundByName = new Map<string, LocatedKey>();
-  for (const envFile of ENV_FILES) {
-    const file = Bun.file(join(cwd, envFile));
-    if (!(await file.exists())) continue;
-
-    for (const line of parseEnvFile(await file.text())) {
-      if (line.type !== "entry" || !line.value) continue;
-      if (names.includes(line.key)) {
-        foundByName.set(line.key, { value: line.value, source: envFile });
-      }
-    }
-  }
-
-  for (const name of names) {
-    const located = foundByName.get(name);
-    if (located) return located;
-  }
-  return undefined;
-}
-
-/**
- * The instance secret key a keyless project keeps locally. Falls back to the
- * keys an SDK created for itself, which it only does when nothing else supplies
- * them — so that file goes last.
- */
-export async function findLocalSecretKey(cwd: string): Promise<KeylessTarget | undefined> {
-  const names = [await detectSecretKeyName(cwd), "CLERK_SECRET_KEY"];
-  const located = await findKeyInProject(cwd, names);
-
-  const found = located
-    ? { secretKey: located.value, source: located.source }
-    : await sdkKeylessTarget(cwd);
-
-  if (found) log.debug(`accountless: secret key from ${found.source}`);
-  return found;
-}
-
-async function sdkKeylessTarget(cwd: string): Promise<KeylessTarget | undefined> {
-  const sdkApp = await readSdkKeylessApp(cwd);
-  if (!sdkApp?.secretKey) return undefined;
-  return { secretKey: sdkApp.secretKey, source: SDK_KEYLESS_SOURCE };
-}
-
-/** The publishable key a keyless project holds locally, when one can be found. */
-export async function findLocalPublishableKey(cwd: string): Promise<string | undefined> {
-  const names = [await detectPublishableKeyName(cwd), "CLERK_PUBLISHABLE_KEY"];
-  const located = await findKeyInProject(cwd, names);
-
-  return located?.value ?? (await readSdkKeylessApp(cwd))?.publishableKey;
+/** The publishable key the folder's app loads, and where, read as `findLocalSecretKey` reads it. */
+export async function findLocalPublishableKey(cwd: string): Promise<LocatedKey | undefined> {
+  return (await readFolderKeys(cwd)).publishableKey;
 }
 
 /**
  * Whether a publishable key found locally does NOT belong to the same
- * application as a secret key found locally. `findLocalSecretKey` and
- * `findLocalPublishableKey` search independently — nothing stops one from
- * returning app A's key and the other app B's, e.g. two keyless apps whose
- * keys both happen to sit in the same `.env.local`. Presenting or writing
+ * application as a secret key found locally. Each plain key is the one the
+ * app loads, but nothing stops one being app A's and the other app B's, e.g.
+ * leftovers from two apps in the same `.env.local`. Presenting or writing
  * that pair as one identity produces an app that fails at runtime in a way
  * that's very hard to trace: the server trusts one app, the browser talks to
  * another.
@@ -214,17 +165,45 @@ export async function hasKeyPairMismatch(
  * destination — `--app` or a linked profile — because that names an application
  * the secret key on disk may not even belong to.
  */
-export async function resolveKeylessTarget(options: {
+export async function resolveKeylessTarget(
+  options: KeylessTargetOptions,
+): Promise<KeylessTarget | undefined> {
+  return (await resolveKeylessTargetAndRead(options))?.target;
+}
+
+interface KeylessTargetOptions {
   app?: string;
   instance?: string;
   cwd?: string;
-}): Promise<KeylessTarget | undefined> {
+  /**
+   * The folder's keys, when the caller already read them (`readFolderKeys`).
+   * Not `keys`: `config pull` and `config schema` pass their `--keys` here.
+   */
+  folderKeys?: FolderKeys;
+}
+
+/**
+ * `resolveKeylessTarget`, and the read of the folder's keys that found the
+ * key, for a caller that also words the folder (`readUnlinkedFolder`).
+ */
+export async function resolveKeylessTargetAndRead(
+  options: KeylessTargetOptions,
+): Promise<{ target: KeylessTarget; read: FolderRead } | undefined> {
   if (options.app) return undefined;
 
   const cwd = options.cwd ?? process.cwd();
   if (await resolveProfile(cwd)) return undefined;
 
-  const target = await findLocalSecretKey(cwd);
+  let found: Awaited<ReturnType<typeof readSecretKey>>;
+  try {
+    found = await readSecretKey(cwd, options.folderKeys);
+  } catch (error) {
+    // An env file can't be read and no key is exported, so there's no key to
+    // run on: the account path's not-linked error names the file.
+    log.debug(`accountless: ${unreadableFolderReason(error)}`);
+    return undefined;
+  }
+  const { target, read } = found;
   if (!target) return undefined;
 
   if (!target.secretKey.startsWith("sk_")) {
@@ -237,13 +216,16 @@ export async function resolveKeylessTarget(options: {
   // The secret key addresses exactly one instance — its own — so there is no
   // instance to choose between.
   if (options.instance) {
+    const refusal = keylessRefusal(await readUnlinkedFolder(cwd, read), target.source);
     throwUsageError(
-      `--instance is not supported for an unclaimed accountless application: the secret key in ${target.source} already targets its own instance.\n` +
-        "Run `clerk auth login` to claim the application, then target instances by name.",
+      keylessCopy.instanceFlagNeedsLinkedApplication(refusal.subject, refusal.step),
+      undefined,
+      undefined,
+      refusal.examples,
     );
   }
 
-  return target;
+  return { target, read };
 }
 
 /**
@@ -265,26 +247,19 @@ export async function resolveKeylessTarget(options: {
  * network call, and right in the common case of a session stale by its own
  * clock rather than one the server revoked.
  */
-async function warnKeylessCoversLess(source: string): Promise<void> {
+async function warnKeylessCoversLess(source: string, folder: UnlinkedFolder): Promise<void> {
   if (!(await hasAccountCredentials())) return;
+
+  const { text: step } = unlinkedFolderNextStep(folder, { agent: isAgent() });
 
   // A platform API key never expires this way and is on its own enough to link,
   // so it always gets the plain wording.
-  if (process.env.CLERK_PLATFORM_API_KEY) {
-    log.warn(
-      `This directory isn't linked to an application — using the secret key from ${source}, which covers fewer settings.\n` +
-        "Run `clerk link` (or pass --app <app_id>) to use the full configuration.",
-    );
-    return;
-  }
-
-  const session = await getStoredSession();
+  const session = process.env.CLERK_PLATFORM_API_KEY ? null : await getStoredSession();
   log.warn(
     session && isLocallyExpired(session)
       ? `This directory isn't linked to an application, and the stored session has expired — using the secret key from ${source}, which covers fewer settings.\n` +
-          "Run `clerk auth login` to re-authenticate, then `clerk link` (or pass --app <app_id>) to use the full configuration."
-      : `This directory isn't linked to an application — using the secret key from ${source}, which covers fewer settings.\n` +
-          "Run `clerk link` (or pass --app <app_id>) to use the full configuration.",
+          `Run \`clerk auth login\` to re-authenticate. ${step}`
+      : `This directory isn't linked to an application — using the secret key from ${source}, which covers fewer settings.\n${step}`,
   );
 }
 
@@ -304,14 +279,22 @@ export async function resolveInstanceTarget(options: {
   app?: string;
   instance?: string;
   cwd?: string;
+  /**
+   * The caller refuses a keyless target, and its refusal gives the folder's
+   * step, so the "covers fewer settings" warning would repeat it.
+   */
+  refusesKeyless?: boolean;
 }): Promise<InstanceTarget> {
-  const keyless = await resolveKeylessTarget(options);
-  if (keyless) {
-    await warnKeylessCoversLess(keyless.source);
+  const found = await resolveKeylessTargetAndRead(options);
+  if (found) {
+    const { target: keyless, read } = found;
+    const folder = await readUnlinkedFolder(options.cwd ?? process.cwd(), read);
+    if (!options.refusesKeyless) await warnKeylessCoversLess(keyless.source, folder);
     return {
       kind: "keyless",
       keyless,
-      label: `this accountless application (secret key from ${keyless.source})`,
+      label: keylessAppLabel(folder, keyless.source),
+      folder,
     };
   }
 

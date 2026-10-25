@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { useIntegrationTestHarness, clerk } from "../../test/integration/lib/harness.ts";
+import {
+  useIntegrationTestHarness,
+  clerk,
+  startInAgentMode,
+} from "../../test/integration/lib/harness.ts";
 import { generateCompletions } from "../completion/__complete.ts";
 import { createProgram } from "../../cli-program.ts";
 
@@ -25,10 +29,19 @@ describe("with CLERK_EXPERIMENTAL unset", () => {
     [["migrate", "--help"]],
     [["migrate", "import", "users.json", "--yes"]],
     [["migrate", "--not-a-flag"]],
-    [["help", "migrate"]],
     [["--verbose", "migrate", "import", "x.json"]],
   ])("clerk %p exits 2 with experiment_disabled", async (args) => {
     const result = await clerk.raw("--mode", "agent", ...args);
+    expect(result.exitCode).toBe(2);
+    expect(result.stderr).toContain('"code":"experiment_disabled"');
+    expect(result.stderr).toContain("CLERK_EXPERIMENTAL=migrate");
+  });
+
+  // `clerk help <command>` fails before `--mode` is applied, so the error comes
+  // out in the starting mode: agent, as for a run without a terminal.
+  test('clerk [ "help", "migrate" ] exits 2 with experiment_disabled', async () => {
+    startInAgentMode();
+    const result = await clerk.raw("--mode", "agent", "help", "migrate");
     expect(result.exitCode).toBe(2);
     expect(result.stderr).toContain('"code":"experiment_disabled"');
     expect(result.stderr).toContain("CLERK_EXPERIMENTAL=migrate");

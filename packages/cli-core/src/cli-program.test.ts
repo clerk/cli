@@ -601,6 +601,66 @@ describe("reportError", () => {
       expect(json().error.code).toBe("api_error");
       expect(json().error).not.toHaveProperty("errors");
     });
+
+    // Every API error the CLI doesn't advise on prints byte for byte as it
+    // did before `nextStep` existed, so no other command's output changes.
+    describe("with no next step attached, the output is unchanged", () => {
+      const platformError = () => {
+        const error = new PlapiError(400, body, "https://api.clerk.com/v1/apps");
+        error.context = "Platform API request failed";
+        return error;
+      };
+
+      test("agent JSON", () => {
+        asAgent();
+        expect(reportError(platformError(), false)).toBe(EXIT_CODE.GENERAL);
+        expect(captured.err).toBe(
+          '{"error":{"code":"form_param_missing","message":"Platform API request failed (400): Missing param\\n  Parameter: email","errors":[{"code":"form_param_missing","message":"Missing param","meta":{"param_name":"email"}}]}}',
+        );
+      });
+
+      // Color codes depend on the terminal, so the text is compared without them.
+      test("person text", () => {
+        expect(reportError(platformError(), false)).toBe(EXIT_CODE.GENERAL);
+        expect(Bun.stripANSI(captured.err)).toBe(
+          "error: Platform API request failed (400): Missing param\n  Parameter: email",
+        );
+      });
+    });
+
+    describe("with a next step attached", () => {
+      const NEXT_STEP = {
+        text: "Replace `CLERK_PLATFORM_API_KEY` with a working Platform API key. Then run `clerk link` again.",
+        examples: [{ command: "clerk link", description: "Run it again" }],
+      };
+      const refused = () => {
+        const error = new PlapiError(401, body, "https://api.clerk.com/v1/apps");
+        error.context = "Platform API request failed";
+        error.nextStep = NEXT_STEP;
+        return error;
+      };
+
+      test("agent JSON keeps Clerk's code, errors, and exit status, and adds the step and its examples", () => {
+        asAgent();
+        expect(reportError(refused(), false)).toBe(EXIT_CODE.GENERAL);
+        expect(json().error).toEqual({
+          code: "form_param_missing",
+          message: `Platform API request failed (401): Missing param\n  Parameter: email\n${NEXT_STEP.text}`,
+          errors: [
+            { code: "form_param_missing", message: "Missing param", meta: { param_name: "email" } },
+          ],
+          examples: NEXT_STEP.examples,
+        });
+      });
+
+      test("person text adds the step and an Examples block", () => {
+        reportError(refused(), false);
+        const output = Bun.stripANSI(captured.err);
+        expect(output).toContain(`Parameter: email\n${NEXT_STEP.text}`);
+        expect(output).toContain("Examples:");
+        expect(output).toContain("clerk link");
+      });
+    });
   });
 
   describe("unexpected failures", () => {

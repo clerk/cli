@@ -9,6 +9,7 @@ import { withGutter } from "../../lib/spinner.ts";
 import { resolveSkillsRunner, runSkillsAdd } from "../../lib/skills.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
 import { resolveInstanceTarget, type InstanceTarget } from "../../lib/keyless-target.ts";
+import { keylessRefusal } from "../../lib/unlinked-folder.ts";
 
 interface BillingOptions {
   app?: string;
@@ -59,21 +60,25 @@ function describeTargets(targets: Target[]): string {
 
 /**
  * Billing settings live only in the account-level config document — Clerk's
- * Backend API exposes no billing resource — so these commands can't run against
- * an unclaimed keyless application the way the org toggles can. Pure assertion:
- * resolving the target is `resolveInstanceTarget`'s job, not billing's.
+ * Backend API exposes no billing resource — so these commands can't run on the
+ * folder's secret key the way the org toggles can. Pure assertion: resolving
+ * the target is `resolveInstanceTarget`'s job, not billing's.
  */
 function assertBillingTarget(target: InstanceTarget): void {
   if (target.kind === "keyless") {
-    throw new CliError(keylessCopy.billingNeedsClaimedApplication(), {
+    const { subject, step, examples } = keylessRefusal(target.folder, target.keyless.source, {
+      clause: "run the command again",
+    });
+    throw new CliError(keylessCopy.billingNeedsClaimedApplication(subject, step), {
       code: ERROR_CODE.AUTH_REQUIRED,
+      examples,
     });
   }
 }
 
 export async function billingEnable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
-  const target = await resolveInstanceTarget(options);
+  const target = await resolveInstanceTarget({ ...options, refusesKeyless: true });
   assertBillingTarget(target);
 
   const billing: Record<string, unknown> = {};
@@ -138,7 +143,7 @@ async function offerBillingSkillInstall(options: BillingOptions): Promise<void> 
 
 export async function billingDisable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
-  const target = await resolveInstanceTarget(options);
+  const target = await resolveInstanceTarget({ ...options, refusesKeyless: true });
   assertBillingTarget(target);
 
   // No cascade: leave organization_settings untouched.

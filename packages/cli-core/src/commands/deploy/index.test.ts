@@ -73,6 +73,9 @@ mock.module("../../lib/open.ts", () => ({
 }));
 
 const { _setConfigDir, readConfig, setProfile } = await import("../../lib/config.ts");
+const { _setTokenOverride } = await import("../../lib/credential-store.ts");
+const unlinkedFolder = await import("../../lib/unlinked-folder.ts");
+type UnlinkedFolder = import("../../lib/unlinked-folder.ts").UnlinkedFolder;
 const { beginInterrupt, _resetInterruptState } = await import("../../lib/signals.ts");
 const { deploy } = await import("./index.ts");
 const { deployStatus } = await import("./status-command.ts");
@@ -220,9 +223,20 @@ describe("deploy", () => {
   let writeSpy: ReturnType<typeof spyOn>;
   const captured = useCaptureLog();
   let tempDir: string;
+  let readUnlinkedFolderSpy: ReturnType<typeof spyOn>;
 
-  beforeEach(() => {
-    tempDir = "";
+  beforeEach(async () => {
+    // Every test starts with an empty config dir, never the developer's. The
+    // not-linked error reads the folder and the stored session: a fixture
+    // stands in for the folder, and the session reads as signed out, never
+    // this repo's files or the developer's keychain.
+    tempDir = await mkdtemp(join(tmpdir(), "clerk-deploy-test-"));
+    _setConfigDir(tempDir);
+    _setTokenOverride(null);
+    readUnlinkedFolderSpy = spyOn(unlinkedFolder, "readUnlinkedFolder").mockResolvedValue({
+      kind: "no_app",
+      credential: "none",
+    });
     // Sensible defaults so most tests need only override what they exercise.
     mockFetchInstanceConfig.mockResolvedValue({
       connection_oauth_google: { enabled: true },
@@ -283,6 +297,8 @@ describe("deploy", () => {
   afterEach(async () => {
     _resetInterruptState();
     _setConfigDir(undefined);
+    _setTokenOverride(undefined);
+    readUnlinkedFolderSpy.mockRestore();
     if (tempDir) {
       await rm(tempDir, { recursive: true, force: true });
     }
@@ -388,14 +404,12 @@ describe("deploy", () => {
     }
   }
 
-  /** A config dir with no profile for this directory. */
+  /** A config dir with no profile for this directory: the one each test starts with. */
   async function unlinkedProject() {
-    tempDir = await mkdtemp(join(tmpdir(), "clerk-deploy-test-"));
-    _setConfigDir(tempDir);
+    await rm(join(tempDir, "config.json"), { force: true });
   }
 
   async function linkedProject(profile: Record<string, unknown> = {}) {
-    await unlinkedProject();
     const nextProfile = {
       workspaceId: "workspace_123",
       appId: "app_xyz789",
@@ -545,6 +559,39 @@ describe("deploy", () => {
   });
 
   describe("agent mode", () => {
+    // An agent creates production only with `--domain`, so a rerun without it
+    // would exit 0 with nothing created.
+    test.each([
+      {
+        name: "an init app, signed in",
+        folder: { kind: "init_app", credential: "session" } satisfies UnlinkedFolder,
+        options: {},
+        expected: ["clerk link", "clerk deploy"],
+      },
+      {
+        name: "an SDK app, signed out, with --domain",
+        folder: { kind: "sdk_app", credential: "none" } satisfies UnlinkedFolder,
+        options: { domain: "example.com" },
+        expected: [
+          "clerk open",
+          "clerk auth login",
+          "clerk link",
+          "clerk deploy --domain example.com",
+        ],
+      },
+    ])("not linked, $name: not_linked, exit 1, and examples $expected", async (cell) => {
+      mockIsAgent.mockReturnValue(true);
+      readUnlinkedFolderSpy.mockResolvedValue(cell.folder);
+
+      const thrown = (await runDeploy(cell.options).catch((error: unknown) => error)) as CliError;
+
+      expect(thrown.code).toBe(ERROR_CODE.NOT_LINKED);
+      expect(thrown.exitCode).toBe(EXIT_CODE.GENERAL);
+      expect(thrown.message.startsWith("No Clerk project linked to this directory. ")).toBe(true);
+      expect(thrown.examples?.map((example) => example.command)).toEqual([...cell.expected]);
+      expect(captured.out).toBe("");
+    });
+
     test("without --domain, not_started creates nothing and says how to create", async () => {
       mockIsAgent.mockReturnValue(true);
       await linkedProject();
@@ -3469,8 +3516,6 @@ describe("deploy", () => {
     });
 
     test("unlinked directory throws NOT_LINKED instead of warning and exiting 0", async () => {
-      tempDir = await mkdtemp(join(tmpdir(), "clerk-deploy-test-"));
-      _setConfigDir(tempDir);
       mockIsAgent.mockReturnValue(false);
 
       let thrown: CliError | undefined;
@@ -3482,6 +3527,29 @@ describe("deploy", () => {
       expect(thrown).toBeInstanceOf(CliError);
       expect(thrown?.code).toBe(ERROR_CODE.NOT_LINKED);
       expect(thrown?.message).toContain("No Clerk project linked");
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+    });
+
+    // The lead sentence stays verbatim: agents and the skill's troubleshooting
+    // table match on it. The rerun keeps the flags the run had.
+    test("not linked: the lead sentence, then the folder's step and the rerun with its flags, with no examples", async () => {
+      mockIsAgent.mockReturnValue(false);
+      readUnlinkedFolderSpy.mockResolvedValue({
+        kind: "unknown_owner",
+        credential: "session",
+        publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env" },
+      } satisfies UnlinkedFolder);
+
+      const thrown = (await runDeploy({ domain: "example.com", yes: true }).catch(
+        (error: unknown) => error,
+      )) as CliError;
+
+      expect(thrown.code).toBe(ERROR_CODE.NOT_LINKED);
+      expect(thrown.exitCode).toBe(EXIT_CODE.GENERAL);
+      expect(thrown.message.startsWith("No Clerk project linked to this directory. ")).toBe(true);
+      expect(thrown.message).toContain("it finds the app in your account by that key");
+      expect(thrown.message).toContain("Then run `clerk deploy --domain example.com --yes` again.");
+      expect(thrown.examples).toBeUndefined();
       expect(mockFetchApplication).not.toHaveBeenCalled();
     });
 

@@ -28,45 +28,74 @@ clerk doctor --fix       # Offer to auto-fix issues
 
 ## Checks
 
-| Check                 | Category       | What it verifies                                                                                                                                                                                     |
-| --------------------- | -------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Account credentials   | Authentication | Credential store has a session or a Platform API key is configured                                                                                                                                   |
-| Token validity        | Authentication | OAuth access is verified through `/oauth/userinfo` or an account-scoped application-list fallback; Platform API-key access uses the same read-only application-list request                          |
-| Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                                                                                           |
-| Linked application    | Project        | Linked application ID is accessible via the API                                                                                                                                                      |
-| Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                                                                                   |
-| Environment variables | Environment    | .env.local or .env has Clerk keys                                                                                                                                                                    |
-| CLI configuration     | Configuration  | CLI config file exists and parses                                                                                                                                                                    |
-| Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                                                                                             |
-| MCP server            | Integration    | If a Clerk MCP entry is installed, every distinct configured server answers the `initialize` handshake; warns on an unreadable client config (skipped when nothing is installed; warns, never fails) |
+| Check                 | Category       | What it verifies                                                                                                                                                                                                            |
+| --------------------- | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Account credentials   | Authentication | Credential store has a session or a Platform API key is configured                                                                                                                                                          |
+| Token validity        | Authentication | OAuth access is verified through `/oauth/userinfo` or an account-scoped application-list fallback; Platform API-key access uses the same read-only application-list request                                                 |
+| Project linkage       | Project        | Current directory is linked to a Clerk app                                                                                                                                                                                  |
+| Linked application    | Project        | Linked application ID is accessible via the API                                                                                                                                                                             |
+| Instances             | Project        | Configured dev/prod instance IDs match the application's instances                                                                                                                                                          |
+| Environment variables | Environment    | The first env file the app loads that names a Clerk key (else the first that exists) has both keys, or the framework documents a load order and the app loads them from two env files with no Clerk line the CLI can't read |
+| CLI configuration     | Configuration  | CLI config file exists and parses                                                                                                                                                                                           |
+| Shell completion      | Configuration  | Shell autocompletion is installed for the detected shell                                                                                                                                                                    |
+| MCP server            | Integration    | If a Clerk MCP entry is installed, every distinct configured server answers the `initialize` handshake; warns on an unreadable client config (skipped when nothing is installed; warns, never fails)                        |
 
 ### Accountless applications
 
 The Authentication token, Token validity, and Project linkage checks resolve
 the same accountless fallback the rest of the CLI uses (`lib/keyless-target.ts`):
 a project with no account session and no linked profile, but a `sk_...` key
-on disk (or in `CLERK_SECRET_KEY`/framework env var), is running on an
-**unclaimed accountless application** — a legitimate, healthy state, not a broken
-one.
+on disk (or in `CLERK_SECRET_KEY`/framework env var), runs on that key's app —
+a legitimate, healthy state, not a broken one.
 
-- No token, accountless key present → **pass**, naming the instance. The claim
-  hint depends on where the app came from: with a `.clerk/keyless.json`
-  breadcrumb (left by `clerk init`) it says `clerk auth login` claims it;
-  without one — an SDK-minted `.clerk/.tmp/keyless.json`, or a hand-copied
-  `CLERK_SECRET_KEY` — it says to claim from the Clerk Dashboard instead,
-  because `clerk auth login` only auto-claims apps `clerk init` created.
-- Stored session expired, accountless key present → **warn** (not fail): the
-  accountless key still works, logging in again is optional.
-- Signed in (has account credentials) but this directory isn't linked, accountless
-  key present → **warn**: the account could reach the fuller configuration by
-  running `clerk link`, so that's called out unlike the fully unclaimed case.
+What the Authentication token and Project linkage checks say about it comes
+from `lib/unlinked-folder.ts`, so `doctor` gives the same step as every other
+command for what the folder holds. Statuses and fix labels don't depend on it.
+
+- No token, a secret key present → **pass**, with the step in the message
+  (`detail` only shows under `--verbose`):
+  - **An init token** (`.clerk/keyless.json`, left by `clerk init` run signed
+    out) **or only an SDK keyless file with a working claim link**
+    (`.clerk/.tmp/keyless.json`): it names the **unclaimed accountless
+    application** and its instance. A person is
+    told to run `clerk link`, which claims an init app, or links an SDK app
+    (opening its claim page when it isn't in the account). An agent is told
+    `clerk auth login` for an init app (it can't sign in itself), and
+    `clerk open` for an SDK app, since a person has to claim it.
+  - **Plain keys** (pasted from the Dashboard, say), **or an SDK keyless file
+    whose claim link can't be used**: it says the folder uses the secret key
+    from its file and isn't linked, then the step for what the folder holds,
+    e.g. that `clerk link` finds the app by the publishable key. It doesn't
+    call the app unclaimed: such an app may already be in an account.
+- No token, a secret key present → Token validity **passes**: no session is
+  needed. As above, only an app in no account yet is called accountless;
+  otherwise it names the file the folder's secret key comes from, without
+  claiming the key works: no check sends a request with a plain key.
+- Stored session expired, a secret key present → **warn** (not fail): the
+  folder runs on its own secret key, so logging in again is optional. As
+  above, only an app in no account yet is called accountless; otherwise the key
+  is named by its file.
+- Signed in (has account credentials) but this directory isn't linked, a secret
+  key present → **warn**, with the `clerk link` fix: the account could reach
+  the fuller configuration by linking. The remedy is the step for what the
+  folder holds: `clerk link` claims an init app first, and finds plain keys'
+  app by its publishable key. Plain keys aren't called an accountless
+  application.
 - No token **and** no accountless key found anywhere → still **fail**. Accountless
   only changes the outcome when there's actually a secret key to fall back to.
+- Not linked and no secret key to run on → Project linkage **fails**, with the
+  `clerk link` fix. Its remedy is the step for what the folder holds, e.g. an
+  SDK keyless file with no secret key gets `clerk open` for an agent, as
+  `deploy` gives it.
+- An env file that can't be read → no check crashes. The accountless key is then
+  only one exported in the shell, and when there's none, Project linkage's
+  remedy starts with the read error.
 
 The Linked application and Instances checks are account-only (the Platform
 API application/instance-list concepts have no accountless equivalent), so they
-continue to skip for an accountless project — the skip reason names the accountless
-application instead of reading like a problem.
+continue to skip for a project running on a secret key — the skip reason names
+what the key runs instead of reading like a problem: the accountless application
+for an app in no account yet, otherwise the key's file.
 
 ### iOS and macOS projects
 
@@ -122,6 +151,10 @@ Fixable issues:
 | Not linked to an app / stale app   | Link project with `clerk link`      |
 | Missing environment variables      | Pull env vars with `clerk env pull` |
 | Missing or corrupt CLI config file | Log in with `clerk auth login`      |
+
+When `clerk link` opens a claim page instead of linking (the folder's app was
+created by a Clerk SDK and isn't in the account yet), the link fix is reported
+as not applied: claim the app, then run `clerk link` again.
 
 Duplicate fix actions (e.g., multiple checks suggesting `clerk auth login`)
 are deduplicated.

@@ -128,3 +128,23 @@ test("falls back to .env when it has Clerk keys and .env.local does not exist", 
   const envLocalExists = await Bun.file(join(h.tempDir, ".env.local")).exists();
   expect(envLocalExists).toBe(false);
 });
+
+// Windows editors save CRLF line endings; a pull mustn't leave a mix.
+test("keeps a CRLF file's line endings when it updates and appends keys", async () => {
+  await Bun.write(
+    join(h.tempDir, "package.json"),
+    JSON.stringify({ name: "test", dependencies: { next: "15.0.0" } }),
+  );
+  await Bun.write(
+    join(h.tempDir, ".env.local"),
+    "# Local settings\r\nCLERK_SECRET_KEY=sk_test_old\r\nOTHER_VAR=keep\r\n",
+  );
+
+  await clerk("--mode", "human", "env", "pull");
+
+  const content = await Bun.file(join(h.tempDir, ".env.local")).text();
+  expect(parseEnvFile(content, ".env.local").get("CLERK_SECRET_KEY")).toBe(devInstance.secret_key);
+  expect(content).toContain("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=");
+  expect(content.split("\r\n").join("")).not.toContain("\n");
+  expect(content).toEndWith("\r\n");
+});

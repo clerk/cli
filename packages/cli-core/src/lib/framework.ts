@@ -5,6 +5,7 @@
 
 import { join } from "node:path";
 import { readdir } from "node:fs/promises";
+import type { EnvFileName, PreferredEnvFile } from "./dotenv.ts";
 import { log } from "./log.ts";
 
 /** Where the framework's Clerk SDK is published. Drives how `clerk init`
@@ -26,7 +27,7 @@ export interface FrameworkInfo {
   /** Preferred env file for secrets when the project has none yet. Frameworks
    *  with a `.env.local` convention use it (always gitignored, per-machine
    *  overrides); frameworks without that convention fall back to `.env`. */
-  envFile: ".env" | ".env.local";
+  envFile: PreferredEnvFile;
   /** When true, the framework's Clerk SDK supports keyless mode (auto-generated
    *  temporary dev keys). Frameworks without keyless support require API keys
    *  and must authenticate during `clerk init`. */
@@ -38,7 +39,52 @@ export interface FrameworkInfo {
   supportsJson?: boolean;
   /** SDK distribution ecosystem. Defaults to "npm" when omitted. */
   ecosystem?: FrameworkEcosystem;
+  /**
+   * The env files the framework loads in development, highest priority first,
+   * when its docs define the order. Omitted for frameworks without one: the
+   * CLI then can't tell which of several disagreeing files the app runs on.
+   */
+  envLoadOrder?: readonly EnvFileName[];
+  /**
+   * False when the framework's Clerk SDK never reads the generic
+   * `CLERK_PUBLISHABLE_KEY`, only `envVar`. A generic key in such a folder
+   * isn't one the app loads. Omitted (true) where the SDK falls back to it, or
+   * where that isn't verified.
+   */
+  readsGenericPublishableKey?: boolean;
 }
+
+/**
+ * Next.js, development: `.env.development.local`, `.env.local`,
+ * `.env.development`, `.env`.
+ * https://nextjs.org/docs/app/guides/environment-variables#environment-variable-load-order
+ */
+const NEXT_LOAD_ORDER: readonly EnvFileName[] = [
+  ".env.development.local",
+  ".env.local",
+  ".env.development",
+  ".env",
+];
+
+/**
+ * Vite, and the frameworks built on it, in development mode. Vite loads
+ * `.env`, `.env.local`, `.env.[mode]`, `.env.[mode].local`, later files
+ * winning, so a mode file beats `.env.local`, unlike Next.js.
+ * https://vite.dev/guide/env-and-mode#env-files and
+ * https://github.com/vitejs/vite/blob/main/packages/vite/src/node/env.ts
+ */
+const VITE_LOAD_ORDER: readonly EnvFileName[] = [
+  ".env.development.local",
+  ".env.development",
+  ".env.local",
+  ".env",
+];
+
+/**
+ * Nuxt loads only `.env` unless run with `--dotenv`.
+ * https://github.com/nuxt/nuxt/blob/main/docs/2.directory-structure/2.env.md
+ */
+const NUXT_LOAD_ORDER: readonly EnvFileName[] = [".env"];
 
 export function isNpmFramework(fw: Pick<FrameworkInfo, "ecosystem">): boolean {
   return (fw.ecosystem ?? "npm") === "npm";
@@ -53,6 +99,10 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
     supportsKeyless: true,
+    envLoadOrder: NEXT_LOAD_ORDER,
+    // clerk/javascript at e12d970e3a: packages/nextjs/src/server/constants.ts
+    // and src/utils/mergeNextClerkPropsWithEnv.ts read only the prefixed name.
+    readsGenericPublishableKey: false,
   },
   {
     dep: "astro",
@@ -61,6 +111,9 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env",
     supportsKeyless: true,
+    envLoadOrder: VITE_LOAD_ORDER,
+    // clerk/javascript at e12d970e3a: the Astro SDK reads only this name.
+    readsGenericPublishableKey: false,
   },
   {
     dep: "nuxt",
@@ -70,6 +123,10 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     secretKeyEnvVar: "NUXT_CLERK_SECRET_KEY",
     envFile: ".env",
     supportsKeyless: true,
+    envLoadOrder: NUXT_LOAD_ORDER,
+    // clerk/javascript at e12d970e3a: packages/nuxt/src/module.ts reads the key
+    // only from Nuxt's runtime config, which this name fills.
+    readsGenericPublishableKey: false,
   },
   {
     dep: "@tanstack/react-start",
@@ -78,6 +135,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
     supportsKeyless: true,
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "react-router",
@@ -86,6 +144,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
     supportsKeyless: true,
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "vue",
@@ -93,6 +152,10 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/vue",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    envLoadOrder: VITE_LOAD_ORDER,
+    // clerk/javascript at e12d970e3a: packages/vue/src reads no env var; the
+    // app passes this name's value to the plugin itself.
+    readsGenericPublishableKey: false,
   },
   {
     dep: "expo",
@@ -100,6 +163,8 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/expo",
     envVar: "EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    // @expo/env loads the same files, in the same order, as Next.js.
+    envLoadOrder: NEXT_LOAD_ORDER,
   },
   {
     dep: "react",
@@ -107,6 +172,8 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/react",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    // The CLI reads only Vite's names for React, which only a Vite build exposes.
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "vite",
@@ -114,6 +181,7 @@ export const FRAMEWORK_MAP: FrameworkInfo[] = [
     sdk: "@clerk/clerk-js",
     envVar: "VITE_CLERK_PUBLISHABLE_KEY",
     envFile: ".env.local",
+    envLoadOrder: VITE_LOAD_ORDER,
   },
   {
     dep: "express",
@@ -188,6 +256,23 @@ export const FRAMEWORK_NAMES = ALL_FRAMEWORKS.map((fw) => {
 
 const FALLBACK_KEY = "CLERK_PUBLISHABLE_KEY";
 const FALLBACK_SECRET_KEY = "CLERK_SECRET_KEY";
+
+/**
+ * Every variable name a supported Clerk SDK reads its keys from, plus the
+ * generic fallbacks. For checks that must see every key in a folder whatever
+ * framework is detected. Taken from the framework tables rather than a name
+ * pattern: the shell is shared by every folder on the machine, so a variable
+ * no SDK reads (a `STAGING_CLERK_SECRET_KEY`, say) isn't a folder's key.
+ */
+export const CLERK_KEY_NAMES: { publishable: readonly string[]; secret: readonly string[] } = {
+  publishable: [...new Set([...ALL_FRAMEWORKS.map((fw) => fw.envVar), FALLBACK_KEY])],
+  secret: [
+    ...new Set([
+      ...ALL_FRAMEWORKS.flatMap((fw) => (fw.secretKeyEnvVar ? [fw.secretKeyEnvVar] : [])),
+      FALLBACK_SECRET_KEY,
+    ]),
+  ],
+};
 
 export async function readDeps(cwd: string): Promise<Record<string, string> | null> {
   const file = Bun.file(join(cwd, "package.json"));
@@ -264,7 +349,7 @@ export async function detectSecretKeyName(cwd: string): Promise<string> {
 
 const FALLBACK_ENV_FILE = ".env.local";
 
-export async function detectEnvFile(cwd: string): Promise<".env" | ".env.local"> {
+export async function detectEnvFile(cwd: string): Promise<PreferredEnvFile> {
   const fw = await detectFramework(cwd);
   return fw?.envFile ?? FALLBACK_ENV_FILE;
 }

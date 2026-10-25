@@ -1,7 +1,14 @@
 import { resolve, join, basename } from "node:path";
 import { resolveAppContext, type AppContextOptions } from "../../lib/config.ts";
 import { fetchApplication } from "../../lib/plapi.ts";
-import { parseEnvFile, mergeEnvVars, serializeEnvFile } from "../../lib/dotenv.ts";
+import {
+  detectLineEnding,
+  parseEnvFile,
+  mergeEnvVars,
+  serializeEnvFile,
+  type EnvFileName,
+  type PreferredEnvFile,
+} from "../../lib/dotenv.ts";
 import {
   detectPublishableKeyName,
   detectSecretKeyName,
@@ -9,17 +16,47 @@ import {
   detectFramework,
   isNpmFramework,
 } from "../../lib/framework.ts";
-import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
 import {
-  findLocalPublishableKey,
+  ApiError,
+  CliError,
+  ERROR_CODE,
+  throwUsageError,
+  withApiContext,
+} from "../../lib/errors.ts";
+import {
   hasKeyPairMismatch,
   resolveKeylessTarget,
   type KeylessTarget,
 } from "../../lib/keyless-target.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
+import { keylessCopy } from "../../lib/copy.ts";
+import {
+  appInNoAccount,
+  readUnlinkedFolder,
+  rerunOf,
+  unlinkedFolderError,
+  unlinkedFolderNextStep,
+  unreadableEnvFilesError,
+  type Rerun,
+} from "../../lib/unlinked-folder.ts";
+import {
+  couldntTellReason,
+  describeKeyLocation,
+  clerkLinesIn,
+  readFolderKeys,
+  ENV_VAR_SOURCE_SUFFIX,
+  readSdkKeylessApp,
+  SDK_KEYLESS_SOURCE,
+  unreadGenericPublishableKey,
+  type FolderKeys,
+  type LocatedKey,
+} from "../../lib/local-keys.ts";
+import { isGitIgnored } from "../../lib/git.ts";
+import { quoteArg } from "../../lib/json-body.ts";
+import { isAgent } from "../../mode.ts";
 
-const DEV_LOCAL_ENV_FILE = ".env.development.local";
+const DEV_LOCAL_ENV_FILE: EnvFileName = ".env.development.local";
 
 interface EnvPullOptions extends AppContextOptions {
   file?: string;
@@ -38,23 +75,84 @@ async function hasClerkKeys(path: string): Promise<boolean> {
 async function resolveTargetFile(
   cwd: string,
   flag?: string,
-  fallbackFile: string = ".env.local",
+  fallbackFile: PreferredEnvFile = ".env.local",
 ): Promise<string> {
   // resolve (not join) so absolute --file paths aren't nested under cwd.
   if (flag) return resolve(cwd, flag);
+  return join(cwd, await defaultTargetFile(cwd, fallbackFile));
+}
 
-  const devLocal = join(cwd, DEV_LOCAL_ENV_FILE);
-  if (await Bun.file(devLocal).exists()) return devLocal;
+/**
+ * The env file `env pull` writes when no `--file` is given. Typed as an
+ * `EnvFileName` so it can only be a file the claim check also reads
+ * (`ENV_FILE_CANDIDATES`); exported for the test that pins that down.
+ *
+ * `targetByFiles` picks it. When the framework documents its load order and a
+ * file it loads before that target may still set a Clerk key (a line naming
+ * one, even empty or unparseable, or a file the CLI can't read), the new keys
+ * could keep losing to it, so they go in the highest-ranked `.local` file
+ * instead, never a file meant to be committed.
+ */
+export async function defaultTargetFile(
+  cwd: string,
+  fallbackFile: PreferredEnvFile,
+): Promise<EnvFileName> {
+  const framework = await detectFramework(cwd);
+  const loadOrder = framework?.envLoadOrder;
+  const byFiles = await targetByFiles(cwd, fallbackFile, loadOrder);
+  // With no documented order, which file the app loads is unknown.
+  if (!loadOrder) return byFiles;
+  const highestLocal = loadOrder.find((file) => file.endsWith(".local"));
+  const before = loadOrder.slice(0, Math.max(loadOrder.indexOf(byFiles), 0));
 
-  const fallback = join(cwd, fallbackFile);
-  if (await Bun.file(fallback).exists()) return fallback;
+  let stale = false;
+  for (const file of before) {
+    const lines = await clerkLinesIn(cwd, file);
+    if (lines === "unreadable") {
+      stale = true;
+      continue;
+    }
+    stale ||= lines.any;
+    for (const line of lines.unreadableLines) {
+      log.warn(
+        `\`${line.source}\` has a \`${line.name}\` line the CLI can't read. If it holds an old key, fix or remove that line.`,
+      );
+    }
+  }
+  if (!stale || !highestLocal) return byFiles;
+  // Not every template ignores `.local` files (Astro's ignores only `.env`).
+  if ((await isGitIgnored(cwd, highestLocal)) === false) {
+    log.warn(
+      `A file loaded before \`${byFiles}\` may still set a Clerk key, but \`${highestLocal}\` isn't ignored by git, so the keys go to \`${byFiles}\`. Add \`${highestLocal}\` to .gitignore, then pull again.`,
+    );
+    return byFiles;
+  }
+  return highestLocal;
+}
+
+/**
+ * The target by which files exist and hold Clerk keys, before a stale key in
+ * a file loaded earlier is weighed; exported for the test that compares them.
+ */
+export async function targetByFiles(
+  cwd: string,
+  fallbackFile: PreferredEnvFile,
+  loadOrder: readonly EnvFileName[] | undefined,
+): Promise<EnvFileName> {
+  const loads = (file: EnvFileName) => !loadOrder || loadOrder.includes(file);
+
+  if (loads(DEV_LOCAL_ENV_FILE) && (await Bun.file(join(cwd, DEV_LOCAL_ENV_FILE)).exists())) {
+    return DEV_LOCAL_ENV_FILE;
+  }
+
+  if (await Bun.file(join(cwd, fallbackFile)).exists()) return fallbackFile;
 
   // Backwards compat: if the non-fallback file already has Clerk keys,
   // keep writing there so we don't leave stale keys behind.
-  const other = fallbackFile === ".env" ? ".env.local" : ".env";
-  if (await hasClerkKeys(join(cwd, other))) return join(cwd, other);
+  const other: PreferredEnvFile = fallbackFile === ".env" ? ".env.local" : ".env";
+  if (loads(other) && (await hasClerkKeys(join(cwd, other)))) return other;
 
-  return fallback;
+  return fallbackFile;
 }
 
 export async function pull(options: EnvPullOptions): Promise<void> {
@@ -143,7 +241,13 @@ async function mergeKeysIntoEnvFile(
   const file = Bun.file(targetFile);
   const existingContent = (await file.exists()) ? await file.text() : "";
 
-  await Bun.write(targetFile, serializeEnvFile(mergeEnvVars(parseEnvFile(existingContent), vars)));
+  await Bun.write(
+    targetFile,
+    serializeEnvFile(
+      mergeEnvVars(parseEnvFile(existingContent), vars),
+      detectLineEnding(existingContent),
+    ),
+  );
 }
 
 /**
@@ -156,34 +260,69 @@ async function pullKeylessKeys(
   keyless: KeylessTarget,
   options: Pick<EnvPullOptions, "file" | "print">,
 ): Promise<void> {
-  const [publishableKeyName, secretKeyName, publishableKey] = await Promise.all([
+  const [publishableKeyName, secretKeyName, keys] = await Promise.all([
     detectPublishableKeyName(cwd),
     detectSecretKeyName(cwd),
-    findLocalPublishableKey(cwd),
+    // An exported secret key is found without the env files; with one the CLI
+    // can't read, which publishable key the app loads is untold.
+    readFolderKeys(cwd).catch(async (error: unknown) => {
+      throw await unreadableEnvFilesError(cwd, error, {
+        lead: "No Clerk project linked to this directory.",
+        rerun: envPullRerun(options),
+      });
+    }),
   ]);
+  // A publishable key the CLI can't settle can't be checked against the
+  // secret key, and writing beside it could pair two apps.
+  if (couldntTellReason(keys)) {
+    throw unlinkedFolderError(await readUnlinkedFolder(cwd, keys), {
+      lead: "No Clerk project linked to this directory.",
+      rerun: envPullRerun(options),
+    });
+  }
+  const { publishableKey } = keys;
+  // A plain secret key hides the SDK keyless file from the reader, but the
+  // app may still run on that file's publishable key.
+  const sdkPublishableKey = publishableKey ? undefined : await sdkFilePublishableKey(cwd);
+  const checked = publishableKey ?? sdkPublishableKey;
 
   // The secret and publishable key were found independently and may not name
   // the same application. Writing a mismatched pair is worse than writing
   // nothing: it produces an app that fails at runtime in a way that's very
   // hard to trace back to its cause, so this is the stricter of the two
   // checks — whoami only warns, this refuses to write.
-  if (publishableKey) {
-    const mismatch = await withApiContext(
-      hasKeyPairMismatch(keyless, publishableKey),
-      `Failed to verify the accountless secret key from \`${keyless.source}\``,
+  if (checked) {
+    const mismatch = await hasKeyPairMismatch(keyless, checked.value).catch(
+      async (error: unknown) => {
+        // Read only now, so a `--print` run whose check passes doesn't read the folder.
+        if (error instanceof ApiError) {
+          const accountless = appInNoAccount(await readUnlinkedFolder(cwd, keys))
+            ? "accountless "
+            : "";
+          error.context = `Failed to verify the ${accountless}secret key from \`${keyless.source}\``;
+        }
+        throw error;
+      },
     );
     if (mismatch) {
+      // No `clerk link` advice: it would find the app by this publishable key,
+      // which may be the wrong one.
       throw new CliError(
-        `The publishable key found locally doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
-          `Remove the mismatched ${publishableKeyName} from your env files, or run \`clerk auth login\` to claim the intended application, then pull again.`,
+        `The publishable key found locally (${describeKeyLocation(checked)}) doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
+          mismatchRemedy(keys, checked),
         { code: ERROR_CODE.KEY_PAIR_MISMATCH },
       );
     }
   }
 
+  // Read before the write below adds the secret key to an env file, and only
+  // when a line below names the folder's app or gives its step.
+  const folder =
+    !options.print || !publishableKey ? await readUnlinkedFolder(cwd, keys) : undefined;
+
   const vars = {
     [secretKeyName]: keyless.secretKey,
-    ...(publishableKey && { [publishableKeyName]: publishableKey }),
+    ...(publishableKey && { [publishableKeyName]: publishableKey.value }),
   };
 
   if (options.print) {
@@ -192,12 +331,61 @@ async function pullKeylessKeys(
     const targetFile = await resolveTargetFile(cwd, options.file, await detectEnvFile(cwd));
     await mergeKeysIntoEnvFile(targetFile, vars);
     log.info(
-      `Accountless application keys from \`${keyless.source}\` written to ${options.file ?? basename(targetFile)}`,
+      `${folder && appInNoAccount(folder) ? "Accountless application" : "This folder's application"} keys from \`${keyless.source}\` written to ${options.file ?? basename(targetFile)}`,
     );
   }
-  if (!publishableKey) {
+  if (folder && !publishableKey) {
+    const { text: step } = unlinkedFolderNextStep(folder, {
+      agent: isAgent(),
+      rerun: envPullRerun(options),
+    });
+    // The keys are written, so a file that can't be read now only drops the hint.
+    const skipped = await unreadGenericPublishableKey(cwd).catch(() => undefined);
     log.warn(
-      `No publishable key found locally — set ${publishableKeyName} manually, or run \`clerk auth login\` to claim the application.`,
+      keylessCopy.missingPublishableKey(
+        publishableKeyName,
+        step,
+        skipped && { line: describeKeyLocation(skipped.location), framework: skipped.framework },
+      ),
     );
   }
+}
+
+/** How to stop using a publishable key that belongs to another app, from where it was found. */
+/**
+ * How to fix a mismatched pair. The SDK keyless file's key is checked only
+ * when a plain secret key hid it, and then either may be the stale one.
+ */
+function mismatchRemedy(keys: FolderKeys, checked: LocatedKey): string {
+  if (!keys.publishableKey && keys.secretKey) {
+    return `${removeStrayKey(keys.secretKey)} Or delete the stale \`${SDK_KEYLESS_SOURCE}\`, which also deletes its claim link.`;
+  }
+  return removeStrayKey(checked);
+}
+
+/** The SDK keyless file's publishable key, located as the reader locates keys. */
+async function sdkFilePublishableKey(cwd: string): Promise<LocatedKey | undefined> {
+  const value = (await readSdkKeylessApp(cwd))?.publishableKey;
+  return value ? { value, name: "publishableKey", source: SDK_KEYLESS_SOURCE } : undefined;
+}
+
+function removeStrayKey(located: LocatedKey): string {
+  // The reader takes keys from the SDK keyless file only when the folder holds
+  // no plain key, so both keys must go in the env file; deleting the SDK file
+  // also deletes its app's claim link.
+  if (located.source === SDK_KEYLESS_SOURCE) {
+    return (
+      "Add both keys of the app you want to your env file (keys there win over the SDK keyless file), then pull again. " +
+      `Or delete the stale \`${SDK_KEYLESS_SOURCE}\`, which also deletes its claim link.`
+    );
+  }
+  if (located.source === `${located.name}${ENV_VAR_SOURCE_SUFFIX}`) {
+    return `Unset ${describeKeyLocation(located)} in your shell, then pull again.`;
+  }
+  return `Remove the mismatched \`${located.name}\` from ${located.source}, then pull again.`;
+}
+
+/** `clerk env pull` with the run's own flags, shell-quoted; the keyless path takes no others. */
+function envPullRerun({ file, print }: Pick<EnvPullOptions, "file" | "print">): Rerun {
+  return rerunOf(["clerk env pull", file && `--file ${quoteArg(file)}`, print && "--print"]);
 }

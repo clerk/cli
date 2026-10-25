@@ -4,9 +4,11 @@ Pulls Clerk API keys for the linked instance and merges them into the project's 
 
 `--print` writes `KEY=value` lines to stdout instead of touching any file, for piping into a hosting provider (`clerk env pull --instance prod --print | …`). It always includes the secret key, because nothing lands on disk, and it fails with `no_secret_key` without printing anything when the API returns none: a host given only the publishable key would pair it with the secret key it already has. It cannot be combined with `--file`.
 
-For an unclaimed **accountless** application there is no account to pull from — its keys only exist on this machine. When the directory isn't linked and no `--app` is passed, `env pull` instead copies the keys it finds locally (env var, `.env`/`.env.local`, or the `.clerk/.tmp/keyless.json` an SDK wrote for itself) into the env file the framework reads. This is what materializes an SDK-created accountless app into `.env.local`. If only the secret key can be found, it's written and a warning names the missing publishable key. Resolution order lives in [`lib/keyless-target.ts`](../../lib/keyless-target.ts).
+For an unclaimed **accountless** application there is no account to pull from — its keys only exist on this machine. When the directory isn't linked and no `--app` is passed, `env pull` instead copies the keys the folder's app loads, read as `clerk link` reads them (`readFolderKeys` in [`lib/local-keys.ts`](../../lib/local-keys.ts)): an exported variable, then the framework's env files in its documented load order (e.g. `.env.development.local` first for Next.js, only `.env` for Nuxt), or the `.clerk/.tmp/keyless.json` an SDK wrote for itself when the folder holds no plain key, into the env file the framework reads. When files disagree on either key and no load order says which the app loads, or a Clerk line it can't read may hold the publishable key, it guesses neither, and writes nothing: the folder counts as not linked, and the error says why. This is what materializes an SDK-created accountless app into `.env.local`. The line it prints after writing says "Accountless application keys" for an app in no account yet (an init app, or an SDK app whose claim link works), and "This folder's application keys" otherwise, e.g. for plain keys, which may belong to an app already in an account. If only the secret key can be found, it's written and a warning names the missing publishable key, and the generic `CLERK_PUBLISHABLE_KEY` line it skipped in a Next.js, Astro, Nuxt, or Vue folder, whose apps don't read that name (e.g. "`CLERK_PUBLISHABLE_KEY` in .env.local isn't read by Next.js: rename it to `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`"). It then gives the step for what the folder held before the write (from `lib/unlinked-folder.ts`) and says to run `clerk env pull` again.
 
-The secret key and publishable key are found independently and can each belong to a _different_ application (e.g. leftovers from two accountless apps in the same `.env.local`). Before writing, `env pull` calls `GET /v1/domains` with the secret key and confirms the publishable key's Frontend API host (decoded via `decodePublishableKey` in `lib/fapi.ts`) matches one of that instance's own domains. A mismatch aborts the pull with an error and writes nothing — a wrong pair on disk produces an app that fails at runtime in a way that's very hard to trace, so this is stricter than `clerk whoami`, which only warns about the same mismatch (see [`commands/whoami/README.md`](../whoami/README.md)).
+The secret key and publishable key are each the one the app loads, but can still belong to _different_ applications (e.g. leftovers from two apps in the same `.env.local`). Before writing, `env pull` calls `GET /v1/domains` with the secret key and confirms the publishable key's Frontend API host (decoded via `decodePublishableKey` in `lib/fapi.ts`) matches one of that instance's own domains. A mismatch aborts the pull with an error that says where the mismatched publishable key was found and how to remove it from there (its env file or the shell variable; for an SDK keyless file whose two keys belong to different apps, it says to add both keys of the app you want to an env file, since keys there win over the SDK file, or to delete the stale file, which also deletes its claim link), and writes nothing — a wrong pair on disk produces an app that fails at runtime in a way that's very hard to trace, so this is stricter than `clerk whoami`, which only warns about the same mismatch (see [`commands/whoami/README.md`](../whoami/README.md)).
+
+Without `--file`, `env pull` picks its target by which env files exist and hold Clerk keys (the diagram below). When the framework documents its env load order and a file it loads before that target may still set a Clerk key (e.g. a Vite folder's committed `.env.development` with a Clerk line, even an empty or unparseable one, or a file the CLI can't read), the new keys could keep losing to it, so `env pull` writes to the highest-ranked `.local` file the framework loads instead (`.env.development.local`), never into that file. When git reports that the `.local` file isn't ignored (Astro's template ignores only `.env` and `.env.production`), it keeps the original target and warns. Outside a git repository, or without git, it redirects as usual. The original target isn't checked. A Clerk line it can't parse there gets a warning naming the file.
 
 ## Usage
 
@@ -48,7 +50,7 @@ sequenceDiagram
         API-->>CLI: { instances: [{ instance_id, publishable_key, secret_key }] }
         CLI->>CLI: Find matching instance by instance_id
     else Unclaimed accountless application (no --app, not linked)
-        CLI->>FS: Find local keys (env vars, .env/.env.local, .clerk/.tmp/keyless.json)
+        CLI->>FS: Read the keys the app loads (shell, then the framework's env files in load order, else .clerk/.tmp/keyless.json)
         FS-->>CLI: { secret_key, publishable_key? }
         opt Publishable key found locally
             CLI->>API: GET /v1/domains (Backend API, secret key auth)
@@ -63,17 +65,26 @@ sequenceDiagram
     FS-->>CLI: { dependencies }
     CLI->>CLI: Map framework → publishable key env var name
 
-    %% Resolve target file
+    %% Resolve target file (only files the framework loads, when it documents its order)
     alt --file flag provided
         CLI->>CLI: Use specified file
-    else .env.local exists
-        CLI->>FS: Check .env.local
+    else .env.development.local exists, and the framework loads it
+        CLI->>FS: Check .env.development.local
         FS-->>CLI: exists
-    else .env exists
-        CLI->>FS: Check .env
+    else The framework's preferred file exists (.env.local, or .env for Astro and Nuxt)
+        CLI->>FS: Check the preferred file
         FS-->>CLI: exists
-    else No env file
-        CLI->>CLI: Default to .env.local
+    else The other of .env and .env.local holds Clerk keys, and the framework loads it
+        CLI->>FS: Check it for Clerk keys
+        FS-->>CLI: has Clerk keys
+    else Otherwise
+        CLI->>CLI: Default to the preferred file
+    end
+    opt No --file, and the framework documents its load order
+        CLI->>FS: Read each file loaded before the target
+        FS-->>CLI: Clerk lines (any value, empty, or unparseable), or a read error
+        CLI->>CLI: Any of those? Use the highest-ranked .local file
+        CLI->>User: Warn about a Clerk line it can't parse there
     end
 
     %% Read, merge, write

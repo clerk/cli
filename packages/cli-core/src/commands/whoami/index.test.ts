@@ -1,4 +1,4 @@
-import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, beforeEach, afterAll, afterEach, mock, spyOn } from "bun:test";
 import {
   configStubs,
   credentialStoreStubs,
@@ -55,6 +55,12 @@ mock.module("../../mode.ts", () => ({
 }));
 
 const { whoami } = await import("./index.ts");
+const unlinkedFolder = await import("../../lib/unlinked-folder.ts");
+
+// What the folder holds, for the keyless advice: never the real working
+// directory.
+const readUnlinkedFolderSpy = spyOn(unlinkedFolder, "readUnlinkedFolder");
+afterAll(() => readUnlinkedFolderSpy.mockRestore());
 
 const linkedProfile = {
   path: "github.com/clerk/cli",
@@ -74,6 +80,7 @@ describe("whoami", () => {
   beforeEach(() => {
     mockIsAgent.mockReturnValue(false);
     mockResolveProfile.mockResolvedValue(undefined);
+    readUnlinkedFolderSpy.mockResolvedValue({ kind: "no_app", credential: "none" });
     mockHasStoredCredentials.mockResolvedValue(false);
     mockResolveKeylessTarget.mockResolvedValue(undefined);
     mockFindLocalSecretKey.mockResolvedValue(undefined);
@@ -208,6 +215,19 @@ describe("whoami", () => {
     expect(mockFindLocalSecretKey).not.toHaveBeenCalled();
   });
 
+  // Nuxt's reader picks its own name in `.env` over the exported generic key,
+  // but `clerk api` and `clerk users` use the exported one.
+  test("unlinked, names an exported CLERK_SECRET_KEY as the key the Backend API commands use", async () => {
+    mockGetValidToken.mockResolvedValue("valid-token");
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "alice@example.com" });
+    mockFindLocalSecretKey.mockResolvedValue({ secretKey: "sk_test_nuxt", source: ".env" });
+    process.env.CLERK_SECRET_KEY = "sk_test_xxx";
+
+    await runWhoami({ json: true });
+
+    expect(JSON.parse(captured.out).localSecretKeySource).toBe("CLERK_SECRET_KEY env var");
+  });
+
   test("no override warning when linked and no CLERK_SECRET_KEY is exported", async () => {
     mockGetValidToken.mockResolvedValue("valid-token");
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "alice@example.com" });
@@ -307,7 +327,11 @@ describe("whoami", () => {
     /** Points the keyless fallback at an instance the Backend API will answer for. */
     function withKeylessProject(): void {
       mockResolveKeylessTarget.mockResolvedValue(KEYLESS_TARGET);
-      mockFindLocalPublishableKey.mockResolvedValue("pk_test_keyless");
+      mockFindLocalPublishableKey.mockResolvedValue({
+        value: "pk_test_keyless",
+        name: "CLERK_PUBLISHABLE_KEY",
+        source: ".env.local",
+      });
       mockBapiRequest.mockResolvedValue({
         body: { id: "ins_keyless_1", environment_type: "development" },
       });
@@ -415,15 +439,65 @@ describe("whoami", () => {
       await expect(runWhoami()).rejects.toThrow(/Not logged in/);
     });
 
-    test("human output names the instance and where its key came from", async () => {
-      mockGetValidToken.mockResolvedValue(null);
-      withKeylessProject();
+    // Plain keys may belong to an app already in an account.
+    test.each([
+      {
+        kind: "plain keys",
+        folder: {
+          kind: "unknown_owner",
+          credential: "none",
+          publishableKey: { name: "CLERK_PUBLISHABLE_KEY", source: ".env.local" },
+          secretKey: { name: "CLERK_SECRET_KEY", source: ".env.local" },
+        } as const,
+        status:
+          "Not logged in — this folder uses the secret key from `.env.local` and isn't linked",
+        step: "Run `clerk link`: it finds the app in your account by that key.",
+        unclaimed: false,
+      },
+      {
+        kind: "an init token",
+        folder: { kind: "init_app", credential: "none" } as const,
+        status:
+          "Not logged in — running on an unclaimed accountless application (key from `.env.local`)",
+        step: "Run `clerk link`: it claims the app into your account and links this folder.",
+        unclaimed: true,
+      },
+      {
+        kind: "an SDK app",
+        folder: { kind: "sdk_app", credential: "none" } as const,
+        status:
+          "Not logged in — running on an unclaimed accountless application (key from `.env.local`)",
+        step: "or opens the Clerk Dashboard page to claim it",
+        unclaimed: true,
+      },
+      {
+        kind: "an SDK app with no usable claim link",
+        folder: {
+          kind: "sdk_app",
+          credential: "none",
+          unusable: { reason: "its claim URL isn't https", findableByKey: true },
+        } as const,
+        status:
+          "Not logged in — this folder uses the secret key from `.env.local` and isn't linked",
+        step: "Run `clerk link`: it links the app if it's already in your account",
+        unclaimed: false,
+      },
+    ])(
+      "human output names the instance, what the key runs, and the folder's step: $kind",
+      async ({ folder, status, step, unclaimed }) => {
+        mockGetValidToken.mockResolvedValue(null);
+        withKeylessProject();
+        readUnlinkedFolderSpy.mockResolvedValue(folder);
 
-      await runWhoami();
+        await runWhoami();
 
-      expect(captured.out.trim()).toBe("ins_keyless_1");
-      expect(captured.err).toContain("unclaimed accountless application");
-      expect(captured.err).toContain(".env.local");
-    });
+        const err = Bun.stripANSI(captured.err);
+        expect(captured.out.trim()).toBe("ins_keyless_1");
+        expect(err).toContain(status);
+        expect(err).toContain(step);
+        expect(err).not.toContain("clerk open");
+        expect(err.includes("unclaimed")).toBe(unclaimed);
+      },
+    );
   });
 });
