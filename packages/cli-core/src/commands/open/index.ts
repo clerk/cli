@@ -143,9 +143,13 @@ async function openKeylessDashboard(
 
   // Best-effort only: the claim link is already fully formed, so a bad or
   // missing secret key shouldn't block opening it — it just means the
-  // output won't include instance details.
+  // output won't include instance details. Only a key from the claim link's
+  // own file is that app's: the init token holds no keys, so a key elsewhere
+  // in the folder may belong to another app.
   const instance = await resolveKeylessTarget({ cwd })
-    .then(async (keyless) => (keyless ? describeKeylessInstance(keyless.secretKey) : null))
+    .then(async (keyless) =>
+      keyless?.source === source ? describeKeylessInstance(keyless.secretKey) : null,
+    )
     .catch(() => null);
 
   // Output strategy mirrors the linked-app flow above:
