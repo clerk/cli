@@ -309,6 +309,85 @@ test.each([
   },
 );
 
+// A plain secret key hides the SDK keyless file from the folder's key reader,
+// but the file's publishable key may still be what the app runs on, so the
+// pair is checked before the secret key is written next to it.
+const SDK_FILE_OF_ANOTHER_APP = () =>
+  write(
+    ".clerk/.tmp/keyless.json",
+    JSON.stringify({ publishableKey: OTHER_APP_KEY, secretKey: "sk_test_sdk_app" }),
+  );
+const NEXT_JS = () =>
+  write("package.json", JSON.stringify({ dependencies: { next: "15.0.0", "@clerk/nextjs": "6" } }));
+describe("env pull, a plain secret key beside an SDK keyless file", () => {
+  test.each([
+    {
+      kind: "the secret key exported in the shell",
+      setUp: () => {
+        process.env.CLERK_SECRET_KEY = SECRET_KEY;
+      },
+      written: ".env.local",
+      says: "Unset the `CLERK_SECRET_KEY` env var in your shell, then pull again. Or delete the stale `.clerk/.tmp/keyless.json`, which also deletes its claim link.",
+    },
+    {
+      kind: "the secret key alone in .env",
+      setUp: () => write(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`),
+      written: ".env",
+      says: "Remove the mismatched `CLERK_SECRET_KEY` from .env, then pull again. Or delete the stale `.clerk/.tmp/keyless.json`, which also deletes its claim link.",
+    },
+  ])(
+    "$kind, keys of different apps: key_pair_mismatch, and writes nothing",
+    async ({ setUp, written, says }) => {
+      delete process.env.CLERK_PLATFORM_API_KEY;
+      await NEXT_JS();
+      await SDK_FILE_OF_ANOTHER_APP();
+      await setUp();
+      const before = await Bun.file(join(h.tempDir, written))
+        .text()
+        .catch(() => null);
+      http.stub(async () =>
+        Response.json({
+          data: [{ frontend_api_url: "https://secret-key-app.clerk.accounts.dev" }],
+        }),
+      );
+
+      const result = refusal(await run("--mode", "agent", "env", "pull"), true);
+
+      expect(result.code).toBe("key_pair_mismatch");
+      expect(result.exitCode).toBe(1);
+      expect(result.text).toContain(
+        "The publishable key found locally (`publishableKey` in .clerk/.tmp/keyless.json) doesn't belong to the application the secret key from",
+      );
+      expect(result.text).toContain(says);
+      expect(
+        await Bun.file(join(h.tempDir, written))
+          .text()
+          .catch(() => null),
+      ).toBe(before);
+    },
+  );
+
+  test("the secret key exported in the shell, keys of the same app: checks the pair, then writes the secret key", async () => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+    await NEXT_JS();
+    await SDK_FILE_OF_ANOTHER_APP();
+    process.env.CLERK_SECRET_KEY = SECRET_KEY;
+    http.stub(async () =>
+      Response.json({ data: [{ frontend_api_url: "https://another-app.clerk.accounts.dev" }] }),
+    );
+
+    const result = await run("env", "pull");
+
+    expect(result.exitCode).toBe(0);
+    expect(http.requests.some((request) => new URL(request.url).pathname === "/v1/domains")).toBe(
+      true,
+    );
+    expect(await Bun.file(join(h.tempDir, ".env.local")).text()).toContain(
+      `CLERK_SECRET_KEY=${SECRET_KEY}`,
+    );
+  });
+});
+
 // The check itself failed, so nothing says whether the pair matches; the
 // error names the key the way the other messages do.
 test.each([

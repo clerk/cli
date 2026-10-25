@@ -46,8 +46,10 @@ import {
   clerkLinesIn,
   readFolderKeys,
   ENV_VAR_SOURCE_SUFFIX,
+  readSdkKeylessApp,
   SDK_KEYLESS_SOURCE,
   unreadGenericPublishableKey,
+  type FolderKeys,
   type LocatedKey,
 } from "../../lib/local-keys.ts";
 import { isGitIgnored } from "../../lib/git.ts";
@@ -279,14 +281,18 @@ async function pullKeylessKeys(
     });
   }
   const { publishableKey } = keys;
+  // A plain secret key hides the SDK keyless file from the reader, but the
+  // app may still run on that file's publishable key.
+  const sdkPublishableKey = publishableKey ? undefined : await sdkFilePublishableKey(cwd);
+  const checked = publishableKey ?? sdkPublishableKey;
 
   // The secret and publishable key were found independently and may not name
   // the same application. Writing a mismatched pair is worse than writing
   // nothing: it produces an app that fails at runtime in a way that's very
   // hard to trace back to its cause, so this is the stricter of the two
   // checks — whoami only warns, this refuses to write.
-  if (publishableKey) {
-    const mismatch = await hasKeyPairMismatch(keyless, publishableKey.value).catch(
+  if (checked) {
+    const mismatch = await hasKeyPairMismatch(keyless, checked.value).catch(
       async (error: unknown) => {
         // Read only now, so a `--print` run whose check passes doesn't read the folder.
         if (error instanceof ApiError) {
@@ -302,8 +308,8 @@ async function pullKeylessKeys(
       // No `clerk link` advice: it would find the app by this publishable key,
       // which may be the wrong one.
       throw new CliError(
-        `The publishable key found locally (${describeKeyLocation(publishableKey)}) doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
-          removeStrayPublishableKey(publishableKey),
+        `The publishable key found locally (${describeKeyLocation(checked)}) doesn't belong to the application the secret key from \`${keyless.source}\` addresses. Writing this pair would leave the server trusting one app while the browser talks to another.\n` +
+          mismatchRemedy(keys, checked),
         { code: ERROR_CODE.KEY_PAIR_MISMATCH },
       );
     }
@@ -346,7 +352,24 @@ async function pullKeylessKeys(
 }
 
 /** How to stop using a publishable key that belongs to another app, from where it was found. */
-function removeStrayPublishableKey(located: LocatedKey): string {
+/**
+ * How to fix a mismatched pair. The SDK keyless file's key is checked only
+ * when a plain secret key hid it, and then either may be the stale one.
+ */
+function mismatchRemedy(keys: FolderKeys, checked: LocatedKey): string {
+  if (!keys.publishableKey && keys.secretKey) {
+    return `${removeStrayKey(keys.secretKey)} Or delete the stale \`${SDK_KEYLESS_SOURCE}\`, which also deletes its claim link.`;
+  }
+  return removeStrayKey(checked);
+}
+
+/** The SDK keyless file's publishable key, located as the reader locates keys. */
+async function sdkFilePublishableKey(cwd: string): Promise<LocatedKey | undefined> {
+  const value = (await readSdkKeylessApp(cwd))?.publishableKey;
+  return value ? { value, name: "publishableKey", source: SDK_KEYLESS_SOURCE } : undefined;
+}
+
+function removeStrayKey(located: LocatedKey): string {
   // The reader takes keys from the SDK keyless file only when the folder holds
   // no plain key, so both keys must go in the env file; deleting the SDK file
   // also deletes its app's claim link.
