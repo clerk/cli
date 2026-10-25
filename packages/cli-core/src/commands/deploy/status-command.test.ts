@@ -185,7 +185,7 @@ describe("deploy status", () => {
   test.each([
     {
       mode: "agent" as const,
-      examples: ["clerk open", "clerk link", "clerk deploy status --wait"],
+      examples: ["clerk link", "clerk deploy status --wait"],
     },
     { mode: "human" as const, examples: undefined },
   ])(

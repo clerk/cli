@@ -157,7 +157,7 @@ describe("API key only, an SDK keyless file with no secret key", () => {
     {
       mode: "agent",
       modeArgs: ["--mode", "agent"],
-      step: "Have a person claim the app into the workspace `CLERK_PLATFORM_API_KEY` belongs to: they run `clerk open` in their own terminal",
+      step: "Have a person claim the app into the workspace `CLERK_PLATFORM_API_KEY` belongs to: they run `clerk open` in their own terminal, in this project's folder, `TEMP_DIR`",
     },
   ])(
     "$mode: Project linked fails, keeps link's fix, and gives the SDK app's step",
@@ -166,8 +166,9 @@ describe("API key only, an SDK keyless file with no secret key", () => {
 
       expect(linked.status).toBe("fail");
       expect(linked.fix).toBe("Link project with clerk link");
+      // The table is built before the harness makes its folder.
       expect(linked.remedy).toStartWith(
-        `This folder runs on an app the Clerk SDK created during development. ${step}`,
+        `This folder runs on an app the Clerk SDK created during development. ${step.replace("TEMP_DIR", h.tempDir)}`,
       );
     },
   );

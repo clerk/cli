@@ -168,11 +168,12 @@ describe("SDK app", () => {
     expect(step.text).toContain("claim");
   });
 
+  // The person's `clerk open` is in the text only: an agent runs every example.
   test.each([
-    { credential: "session" as const, expected: ["clerk open", "clerk link"] },
-    { credential: "api_key" as const, expected: ["clerk open", "clerk link"] },
-    { credential: "none" as const, expected: ["clerk open", "clerk auth login", "clerk link"] },
-  ])("an agent with $credential: `clerk open` before `clerk link`", ({ credential, expected }) => {
+    { credential: "session" as const, expected: ["clerk link"] },
+    { credential: "api_key" as const, expected: ["clerk link"] },
+    { credential: "none" as const, expected: ["clerk auth login", "clerk link"] },
+  ])("an agent with $credential: `clerk open` isn't an example", ({ credential, expected }) => {
     expect(commands({ kind: "sdk_app", credential }, { agent: true })).toEqual([...expected]);
   });
 
@@ -242,7 +243,8 @@ describe("SDK app", () => {
   );
 
   // Run by an agent, `clerk open` prints the claim link, which carries a claim
-  // token, into the agent's transcript.
+  // token, into the agent's transcript. Run anywhere but the project's folder,
+  // it finds no claim link.
   test.each([
     ...(["session", "api_key", "none"] as const).flatMap((credential) => [
       { stop: "no stop", credential, linkStop: undefined },
@@ -252,22 +254,31 @@ describe("SDK app", () => {
     { stop: "another failure", credential: "session" as const, linkStop: ANOTHER_FAILURE },
     { stop: "another failure", credential: "api_key" as const, linkStop: ANOTHER_FAILURE },
   ])(
-    "an agent, $stop, $credential: a person runs `clerk open` in their own terminal, and nothing says to print the link",
+    "an agent, $stop, $credential: a person runs `clerk open` in their own terminal in the project's folder, and no example is `clerk open`",
     ({ credential, linkStop }) => {
       const step = unlinkedFolderNextStep(
-        { kind: "sdk_app", credential },
+        { kind: "sdk_app", credential, path: "/work/my-app" },
         { agent: true, linkStop },
       );
-      const open = step.examples.find((example) => example.command === "clerk open");
 
       expect(step.text).toContain(
-        "they run `clerk open` in their own terminal, which opens the claim page in their browser",
+        "they run `clerk open` in their own terminal, in this project's folder, `/work/my-app`, which opens the claim page in their browser",
       );
       expect(step.text).not.toMatch(/print/i);
-      expect(open?.description).toContain("in their own terminal");
-      expect(open?.description).not.toMatch(/print/i);
+      expect(step.examples.map((example) => example.command)).not.toContain("clerk open");
     },
   );
+
+  test("an agent, a folder with no path: still says the project's folder", () => {
+    const { text } = unlinkedFolderNextStep(
+      { kind: "sdk_app", credential: "session" },
+      { agent: true },
+    );
+
+    expect(text).toContain(
+      "they run `clerk open` in their own terminal, in this project's folder, which opens the claim page in their browser",
+    );
+  });
 });
 
 describe("keys whose owner is unknown", () => {
@@ -425,9 +436,12 @@ describe("every cell", () => {
     },
   );
 
-  test("an SDK app, agent signed out: starts with `clerk open`", () => {
-    expect(commands({ kind: "sdk_app", credential: "none" }, { agent: true })[0]).toBe(
-      "clerk open",
+  test("an SDK app, agent signed out: starts with `clerk auth login`, after the person's claim in the text", () => {
+    const step = unlinkedFolderNextStep({ kind: "sdk_app", credential: "none" }, { agent: true });
+
+    expect(step.examples[0]?.command).toBe("clerk auth login");
+    expect(step.text.indexOf("`clerk open`")).toBeLessThan(
+      step.text.indexOf("Then run `clerk auth login`"),
     );
   });
 
@@ -494,10 +508,32 @@ describe("after agent-mode `clerk link` stopped", () => {
     })),
   );
 
-  test.each(stoppedCells)(
+  // A signed-in agent's claimable SDK app waits on a person's claim, which is
+  // in the text only, so `clerk link` comes first in the examples.
+  const personClaimsFirst = (cell: (typeof stoppedCells)[number]) =>
+    isClaimableSdkApp(cell) &&
+    cell.credential !== "none" &&
+    (cell.linkStop.autolink === "no_match" || cell.linkStop.autolink === "no_key");
+
+  test.each(stoppedCells.filter((cell) => !personClaimsFirst(cell)))(
     "$stop, $name, $credential: the first example isn't `clerk link`",
     ({ folder, linkStop }) => {
       expect(commands(folder, { agent: true, linkStop })[0]).not.toBe("clerk link");
+    },
+  );
+
+  test.each(stoppedCells.filter(personClaimsFirst))(
+    "$stop, $name, $credential: a person claims before the first example, `clerk link`",
+    ({ folder, linkStop }) => {
+      const step = unlinkedFolderNextStep(folder, { agent: true, linkStop });
+
+      expect(step.examples[0]).toEqual({
+        command: "clerk link",
+        description: "Link the app once a person has claimed it",
+      });
+      expect(step.text.indexOf("Have a person claim")).toBeLessThan(
+        step.text.indexOf("run `clerk link`"),
+      );
     },
   );
 
@@ -548,14 +584,14 @@ describe("after agent-mode `clerk link` stopped", () => {
     { credential: "session" as const, into: "the account this CLI is signed in to" },
     { credential: "api_key" as const, into: "the workspace `CLERK_PLATFORM_API_KEY` belongs to" },
   ])(
-    "no match on a claimable SDK app, $credential: `clerk open` naming where to claim, then `clerk link`",
+    "no match on a claimable SDK app, $credential: a person's `clerk open` naming where to claim, then `clerk link`",
     ({ credential, into }) => {
       const step = unlinkedFolderNextStep(
         { kind: "sdk_app", credential },
         { agent: true, linkStop: { autolink: "no_match" } },
       );
 
-      expect(step.examples.map((example) => example.command)).toEqual(["clerk open", "clerk link"]);
+      expect(step.examples.map((example) => example.command)).toEqual(["clerk link"]);
       expect(step.text).toContain(`claim the app into ${into}`);
       // `link`'s stop already says the Clerk SDK created the app.
       expect(step.text).not.toContain("created during development");
@@ -801,18 +837,17 @@ describe("after agent-mode `clerk link` stopped", () => {
 
   test.each(named(SIGNED_IN))(
     "another failure, $name, $credential: retry first, then link by ID if it fails again",
-    ({ name, folder }) => {
+    ({ folder }) => {
       const step = unlinkedFolderNextStep(folder, { agent: true, linkStop: ANOTHER_FAILURE });
 
       expect(step.text).toContain("retry: run `clerk link` again");
       expect(step.text).toContain("If it fails again");
       expect(step.text).toContain("Clerk Dashboard");
       expect(step.text).not.toContain("Then run");
-      expect(step.examples.map((example) => example.command)).toEqual(
-        isClaimableSdkApp({ name, folder })
-          ? ["clerk link", "clerk open", "clerk link --app <app_id>"]
-          : ["clerk link", "clerk link --app <app_id>"],
-      );
+      expect(step.examples.map((example) => example.command)).toEqual([
+        "clerk link",
+        "clerk link --app <app_id>",
+      ]);
       expect(step.text).not.toMatch(SAYS_NOT_IN_ACCOUNT);
     },
   );

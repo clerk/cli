@@ -18,6 +18,7 @@ import {
   clerk,
   http,
   mockState,
+  openedUrls,
   publishableKeyFor,
   useIntegrationTestHarness,
   type CLIResult,
@@ -219,40 +220,98 @@ describe("clerk open", () => {
     expect(stderr(result)).not.toContain("Examples:");
   });
 
-  const CLAIM_LINK_FOLDERS = [
-    { folder: "an init token", setUp: writeInitToken },
-    { folder: "an SDK file with a working claim link", setUp: writeClaimableSdkFile },
+  // A subpath of an app in no account yet gets the step for what the folder
+  // holds, as when there's no claim link, then the command again.
+  const SUBPATH_LEAD =
+    "\"users\" isn't reachable yet — this application hasn't been claimed, so it has no dashboard pages beyond the claim link.";
+  const OPEN_AGAIN = "Then run `clerk open users` again.";
+  const SDK_PERSON_STEP =
+    "Run `clerk link`: it links the app if it's in your account, or opens the Clerk Dashboard page to claim it.";
+  const SDK_AGENT_STEP = (into: string, dir: string) =>
+    `Have a person claim the app into ${into}: they run \`clerk open\` in their own terminal, in this project's folder, \`${dir}\`, which opens the claim page in their browser.`;
+  const CREDENTIAL_SETUP = {
+    session: () => delete process.env.CLERK_PLATFORM_API_KEY,
+    api_key: () => (mockState.storedToken = null),
+    none: signOut,
+  };
+  const SUBPATH_CELLS = [
+    ...(["session", "api_key"] as const).map((credential) => ({
+      folder: "an init token",
+      setUp: writeInitToken,
+      credential,
+      personSays: CLAIM_IT,
+      agentSays: () => CLAIM_IT,
+      examples: ["clerk link", "clerk open users"],
+    })),
+    {
+      folder: "an init token",
+      setUp: writeInitToken,
+      credential: "none" as const,
+      personSays: CLAIM_IT,
+      agentSays: () => "Run `clerk auth login`",
+      examples: ["clerk auth login", "clerk open users"],
+    },
+    {
+      folder: "an SDK file with a working claim link",
+      setUp: writeClaimableSdkFile,
+      credential: "session" as const,
+      personSays: SDK_PERSON_STEP,
+      agentSays: (dir: string) => SDK_AGENT_STEP("the account this CLI is signed in to", dir),
+      examples: ["clerk link", "clerk open users"],
+    },
+    {
+      folder: "an SDK file with a working claim link",
+      setUp: writeClaimableSdkFile,
+      credential: "api_key" as const,
+      personSays: SDK_PERSON_STEP,
+      agentSays: (dir: string) =>
+        SDK_AGENT_STEP("the workspace `CLERK_PLATFORM_API_KEY` belongs to", dir),
+      examples: ["clerk link", "clerk open users"],
+    },
+    {
+      folder: "an SDK file with a working claim link",
+      setUp: writeClaimableSdkFile,
+      credential: "none" as const,
+      personSays: SDK_PERSON_STEP,
+      agentSays: (dir: string) =>
+        SDK_AGENT_STEP("the account `clerk auth login` will sign in to", dir),
+      examples: ["clerk auth login", "clerk link", "clerk open users"],
+    },
   ];
 
-  test.each(CLAIM_LINK_FOLDERS)(
-    "person, $folder, a subpath: run `clerk open` with no subpath to claim it",
-    async ({ setUp }) => {
+  test.each(SUBPATH_CELLS)(
+    "person, $folder, $credential, a subpath: the folder's step, then the command again",
+    async ({ setUp, credential, personSays }) => {
       await setUp();
+      CREDENTIAL_SETUP[credential]();
 
       const result = await run("open", "users");
 
       expect(result.exitCode).toBe(1);
-      expect(stderr(result)).toContain(
-        "Run `clerk open` (no subpath) to claim it, then retry the subpath once it's linked.",
-      );
+      expect(stderr(result)).toContain(`${SUBPATH_LEAD} `);
+      expect(stderr(result)).toContain(personSays);
+      expect(stderr(result)).toContain(OPEN_AGAIN);
+      expect(stderr(result)).not.toContain("(no subpath)");
+      expect(openedUrls).toEqual([]);
     },
   );
 
   // Run by an agent, `clerk open` prints the claim link, which carries a claim
-  // token, into the agent's transcript.
-  test.each(CLAIM_LINK_FOLDERS)(
-    "agent, $folder, a subpath: a person runs `clerk open` in their own terminal",
-    async ({ setUp }) => {
+  // token, into the agent's transcript: no example is `clerk open`.
+  test.each(SUBPATH_CELLS)(
+    "agent, $folder, $credential, a subpath: the folder's step for that credential, then the command again",
+    async ({ setUp, credential, agentSays, examples }) => {
       await setUp();
+      CREDENTIAL_SETUP[credential]();
 
       const error = agentError(await run("--mode", "agent", "open", "users"));
 
       expect(error.code).toBe("not_linked");
-      expect(error.message).toContain(`"users" isn't reachable yet`);
-      expect(error.message).toContain(
-        "Have a person claim it: they run `clerk open` (no subpath) in their own terminal, which opens the claim page in their browser. Then retry the subpath once it's linked.",
-      );
-      expect(error.message).not.toContain("Run `clerk open`");
+      expect(error.message).toStartWith(`${SUBPATH_LEAD} `);
+      expect(error.message).toContain(agentSays(h.tempDir));
+      expect(error.message).toEndWith(OPEN_AGAIN);
+      expect(error.message).not.toContain("(no subpath)");
+      expect(commands(error.examples)).toEqual(examples);
     },
   );
 });

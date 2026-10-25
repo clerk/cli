@@ -183,6 +183,7 @@ export function createDoctorContext(): DoctorContext {
             credential: await credentialPresent(),
             keys,
             sdkClaimLinkProblem: await sdkClaimLinkProblem(process.cwd(), keys),
+            path: process.cwd(),
           });
         })();
       }

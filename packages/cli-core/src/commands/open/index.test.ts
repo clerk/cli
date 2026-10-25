@@ -336,16 +336,17 @@ describe("openDashboard: unclaimed keyless application", () => {
     expect(mockOpenBrowser).not.toHaveBeenCalled();
   });
 
-  test("subpath refusal does not point at `clerk link`", async () => {
+  // `clerk link` claims an init app and links the folder, so the refusal
+  // gives that step, then the command again.
+  test("subpath refusal gives the folder's own step, then the command again", async () => {
     mockFindKeylessClaimUrl.mockResolvedValue(CLAIM_DESTINATION);
+    readUnlinkedFolderSpy.mockResolvedValue({ kind: "init_app", credential: "session" });
 
-    let message = "";
-    try {
-      await openDashboard("users");
-    } catch (error) {
-      message = (error as Error).message;
-    }
-    expect(message).not.toMatch(/clerk link/);
+    await expect(openDashboard("users")).rejects.toMatchObject({
+      code: "not_linked",
+      message:
+        "\"users\" isn't reachable yet — this application hasn't been claimed, so it has no dashboard pages beyond the claim link. This folder's app was created by `clerk init` and isn't in an account yet. Run `clerk link`: it claims the app into your account and links this folder. Then run `clerk open users` again.",
+    });
   });
 
   // `clerk init --accountless` would create a new app and overwrite the keys.
