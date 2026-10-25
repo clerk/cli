@@ -572,7 +572,12 @@ describe("deploy", () => {
         name: "an SDK app, signed out, with --domain",
         folder: { kind: "sdk_app", credential: "none" } satisfies UnlinkedFolder,
         options: { domain: "example.com" },
-        expected: ["clerk auth login", "clerk link", "clerk deploy --domain example.com"],
+        expected: [
+          "clerk open",
+          "clerk auth login",
+          "clerk link",
+          "clerk deploy --domain example.com",
+        ],
       },
     ])("not linked, $name: not_linked, exit 1, and examples $expected", async (cell) => {
       mockIsAgent.mockReturnValue(true);

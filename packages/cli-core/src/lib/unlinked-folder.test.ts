@@ -9,7 +9,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { useCleanClerkKeyEnv, useSyntheticShellClerkKeys } from "../test/lib/clerk-key-env.ts";
 import { _setTokenOverride } from "./credential-store.ts";
 import * as localKeys from "./local-keys.ts";
@@ -242,7 +242,7 @@ describe.each(CREDENTIALS)("with $label", ({ token, apiKey, credential }) => {
     for (const [path, content] of Object.entries(files)) await write(path, content);
     Object.assign(process.env, env);
 
-    expect(await readUnlinkedFolder(dir)).toEqual({ ...expected, credential, path: dir } as never);
+    expect(await readUnlinkedFolder(dir)).toEqual({ ...expected, credential } as never);
   });
 
   test("env files that can't be read: couldn't tell, without throwing", async () => {
@@ -254,7 +254,6 @@ describe.each(CREDENTIALS)("with $label", ({ token, apiKey, credential }) => {
         kind: "unknown_owner",
         credential,
         couldntTell: expect.stringContaining("couldn't read this folder's env files"),
-        path: dir,
       });
     } finally {
       read.mockRestore();
@@ -269,14 +268,13 @@ test("a run from a subdirectory of a folder with keys reads only the subdirector
   expect(await readUnlinkedFolder(join(dir, "packages", "web"))).toEqual({
     kind: "no_app",
     credential: "none",
-    path: join(dir, "packages", "web"),
   });
 });
 
 test("a malformed token file isn't an init token, and is still on disk after reading", async () => {
   await write(".clerk/keyless.json", JSON.stringify({ claimToken: 42 }));
 
-  expect(await readUnlinkedFolder(dir)).toEqual({ kind: "no_app", credential: "none", path: dir });
+  expect(await readUnlinkedFolder(dir)).toEqual({ kind: "no_app", credential: "none" });
   expect(await Bun.file(join(dir, ".clerk/keyless.json")).exists()).toBe(true);
 });
 
@@ -286,42 +284,14 @@ test("a failed read of the stored session counts as no credential", async () => 
     new Error("keychain unavailable"),
   );
   try {
-    expect(await readUnlinkedFolder(dir)).toEqual({
-      kind: "no_app",
-      credential: "none",
-      path: dir,
-    });
+    expect(await readUnlinkedFolder(dir)).toEqual({ kind: "no_app", credential: "none" });
   } finally {
     check.mockRestore();
   }
 });
 
-// A person's `clerk open` reads the claim link from the folder it runs in.
-test("a folder given by a relative path is named by its absolute path", async () => {
-  expect((await readUnlinkedFolder(relative(process.cwd(), dir))).path).toBe(dir);
-});
-
 // `doctor` builds the facts from its own memoized reads and calls this directly.
 describe("classifyUnlinkedFolder", () => {
-  test.each([
-    {
-      given: "a path",
-      path: "/work/my-app",
-      expected: { kind: "no_app", credential: "none", path: "/work/my-app" },
-    },
-    { given: "no path", path: undefined, expected: { kind: "no_app", credential: "none" } },
-  ])("carries the folder's path when given $given", ({ path, expected }) => {
-    expect(
-      classifyUnlinkedFolder({
-        initToken: false,
-        sdkClaimLinkProblem: undefined,
-        credential: "none",
-        keys: {},
-        path,
-      }),
-    ).toEqual(expected as never);
-  });
-
   test("an init token wins over everything else the folder holds", () => {
     expect(
       classifyUnlinkedFolder({

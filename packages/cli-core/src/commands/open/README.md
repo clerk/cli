@@ -36,16 +36,15 @@ An application in no account yet has no Dashboard page of its own, so `open` loo
 
 If a claim link is found, `open` opens/prints/emits **that** URL instead of a dashboard deep-link — an unclaimed app has no `/apps/{appId}/instances/{instanceId}` page to go to. The local secret key (resolved the same way as [`whoami`](../whoami/README.md), via the legacy-named `resolveKeylessTarget()`) is used, best-effort, to look up the instance id/environment type from `GET /v1/instance` purely to decorate the output; a missing or invalid key there never blocks opening the claim link itself.
 
-A `subpath` cannot be honored for an unclaimed application (there is no dashboard page beyond the claim link yet), so `open users` on an unclaimed app fails with `not_linked` instead of silently opening the claim link at the wrong URL. The message is the step for what the folder holds, from [`lib/unlinked-folder.ts`](../../lib/unlinked-folder.ts), then the command again. For a person in a folder `clerk init` created signed out:
+A `subpath` cannot be honored for an unclaimed application (there is no dashboard page beyond the claim link yet), so `open users` on an unclaimed app throws instead of silently opening the claim link at the wrong URL:
 
 ```text
 "users" isn't reachable yet — this application hasn't been claimed, so it has
-no dashboard pages beyond the claim link. This folder's app was created by
-`clerk init` and isn't in an account yet. Run `clerk link`: it claims the app
-into your account and links this folder. Then run `clerk open users` again.
+no dashboard pages beyond the claim link. Run `clerk open` (no subpath) to
+claim it, then retry the subpath once it's linked.
 ```
 
-An agent gets the step for its credential: `clerk link` or `clerk auth login` claims an init app, and for an SDK-created app a person runs `clerk open` in their own terminal, in the project's folder. In agent mode the commands come as `examples`, never including `clerk open`: run by an agent, it prints the claim link, which carries a claim token.
+In agent mode the last two sentences become "Have a person claim it: they run `clerk open` (no subpath) in their own terminal, which opens the claim page in their browser. Then retry the subpath once it's linked." Run by the agent, `clerk open` would print the claim link, which carries a claim token, into its transcript.
 
 When **no** claim link can be found at all, `open` fails with `not_linked`. The lead depends on whether a secret key is on disk, and the advice after it is the step for what the folder holds, from [`lib/unlinked-folder.ts`](../../lib/unlinked-folder.ts), as every not-linked message gives (in agent mode, its commands come as `examples`):
 

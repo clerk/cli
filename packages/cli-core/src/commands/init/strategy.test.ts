@@ -662,7 +662,7 @@ describe("init strategy", () => {
       {
         mode: "agent",
         isAgent: true,
-        step: "Have a person claim the app into the account `clerk auth login` will sign in to: they run `clerk open` in their own terminal, in this project's folder, which opens the claim page in their browser.",
+        step: "Have a person claim the app into the account `clerk auth login` will sign in to: they run `clerk open` in their own terminal, which opens the claim page in their browser.",
       },
     ])(
       "keeping an SDK-created app, $mode: names the SDK file and gives the SDK app's step",

@@ -11,7 +11,6 @@
  * `lib/config.ts`. Nothing here uses an import at module load.
  */
 
-import { resolve } from "node:path";
 import type { KeylessSubject } from "./copy.ts";
 import { hasStoredCredentials } from "./credential-store.ts";
 import { CliError, ERROR_CODE, type CredentialRefusal, type NextStepAdvice } from "./errors.ts";
@@ -82,7 +81,7 @@ export interface SdkClaimProblem {
  *   when the file has one.
  * - `no_app`: none of these.
  */
-export type UnlinkedFolder = (
+export type UnlinkedFolder =
   | { kind: "init_app"; credential: Credential }
   | {
       kind: "unknown_owner";
@@ -93,11 +92,7 @@ export type UnlinkedFolder = (
       secretKeysDisagree?: string;
     }
   | { kind: "sdk_app"; credential: Credential; unusable?: SdkClaimProblem }
-  | { kind: "no_app"; credential: Credential }
-) & {
-  /** The folder's absolute path: a person's `clerk open` reads the claim link from where it runs. */
-  path?: string;
-};
+  | { kind: "no_app"; credential: Credential };
 
 /** What the classifier decides from, so a caller holding its own reads (`doctor`) can pass them. */
 export interface UnlinkedFolderFacts {
@@ -114,17 +109,10 @@ export interface UnlinkedFolderFacts {
    * leave an unclaimable app looking claimable.
    */
   sdkClaimLinkProblem: string | undefined;
-  /** The folder's absolute path, for advice that names it. */
-  path?: string;
 }
 
 /** Decides the kind from facts. Pure. */
-export function classifyUnlinkedFolder(facts: UnlinkedFolderFacts): UnlinkedFolder {
-  const folder = classifyKind(facts);
-  return facts.path ? { ...folder, path: facts.path } : folder;
-}
-
-function classifyKind({
+export function classifyUnlinkedFolder({
   initToken,
   credential,
   keys,
@@ -197,7 +185,6 @@ export async function readUnlinkedFolder(cwd: string, read?: FolderRead): Promis
     credential,
     keys,
     sdkClaimLinkProblem: await sdkClaimLinkProblem(cwd, keys),
-    path: resolve(cwd),
   });
   log.debug(`unlinked-folder: ${folder.kind}, credential ${credential}`);
   return folder;
@@ -301,6 +288,11 @@ const EXAMPLE = {
   linkById: {
     command: "clerk link --app <app_id>",
     description: "Link this folder to that application",
+  },
+  open: {
+    command: "clerk open",
+    description:
+      "A person runs this in their own terminal; it opens the claim page in their browser",
   },
   init: { command: "clerk init", description: "Create a new application for this folder" },
 } satisfies Record<string, Example>;
@@ -424,7 +416,7 @@ function stepFor(folder: UnlinkedFolder, agent: boolean, signedIn: boolean): Nex
     case "sdk_app":
       return folder.unusable
         ? unusableSdkApp(folder.unusable, agent, signedIn)
-        : sdkApp(agent, signedIn ? folder.credential : "none", folder.path);
+        : sdkApp(agent, signedIn ? folder.credential : "none");
     case "unknown_owner":
       return unknownOwner(folder, agent, signedIn);
     case "no_app":
@@ -511,7 +503,7 @@ function noMatch(folder: UnlinkedFolder, signedIn: boolean): NextStep {
       // claimable one's advice doesn't open by saying it again.
       return folder.unusable
         ? chooseById(noUsableClaimLinkSentence(folder.unusable.reason), signedIn, "existing_app")
-        : claimThenLink(signedIn ? folder.credential : "none", folder.path);
+        : claimThenLink(signedIn ? folder.credential : "none");
     case "unknown_owner": {
       const where = folder.publishableKey ? ` (${describeKeyLocation(folder.publishableKey)})` : "";
       return chooseById(
@@ -547,7 +539,7 @@ function noKey(folder: UnlinkedFolder, signedIn: boolean): NextStep {
       // `clerk link` would stop again on a file it can't claim from.
       return folder.unusable
         ? chooseById(noUsableClaimLinkSentence(folder.unusable.reason), true, "existing_app")
-        : sdkApp(true, folder.credential, folder.path);
+        : sdkApp(true, folder.credential);
     case "unknown_owner":
       // With a publishable key, `clerk link` would stop here again.
       return folder.publishableKey
@@ -595,7 +587,7 @@ const CLAIM_INTO: Record<Credential, string> = {
   none: "the account `clerk auth login` will sign in to",
 };
 
-function sdkApp(agent: boolean, credential: Credential, path: string | undefined): NextStep {
+function sdkApp(agent: boolean, credential: Credential): NextStep {
   const lead = "This folder runs on an app the Clerk SDK created during development.";
   if (!agent) {
     return {
@@ -605,38 +597,29 @@ function sdkApp(agent: boolean, credential: Credential, path: string | undefined
       ],
     };
   }
-  const step = claimThenLink(credential, path);
+  const step = claimThenLink(credential);
   return { ...step, text: `${lead} ${step.text}` };
 }
 
 /**
- * A person runs `clerk open`, and only in text, never as an example: in agent
- * mode it prints the claim link, which carries a claim token, into the
- * agent's transcript. It reads the link from the folder it runs in.
+ * A person runs `clerk open`: in agent mode it prints the claim link, which
+ * carries a claim token, into the agent's transcript.
  */
-function openInOwnTerminal(path: string | undefined): string {
-  const folder = path ? `this project's folder, \`${path}\`` : "this project's folder";
-  return `they run \`clerk open\` in their own terminal, in ${folder}, which opens the claim page in their browser`;
-}
+const OPEN_IN_OWN_TERMINAL =
+  "they run `clerk open` in their own terminal, which opens the claim page in their browser";
 
-/**
- * An agent can't claim an SDK-created app; a person does. Their claim isn't
- * an example, so `clerk link` comes first even after `link` stopped.
- */
-function claimThenLink(credential: Credential, path: string | undefined): NextStep {
-  const linkClaimed = {
-    command: "clerk link",
-    description: "Link the app once a person has claimed it",
-  };
-  const claim = `Have a person claim the app into ${CLAIM_INTO[credential]}: ${openInOwnTerminal(path)}.`;
+/** An agent can't claim an SDK-created app; a person does. */
+function claimThenLink(credential: Credential): NextStep {
+  const linkClaimed = { command: "clerk link", description: "Link the app once it's claimed" };
+  const claim = `Have a person claim the app into ${CLAIM_INTO[credential]}: ${OPEN_IN_OWN_TERMINAL}.`;
   return isSignedIn(credential)
     ? {
         text: `${claim} Once it's claimed, run \`clerk link\`.`,
-        examples: [linkClaimed],
+        examples: [EXAMPLE.open, linkClaimed],
       }
     : {
         text: `${claim} Then run ${SIGN_IN}, and \`clerk link\` once it's claimed.`,
-        examples: [EXAMPLE.signIn, linkClaimed],
+        examples: [EXAMPLE.open, EXAMPLE.signIn, linkClaimed],
       };
 }
 
@@ -851,8 +834,10 @@ function retryThenLinkById(
   const which = appByKey(folder);
   let fallback = `have a person find the app's ID in the Clerk Dashboard${which} and ${linkById}${thenRerun}.`;
   let byIdWhen = "If it fails again";
+  const openFirst: Example[] = [];
   if (folder.kind === "sdk_app" && !folder.unusable) {
-    fallback = `have a person claim the app into ${CLAIM_INTO[folder.credential]} if it isn't there yet (${openInOwnTerminal(folder.path)}), then find its ID in the Clerk Dashboard and ${linkById}${thenRerun}.`;
+    fallback = `have a person claim the app into ${CLAIM_INTO[folder.credential]} if it isn't there yet (${OPEN_IN_OWN_TERMINAL}), then find its ID in the Clerk Dashboard and ${linkById}${thenRerun}.`;
+    openFirst.push(EXAMPLE.open);
   } else if (folder.kind === "sdk_app" && folder.unusable) {
     fallback = `if this folder's app is already claimed, have a person find its ID in the Clerk Dashboard${which} and ${linkById}${thenRerun}. ${noUsableClaimLinkSentence(folder.unusable.reason)} So if the app isn't claimed yet, it can't be claimed from this folder, and linking an existing application instead is a separate choice.`;
     byIdWhen = "If it fails again, and only if this folder's app is already claimed";
@@ -861,6 +846,7 @@ function retryThenLinkById(
     text: `A failed list can be temporary, so retry: ${retry.clause}. If it fails again, ${fallback}`,
     examples: [
       ...(retry.command ? [{ command: retry.command, description: "Retry" }] : []),
+      ...openFirst,
       {
         command: "clerk link --app <app_id>",
         description: `${byIdWhen}: link the app by the ID a person finds in the Clerk Dashboard`,

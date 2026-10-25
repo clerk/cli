@@ -273,13 +273,13 @@ describe("without a linked project", () => {
       kind: "an SDK app",
       credential: "session",
       setUp: FOLDERS.sdkApp,
-      expected: ["clerk link"],
+      expected: ["clerk open", "clerk link"],
     },
     {
       kind: "an SDK app",
       credential: "none",
       setUp: FOLDERS.sdkApp,
-      expected: ["clerk auth login", "clerk link"],
+      expected: ["clerk open", "clerk auth login", "clerk link"],
     },
     {
       kind: "a publishable key",

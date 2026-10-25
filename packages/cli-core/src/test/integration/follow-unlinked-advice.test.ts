@@ -10,10 +10,8 @@
  * `clerk init` is the alternative to linking an existing app ("or"), so the
  * test follows the link.
  *
- * A person's step isn't in the examples: for an SDK-created app, the test runs
- * the person's `clerk open` in human mode, as in their own terminal, and
- * stands in for their claim in the Dashboard by adding the app to the mocked
- * account, before following the agent's commands.
+ * A person runs `clerk open` and claims the app in the Dashboard; the test
+ * stands in for that claim by adding the app to the mocked account.
  * Each test names its credential: a stored session only, the API key only, or
  * none.
  */
@@ -63,8 +61,6 @@ const SDK_APP = app("app_sdk", "sdk-app.clerk.accounts.dev");
 const KEYS_APP = app("app_keys", "keys-app.clerk.accounts.dev");
 /** Another app in the account. */
 const OTHER_APP = app("app_other", "other-app.clerk.accounts.dev");
-
-const SDK_CLAIM_URL = "https://dashboard.clerk.com/apps/claim?token=sdk_claim_token";
 
 const pk = (target: Application) => target.instances[0]!.publishable_key;
 const sk = (target: Application) => target.instances[0]!.secret_key;
@@ -121,7 +117,7 @@ const FOLDERS = {
       JSON.stringify({
         publishableKey: pk(SDK_APP),
         secretKey: sk(SDK_APP),
-        claimUrl: SDK_CLAIM_URL,
+        claimUrl: "https://dashboard.clerk.com/apps/claim?token=sdk_claim_token",
       }),
     ),
   plainKeys: envWith(`CLERK_PUBLISHABLE_KEY=${pk(KEYS_APP)}\nCLERK_SECRET_KEY=${sk(KEYS_APP)}\n`),
@@ -171,7 +167,7 @@ type Row = {
   follow: number;
   /** The ID an agent picks from `clerk apps list --json`. */
   appId?: string;
-  /** The app a person claims in the Dashboard, on the page their own `clerk open` opens. */
+  /** The app a person claims in the Dashboard after `clerk open`. */
   claims?: Application;
   linkedTo: Application;
 };
@@ -205,8 +201,8 @@ const ROWS: Row[] = [
     row: "3, SDK keyless file only, signed out",
     credential: "none",
     setUp: FOLDERS.sdkApp,
-    expected: ["clerk auth login", "clerk link", "clerk deploy"],
-    follow: 2,
+    expected: ["clerk open", "clerk auth login", "clerk link", "clerk deploy"],
+    follow: 3,
     claims: SDK_APP,
     linkedTo: SDK_APP,
   },
@@ -214,8 +210,8 @@ const ROWS: Row[] = [
     row: "4, SDK keyless file only, signed in",
     credential: "session",
     setUp: FOLDERS.sdkApp,
-    expected: ["clerk link", "clerk deploy"],
-    follow: 1,
+    expected: ["clerk open", "clerk link", "clerk deploy"],
+    follow: 2,
     claims: SDK_APP,
     linkedTo: SDK_APP,
   },
@@ -286,20 +282,11 @@ test.each(ROWS)(
     expect(error.code).toBe("not_linked");
     expect(commands(error)).toEqual(expected);
 
-    if (claims) {
-      expect(error.message).toContain(
-        `they run \`clerk open\` in their own terminal, in this project's folder, \`${h.tempDir}\``,
-      );
-      const opened = await clerk.raw("--mode", "human", "open");
-      expect(opened.exitCode).toBe(0);
-      expect(openedUrls).toEqual([SDK_CLAIM_URL]);
-      accountApps.push(claims);
-    }
-
     for (const command of expected.slice(0, follow)) {
       const result = await run(command, appId);
       expect({ command, exitCode: result.exitCode }).toEqual({ command, exitCode: 0 });
       if (command === "clerk apps list --json") expect(result.stdout).toContain(appId!);
+      if (command === "clerk open" && claims) accountApps.push(claims);
     }
 
     expect(await linkedAppId()).toBe(linkedTo.application_id);

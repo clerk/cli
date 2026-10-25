@@ -129,9 +129,7 @@ test("agent, app not in the account: usage_error naming `clerk open`, and no bro
 
   expect(result.exitCode).toBe(2);
   expect(result.stderr).toContain('"code":"usage_error"');
-  expect(result.stderr).toContain(
-    `they run \`clerk open\` in their own terminal, in this project's folder, \`${h.tempDir}\``,
-  );
+  expect(result.stderr).toContain("they run `clerk open` in their own terminal");
   expect(openedUrls).toEqual([]);
   expect(await linkedAppId()).toBeUndefined();
 });

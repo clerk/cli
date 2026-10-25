@@ -201,7 +201,7 @@ const STOPS: Cell[] = [
     name: "an SDK app not in the account",
     credential: "session",
     setUp: async () => FOLDERS.sdkApp(),
-    expected: ["clerk link"],
+    expected: ["clerk open", "clerk link"],
     says: ["isn't in your account yet", "the account this CLI is signed in to"],
     saysNot: ["created during development"],
   },
@@ -209,7 +209,7 @@ const STOPS: Cell[] = [
     name: "an SDK app not in the account",
     credential: "api_key",
     setUp: async () => FOLDERS.sdkApp(),
-    expected: ["clerk link"],
+    expected: ["clerk open", "clerk link"],
     says: ["the workspace `CLERK_PLATFORM_API_KEY` belongs to"],
   },
   {
@@ -343,7 +343,7 @@ const STOPS: Cell[] = [
     credential: "session",
     setUp: async () => FOLDERS.sdkApp(),
     listFails: 500,
-    expected: ["clerk link", "clerk link --app <app_id>"],
+    expected: ["clerk link", "clerk open", "clerk link --app <app_id>"],
     says: [
       "retry: run `clerk link` again",
       "Clerk Dashboard",
@@ -523,7 +523,7 @@ describe("agent `clerk init` reaching `link`'s stop", () => {
     {
       name: "an SDK app not in the account",
       setUp: () => FOLDERS.sdkApp(),
-      expected: ["clerk link", INIT_AGAIN],
+      expected: ["clerk open", "clerk link", INIT_AGAIN],
       says: `Then run \`${INIT_AGAIN}\` again.`,
     },
   ])(
