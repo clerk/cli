@@ -240,6 +240,34 @@ describe("SDK app", () => {
       expect(step.text).not.toContain("clerk open");
     },
   );
+
+  // Run by an agent, `clerk open` prints the claim link, which carries a claim
+  // token, into the agent's transcript.
+  test.each([
+    ...(["session", "api_key", "none"] as const).flatMap((credential) => [
+      { stop: "no stop", credential, linkStop: undefined },
+      { stop: "no match", credential, linkStop: NO_MATCH },
+      { stop: "no key", credential, linkStop: { autolink: "no_key" } as LinkStop },
+    ]),
+    { stop: "another failure", credential: "session" as const, linkStop: ANOTHER_FAILURE },
+    { stop: "another failure", credential: "api_key" as const, linkStop: ANOTHER_FAILURE },
+  ])(
+    "an agent, $stop, $credential: a person runs `clerk open` in their own terminal, and nothing says to print the link",
+    ({ credential, linkStop }) => {
+      const step = unlinkedFolderNextStep(
+        { kind: "sdk_app", credential },
+        { agent: true, linkStop },
+      );
+      const open = step.examples.find((example) => example.command === "clerk open");
+
+      expect(step.text).toContain(
+        "they run `clerk open` in their own terminal, which opens the claim page in their browser",
+      );
+      expect(step.text).not.toMatch(/print/i);
+      expect(open?.description).toContain("in their own terminal");
+      expect(open?.description).not.toMatch(/print/i);
+    },
+  );
 });
 
 describe("keys whose owner is unknown", () => {

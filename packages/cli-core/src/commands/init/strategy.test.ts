@@ -647,7 +647,7 @@ describe("init strategy", () => {
         keys: "in .clerk/.tmp/keyless.json",
         unclaimed: true,
         offerFresh: true,
-        step: expect.stringContaining("Run `clerk open`"),
+        step: expect.stringContaining("they run `clerk open` in their own terminal"),
       });
     });
 
@@ -662,7 +662,7 @@ describe("init strategy", () => {
       {
         mode: "agent",
         isAgent: true,
-        step: "Run `clerk open` to print its claim link for a person to claim the app",
+        step: "Have a person claim the app into the account `clerk auth login` will sign in to: they run `clerk open` in their own terminal, which opens the claim page in their browser.",
       },
     ])(
       "keeping an SDK-created app, $mode: names the SDK file and gives the SDK app's step",

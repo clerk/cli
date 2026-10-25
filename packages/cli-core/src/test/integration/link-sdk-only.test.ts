@@ -3,7 +3,8 @@
  * SDK wrote to `.clerk/.tmp/keyless.json` for an app it created for itself.
  * The CLI can't claim that app, so `link` looks for it in the account; when
  * it isn't there, a person is sent to its claim page, and an agent is told to
- * run `clerk open`. Never the picker, which only offers other apps.
+ * have a person run `clerk open` in their own terminal. Never the picker,
+ * which only offers other apps.
  *
  * Credential: the harness default, a stored session and an API key.
  */
@@ -128,7 +129,7 @@ test("agent, app not in the account: usage_error naming `clerk open`, and no bro
 
   expect(result.exitCode).toBe(2);
   expect(result.stderr).toContain('"code":"usage_error"');
-  expect(result.stderr).toContain("Run `clerk open`");
+  expect(result.stderr).toContain("they run `clerk open` in their own terminal");
   expect(openedUrls).toEqual([]);
   expect(await linkedAppId()).toBeUndefined();
 });

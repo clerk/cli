@@ -154,7 +154,11 @@ describe("API key only, an SDK keyless file with no secret key", () => {
 
   test.each([
     { mode: "person", modeArgs: [], step: "Run `clerk link`" },
-    { mode: "agent", modeArgs: ["--mode", "agent"], step: "Run `clerk open`" },
+    {
+      mode: "agent",
+      modeArgs: ["--mode", "agent"],
+      step: "Have a person claim the app into the workspace `CLERK_PLATFORM_API_KEY` belongs to: they run `clerk open` in their own terminal",
+    },
   ])(
     "$mode: Project linked fails, keeps link's fix, and gives the SDK app's step",
     async ({ modeArgs, step }) => {

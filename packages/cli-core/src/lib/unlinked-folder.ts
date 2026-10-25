@@ -291,7 +291,8 @@ const EXAMPLE = {
   },
   open: {
     command: "clerk open",
-    description: "Print the claim link, for a person to claim the app in the Clerk Dashboard",
+    description:
+      "A person runs this in their own terminal; it opens the claim page in their browser",
   },
   init: { command: "clerk init", description: "Create a new application for this folder" },
 } satisfies Record<string, Example>;
@@ -600,17 +601,24 @@ function sdkApp(agent: boolean, credential: Credential): NextStep {
   return { ...step, text: `${lead} ${step.text}` };
 }
 
-/** An agent can't claim an SDK-created app; a person does, from the link `clerk open` prints. */
+/**
+ * A person runs `clerk open`: in agent mode it prints the claim link, which
+ * carries a claim token, into the agent's transcript.
+ */
+const OPEN_IN_OWN_TERMINAL =
+  "they run `clerk open` in their own terminal, which opens the claim page in their browser";
+
+/** An agent can't claim an SDK-created app; a person does. */
 function claimThenLink(credential: Credential): NextStep {
   const linkClaimed = { command: "clerk link", description: "Link the app once it's claimed" };
-  const open = `Run \`clerk open\` to print its claim link for a person to claim the app into ${CLAIM_INTO[credential]}`;
+  const claim = `Have a person claim the app into ${CLAIM_INTO[credential]}: ${OPEN_IN_OWN_TERMINAL}.`;
   return isSignedIn(credential)
     ? {
-        text: `${open}, then \`clerk link\` once it's claimed.`,
+        text: `${claim} Once it's claimed, run \`clerk link\`.`,
         examples: [EXAMPLE.open, linkClaimed],
       }
     : {
-        text: `${open}, then ${SIGN_IN}, then \`clerk link\` once it's claimed.`,
+        text: `${claim} Then run ${SIGN_IN}, and \`clerk link\` once it's claimed.`,
         examples: [EXAMPLE.open, EXAMPLE.signIn, linkClaimed],
       };
 }
@@ -828,7 +836,7 @@ function retryThenLinkById(
   let byIdWhen = "If it fails again";
   const openFirst: Example[] = [];
   if (folder.kind === "sdk_app" && !folder.unusable) {
-    fallback = `have a person claim the app from the link \`clerk open\` prints, into ${CLAIM_INTO[folder.credential]}, if it isn't there yet, then find its ID in the Clerk Dashboard and ${linkById}${thenRerun}.`;
+    fallback = `have a person claim the app into ${CLAIM_INTO[folder.credential]} if it isn't there yet (${OPEN_IN_OWN_TERMINAL}), then find its ID in the Clerk Dashboard and ${linkById}${thenRerun}.`;
     openFirst.push(EXAMPLE.open);
   } else if (folder.kind === "sdk_app" && folder.unusable) {
     fallback = `if this folder's app is already claimed, have a person find its ID in the Clerk Dashboard${which} and ${linkById}${thenRerun}. ${noUsableClaimLinkSentence(folder.unusable.reason)} So if the app isn't claimed yet, it can't be claimed from this folder, and linking an existing application instead is a separate choice.`;

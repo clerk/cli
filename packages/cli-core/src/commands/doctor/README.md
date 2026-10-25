@@ -60,8 +60,9 @@ command for what the folder holds. Statuses and fix labels don't depend on it.
     application** and its instance. A person is
     told to run `clerk link`, which claims an init app, or links an SDK app
     (opening its claim page when it isn't in the account). An agent is told
-    `clerk auth login` for an init app (it can't sign in itself), and
-    `clerk open` for an SDK app, since a person has to claim it.
+    `clerk auth login` for an init app (it can't sign in itself), and to
+    have a person run `clerk open` in their own terminal for an SDK app,
+    since a person has to claim it.
   - **Plain keys** (pasted from the Dashboard, say), **or an SDK keyless file
     whose claim link can't be used**: it says the folder uses the secret key
     from its file and isn't linked, then the step for what the folder holds,
@@ -85,8 +86,8 @@ command for what the folder holds. Statuses and fix labels don't depend on it.
   only changes the outcome when there's actually a secret key to fall back to.
 - Not linked and no secret key to run on → Project linkage **fails**, with the
   `clerk link` fix. Its remedy is the step for what the folder holds, e.g. an
-  SDK keyless file with no secret key gets `clerk open` for an agent, as
-  `deploy` gives it.
+  SDK keyless file with no secret key tells an agent to have a person run
+  `clerk open` in their own terminal, as `deploy` does.
 - An env file that can't be read → no check crashes. The accountless key is then
   only one exported in the shell, and when there's none, Project linkage's
   remedy starts with the read error.

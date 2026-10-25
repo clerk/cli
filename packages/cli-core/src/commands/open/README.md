@@ -44,6 +44,8 @@ no dashboard pages beyond the claim link. Run `clerk open` (no subpath) to
 claim it, then retry the subpath once it's linked.
 ```
 
+In agent mode the last two sentences become "Have a person claim it: they run `clerk open` (no subpath) in their own terminal, which opens the claim page in their browser. Then retry the subpath once it's linked." Run by the agent, `clerk open` would print the claim link, which carries a claim token, into its transcript.
+
 When **no** claim link can be found at all, `open` fails with `not_linked`. The lead depends on whether a secret key is on disk, and the advice after it is the step for what the folder holds, from [`lib/unlinked-folder.ts`](../../lib/unlinked-folder.ts), as every not-linked message gives (in agent mode, its commands come as `examples`):
 
 - A secret key exists locally but no claim source does (e.g. Dashboard keys pasted into `.env`) — "Found a secret key (from `<source>`) but no claim link on disk, and this folder isn't linked, so there's no dashboard page to open." For an app in no account yet (an init app, or an SDK app whose claim link works), it ends "so there's no dashboard page to open yet." instead. For plain keys the step is `clerk link`, which finds the app in your account by the publishable key. It never suggests `clerk init --accountless`: that creates a new app and overwrites the folder's keys.
