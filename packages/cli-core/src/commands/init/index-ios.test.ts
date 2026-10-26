@@ -16,6 +16,7 @@ import { ios } from "./frameworks/ios.ts";
 import { init } from "./index.ts";
 
 const iosFramework = frameworkMod.lookupFramework("ios")!;
+const reactFramework = frameworkMod.lookupFramework("react")!;
 
 describe("clerk init for native Apple projects", () => {
   const { setup, track, captured } = useInitHarness();
@@ -166,6 +167,7 @@ describe("clerk init for native Apple projects", () => {
   test.each([
     [{ starter: true, json: true }, "not with --starter"],
     [{ dryRun: true, app: "app_test" }, "--dry-run never signs in"],
+    [{ relink: true }, "--relink applies with --app"],
     [{ appIdPrefix: "short" }, "--app-id-prefix must be"],
     [{ appleSdk: "core" as const, prebuiltAuthUi: true }, "--prebuilt-auth-ui needs ClerkKitUI"],
   ])("rejects %o before doing anything", async (options, message) => {
@@ -198,6 +200,102 @@ describe("clerk init for native Apple projects", () => {
       "--dry-run, --json need Xcode",
     );
     expect(run).not.toHaveBeenCalled();
+  });
+
+  describe("an agent's --app naming another application", () => {
+    const REPLACED = { appId: "app_A", appName: "Web", scope: "/repo" };
+
+    // Linked to app_A until init links app_B.
+    const linkedToA = () =>
+      spyOn(config, "resolveProfile")
+        .mockResolvedValueOnce({ profile: { appId: "app_A" } } as never)
+        .mockResolvedValue({ profile: { appId: "app_B" } } as never);
+
+    function linkedElsewhere(replaced: typeof REPLACED | null = REPLACED) {
+      const run = iosProject({ isAgent: true });
+      linkedToA();
+      const check = spyOn(linkMod, "replacedLink").mockResolvedValue(replaced ?? undefined);
+      track(check);
+      return { run, check };
+    }
+
+    test("stops before relinking the repository", async () => {
+      const { run } = linkedElsewhere();
+
+      await expect(init({ app: "app_B" })).rejects.toThrow(
+        "/repo is linked to Web (app_A). Linking it to app_B switches every Clerk CLI command in /repo to app_B. Rerun with --relink to switch it, or pass --app app_A to keep the current link.",
+      );
+      expect(linkMod.link).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    test("with --json, asks to relink as an input-required status", async () => {
+      linkedElsewhere();
+
+      await expect(init({ app: "app_B", json: true })).rejects.toThrow("--relink");
+      expect(JSON.parse(captured.out)).toEqual({
+        status: "input-required",
+        appIntegrationComplete: false,
+        link: {
+          flag: "--relink",
+          question: "Switch the Clerk CLI link for /repo from Web (app_A) to app_B?",
+          issue: expect.stringContaining("switches every Clerk CLI command in /repo"),
+          current: { appId: "app_A", appName: "Web" },
+          requested: "app_B",
+          scope: "/repo",
+        },
+      });
+    });
+
+    test("--relink switches it", async () => {
+      const { run, check } = linkedElsewhere();
+
+      await init({ app: "app_B", relink: true });
+
+      expect(check).not.toHaveBeenCalled();
+      expect(linkMod.link).toHaveBeenCalledWith(expect.objectContaining({ app: "app_B" }));
+      expect(run).toHaveBeenCalledWith(expect.anything(), "app_B");
+    });
+
+    test("a link it wouldn't replace links as before", async () => {
+      const { run } = linkedElsewhere(null);
+
+      await init({ app: "app_B" });
+
+      expect(linkMod.link).toHaveBeenCalled();
+      expect(run).toHaveBeenCalledWith(expect.anything(), "app_B");
+    });
+
+    test("a project init generates in a blank directory is checked before linking", async () => {
+      setup({ isAgent: true });
+      spyOn(frameworkMod, "lookupFramework").mockReturnValue(reactFramework);
+      spyOn(context, "gatherContext").mockResolvedValue({
+        ...FAKE_CTX,
+        cwd: "/repo/new-react-app",
+        framework: reactFramework,
+      });
+      const check = spyOn(linkMod, "replacedLink").mockResolvedValue(REPLACED);
+      track(check);
+
+      await expect(init({ framework: "react", app: "app_B", skills: false })).rejects.toThrow(
+        "--relink",
+      );
+      expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+      expect(check).toHaveBeenCalledWith("/repo/new-react-app", "app_B", { newProject: false });
+      expect(linkMod.link).not.toHaveBeenCalled();
+    });
+
+    test("a person is asked by clerk link itself, as before", async () => {
+      iosProject();
+      linkedToA();
+      const check = spyOn(linkMod, "replacedLink").mockResolvedValue(REPLACED);
+      track(check);
+
+      await init({ app: "app_B" });
+
+      expect(check).not.toHaveBeenCalled();
+      expect(linkMod.link).toHaveBeenCalled();
+    });
   });
 
   describe("--starter", () => {
@@ -390,6 +488,21 @@ describe("clerk init for native Apple projects", () => {
 
       // The real promptAndBootstrap stops here with "needs Xcode on macOS" before writing.
       expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    });
+
+    test("stops before writing a new app that would relink its repository", async () => {
+      starter({}, { isAgent: true });
+      const check = spyOn(linkMod, "replacedLink").mockResolvedValue({
+        appId: "app_A",
+        scope: "/repo",
+      });
+      track(check);
+
+      await expect(init({ starter: true, framework: "ios", app: "app_B" })).rejects.toThrow(
+        "/repo is linked to app_A. Linking a new app here to app_B switches every Clerk CLI command in /repo to app_B. Rerun with --relink to switch it, pass --app app_A to share its application, or create the new app outside this repository.",
+      );
+      expect(check).toHaveBeenCalledWith(expect.any(String), "app_B", { newProject: true });
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
     });
 
     test("--team-id needs --starter", async () => {

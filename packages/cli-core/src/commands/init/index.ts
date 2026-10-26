@@ -1,7 +1,7 @@
 import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { login } from "../auth/login.js";
-import { link } from "../link/index.js";
+import { link, replacedLink } from "../link/index.js";
 import { pull } from "../env/pull.js";
 import { isAgent } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
@@ -10,6 +10,7 @@ import {
   throwUsageError,
   CliError,
   ERROR_CODE,
+  EXIT_CODE,
   errorMessage,
 } from "../../lib/errors.js";
 import {
@@ -95,6 +96,8 @@ type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   template?: KeylessTemplate;
   /** Replace an existing unclaimed accountless application instead of keeping it. */
   fresh?: boolean;
+  /** Let an agent replace the link to a different application that `--app` would overwrite. */
+  relink?: boolean;
 };
 
 export async function init(options: InitOptions = {}) {
@@ -151,6 +154,10 @@ export async function init(options: InitOptions = {}) {
     options.json && "--json",
     ...(options.starter ? [] : appleFlags),
   ].filter((flag): flag is string => Boolean(flag));
+  // A new app inside a repository linked elsewhere would move the whole repository's link, so an
+  // agent hears about it before anything is written.
+  if (options.starter && agent && options.app)
+    await assertLinkKept(cwd, options, { newProject: true });
   const resolved = existingProjectFlags.length
     ? await resolveExistingProjectContext(cwd, frameworkOverride, overrides, existingProjectFlags)
     : options.starter
@@ -217,6 +224,9 @@ export async function init(options: InitOptions = {}) {
     const createIfMissing = agent
       ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
       : undefined;
+    // A project init generated without --starter (a blank directory) had no check before it was
+    // written, so it's checked now, as itself. A --starter app was checked before writing.
+    if (!options.starter && agent && options.app) await assertLinkKept(ctx.cwd, options);
     await authenticateAndLink(
       ctx.cwd,
       options.app,
@@ -300,6 +310,11 @@ async function assertUsableFlags(
 ): Promise<void> {
   if (accountless && options.login) {
     throwUsageError("--accountless and --login cannot be combined.");
+  }
+  if (options.relink && !options.app) {
+    throwUsageError(
+      "--relink applies with --app: it lets it replace a link to a different application.",
+    );
   }
   if (accountless && options.app) {
     throwUsageError(
@@ -418,6 +433,53 @@ function appleContinuation(
     else if (typeof value === "string" && value) parts.push(flag, quoteArg(value));
   }
   return parts.join(" ");
+}
+
+/** A link decision the user must make, already printed as an `input-required` status with `--json`. */
+class LinkDecisionRequired extends CliError {
+  constructor(message: string) {
+    super(message, { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE });
+  }
+}
+
+/**
+ * In agent mode, `--app` naming a different application than this folder's link would silently
+ * replace it, and inside a Git repository that link is shared by every project there. Without
+ * `--relink`, stop and say so instead; with `--json`, also as an `input-required` status.
+ */
+async function assertLinkKept(
+  cwd: string,
+  options: InitOptions,
+  { newProject = false }: { newProject?: boolean } = {},
+): Promise<void> {
+  if (!options.app || options.relink) return;
+  const replaced = await replacedLink(cwd, options.app, { newProject });
+  if (!replaced) return;
+  const current = replaced.appName ? `${replaced.appName} (${replaced.appId})` : replaced.appId;
+  // Sharing the linked application is usually right for an app in the same product's repository.
+  const keep = newProject
+    ? `pass --app ${replaced.appId} to share its application, or create the new app outside this repository`
+    : `or pass --app ${replaced.appId} to keep the current link`;
+  const message = `${replaced.scope} is linked to ${current}. Linking ${newProject ? "a new app here" : "it"} to ${options.app} switches every Clerk CLI command in ${replaced.scope} to ${options.app}. Rerun with --relink to switch it, ${keep}.`;
+  if (options.json)
+    log.data(
+      JSON.stringify({
+        status: "input-required",
+        appIntegrationComplete: false,
+        link: {
+          flag: "--relink",
+          question: `Switch the Clerk CLI link for ${replaced.scope} from ${current} to ${options.app}?`,
+          issue: message,
+          current: {
+            appId: replaced.appId,
+            ...(replaced.appName && { appName: replaced.appName }),
+          },
+          requested: options.app,
+          scope: replaced.scope,
+        },
+      }),
+    );
+  throw new LinkDecisionRequired(message);
 }
 
 /** Rejects flags the detected (or requested) framework can't honour. */
@@ -974,6 +1036,7 @@ export function registerInit(program: Program): void {
       "--prebuilt-auth-ui",
       "Add ClerkKitUI's prebuilt sign-in screen to an unchanged SwiftUI starter",
     )
+    .option("--relink", "Let --app replace this folder's link to a different application")
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
     .setExamples([

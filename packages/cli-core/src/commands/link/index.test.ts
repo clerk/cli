@@ -101,7 +101,7 @@ mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
-const { link } = await import("./index.ts");
+const { link, replacedLink } = await import("./index.ts");
 
 const mockApp = {
   application_id: "app_123",
@@ -1307,5 +1307,64 @@ describe("link", () => {
       expect(captured.err).toContain("Created");
       expect(captured.err).toContain("Created App");
     });
+  });
+});
+
+describe("replacedLink", () => {
+  afterEach(() => {
+    mockResolveProfile.mockReset();
+    mockGetGitRepoRoot.mockReset();
+  });
+
+  function linked(path: string, appId = "app_A", appName = "Web") {
+    mockResolveProfile.mockResolvedValue({
+      path,
+      profile: { appId, appName },
+      resolvedVia: "remote",
+    });
+  }
+
+  test("names the repository-wide link another app would replace", async () => {
+    linked("github.com/acme/web");
+    mockGetGitRepoRoot.mockResolvedValue("/repo");
+
+    expect(await replacedLink("/repo/apps/ios", "app_B")).toEqual({
+      appId: "app_A",
+      appName: "Web",
+      scope: "/repo",
+    });
+  });
+
+  test("a new project inside the repository replaces it too", async () => {
+    linked("/repo/.git");
+    mockGetGitRepoRoot.mockResolvedValue("/repo");
+
+    expect(await replacedLink("/repo", "app_B", { newProject: true })).toMatchObject({
+      scope: "/repo",
+    });
+  });
+
+  test.each([
+    { name: "no link", setup: () => mockResolveProfile.mockResolvedValue(undefined) },
+    { name: "the same app", setup: () => linked("github.com/acme/web", "app_B") },
+  ])("keeps $name", async ({ setup }) => {
+    setup();
+    mockGetGitRepoRoot.mockResolvedValue("/repo");
+
+    expect(await replacedLink("/repo", "app_B")).toBeUndefined();
+  });
+
+  test("outside a repository, only a link stored for the folder itself is replaced", async () => {
+    mockGetGitRepoRoot.mockResolvedValue(undefined);
+
+    linked("/work");
+    expect(await replacedLink("/work", "app_B")).toEqual({
+      appId: "app_A",
+      appName: "Web",
+      scope: "/work",
+    });
+    // A parent's link is inherited, not overwritten: the folder gets a link of its own.
+    expect(await replacedLink("/work/ios", "app_B")).toBeUndefined();
+    expect(await replacedLink("/work", "app_B", { newProject: true })).toBeUndefined();
   });
 });
