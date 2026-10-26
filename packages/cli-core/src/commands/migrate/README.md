@@ -214,18 +214,20 @@ Gets users **out** of a source platform, so there is something to feed
 ```sh
 clerk migrate export                                    # pick a platform
 clerk migrate export clerk --output users.json
+clerk migrate export auth0 --domain my-tenant.us.auth0.com \
+  --client-id …                         # asks for the secret, masked
 clerk migrate export supabase --db-url "postgres://postgres:...@db.xxx.supabase.co:5432/postgres"
 clerk migrate export firebase --service-account ./service-account.json
 ```
 
 The platform is an optional positional. Omitted, you get a picker built from
 the registry; given, it runs directly. Each platform resolves its own flags —
-what a Clerk export needs (a secret key) has nothing in common with what a
-database export needs.
+what Auth0 needs (a tenant domain and M2M credentials) has nothing in common
+with what a database export needs.
 
-**A credential the far end rejects is asked for again.** Connection strings and
-Firebase service account keys are long, pasted by hand, masked as they are
-typed, and wrong in ways nothing local can check: a typo'd host, a revoked key,
+**A credential the far end rejects is asked for again.** Connection strings,
+Firebase service account keys and Auth0 client secrets are all long, pasted by
+hand, masked as they are typed, and wrong in ways nothing local can check: a typo'd host, a revoked key,
 an expired token, the right server but the wrong database. Only the connection
 or the token exchange can say, and by then the operator has answered every
 other question the command asked. So that step — and only that step,
@@ -238,6 +240,7 @@ told not to.
 | Platform   | Source                           | Feeds               |
 | ---------- | -------------------------------- | ------------------- |
 | `clerk`    | Clerk Backend API                | `--source clerk`    |
+| `auth0`    | Auth0 Management API             | `--source auth0`    |
 | `supabase` | Supabase Postgres (`auth.users`) | `--source supabase` |
 | `firebase` | Firebase Identity Toolkit        | `--source firebase` |
 
@@ -269,14 +272,17 @@ skipped, coverage, next }` — and never prompts, so a missing credential exits 
 naming the flag to pass. `next`, and the commands printed after a human run,
 keep `--runs-dir`: the import looks the run ID up there.
 
-| Flag                       | Platforms  | Description                                               |
-| -------------------------- | ---------- | --------------------------------------------------------- |
-| `-o, --output <path>`      | all        | Write the export here instead of the run folder           |
-| `-y, --yes`                | all        | Do not prompt: fail on a bad credential                   |
-| `--json`                   | all        | Print the result as JSON; never prompts                   |
-| `--runs-dir <path>`        | all        | Where runs are kept (see [the run store](#the-run-store)) |
-| `--db-url <url>`           | `supabase` | Postgres connection string                                |
-| `--service-account <path>` | `firebase` | Path to a service account key JSON file                   |
+| Flag                       | Platforms  | Description                                                       |
+| -------------------------- | ---------- | ----------------------------------------------------------------- |
+| `-o, --output <path>`      | all        | Write the export here instead of the run folder                   |
+| `-y, --yes`                | all        | Do not prompt: fail on a bad credential                           |
+| `--json`                   | all        | Print the result as JSON; never prompts                           |
+| `--runs-dir <path>`        | all        | Where runs are kept (see [the run store](#the-run-store))         |
+| `--db-url <url>`           | `supabase` | Postgres connection string                                        |
+| `--service-account <path>` | `firebase` | Path to a service account key JSON file                           |
+| `--domain <domain>`        | `auth0`    | Tenant domain, e.g. `my-tenant.us.auth0.com`, not a custom domain |
+| `--client-id <id>`         | `auth0`    | Machine-to-machine application client ID                          |
+| `--client-secret <secret>` | `auth0`    | Machine-to-machine application client secret                      |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
 so it resolves a key the same way `clerk migrate import` does, with one extra
@@ -350,11 +356,18 @@ profile in that order.
 The export run has one line per exported user, so `clerk migrate runs` lists it
 alongside imports.
 
-#### Clerk exports no passwords
+#### Two platforms export no passwords
 
-Clerk never returns password digests, TOTP secrets or backup codes over the API
-— only the `*_enabled` booleans. Migrated users must reset their password in
-the destination instance. The export says so on every run, and the coverage row
+- **Clerk** never returns password digests, TOTP secrets or backup codes over
+  the API — only the `*_enabled` booleans. Migrated users must reset their
+  password in the destination instance.
+- **Auth0**'s Management API does not return password hashes either; they come
+  only from a support request. That file has no `user_id`: a user's ID is
+  `auth0|` plus `alt_id`, or `_id` when there's no `alt_id`. Copy each
+  `passwordHash` onto the matching user before importing, or migrate without
+  passwords.
+
+Both print a warning whenever they export anyone. `clerk`'s coverage also
 counts users who _have_ a password, so the size of the gap is visible up front.
 
 #### `supabase` reads the database
@@ -477,6 +490,39 @@ downloads, to serve one subcommand. What it does here is an RS256 JWT traded
 for an access token, then two Identity Toolkit endpoints, `accounts:batchGet`
 (paged, 1000 users a request) and the project config, and Bun's Web Crypto
 signs RS256 with no dependency at all.
+
+#### Auth0 credentials
+
+Needs a machine-to-machine application with the `read:users` scope
+(Applications → APIs → Auth0 Management API → Machine to Machine
+Applications). Resolved from flags, then `AUTH0_DOMAIN` / `AUTH0_CLIENT_ID` /
+`AUTH0_CLIENT_SECRET`, then a prompt. In agent mode a prompt is impossible, so
+it exits naming **every** missing credential at once rather than one per run.
+
+Auth0 pages this endpoint only through the first **1000** users. Past that the
+export stops and says so, pointing at Auth0's bulk export job — silently
+returning the first thousand would read as "that is everyone". A tenant of
+exactly 1000 gets the warning too: Auth0 reports a larger tenant's total as
+1000, so the two look the same. It also says so when fewer users come back
+than Auth0 counted. Either way the file holds what came back, `--json` carries
+`truncated: true`, and the export exits 1. The run finishes `partial`, and
+importing it by run ID warns that it is not every user, among the checks'
+warnings, so `--json` carries it too. The bulk job downloads gzipped
+NDJSON: unzip it before importing. Ask the job for `user_metadata`,
+`app_metadata` and `blocked` by name, since a job with no `fields` leaves
+them out.
+
+Pages are read in `created_at` order, and a user a shifted page repeats is
+exported once. A `429` backs off, honouring `Retry-After`, as the import does;
+a free or development tenant allows only a few Management API requests a
+second.
+
+A credential the platform rejects (400, 401 or 403) is asked for again at a
+terminal, and so is an Auth0 token whose granted scopes leave out `read:users`.
+When Auth0's token response lists no scopes, the first users request finds the
+missing permission instead, and exits. An outage, a refused connection, or a
+`429` that outlasts its retries is not asked for again: another credential would
+not fix it, and it exits 1.
 
 ### `clerk migrate import`
 
@@ -932,6 +978,7 @@ brings across. Adding a platform is one file in `sources/` plus one line in
 | Key        | Reads                        | Passwords | MFA     | Metadata |
 | ---------- | ---------------------------- | --------- | ------- | -------- |
 | `clerk`    | Clerk Dashboard export       | partial   | partial | partial  |
+| `auth0`    | Auth0 Management API         | partial   | no      | yes      |
 | `firebase` | `firebase auth:export`       | yes       | no      | no       |
 | `supabase` | Supabase `auth.users` export | yes       | no      | partial  |
 
@@ -941,13 +988,17 @@ There is no column for social sign-ins, because no source copies them and none
 needs to. Enable the same providers in Clerk, and a user who signs in with one
 is linked to their imported account by verified email. See
 [account linking](https://clerk.com/docs/guides/configure/auth-strategies/social-connections/account-linking).
+The import's checks count the providers in a Supabase or Auth0 file and offer
+to enable any that are off. Auth0's come from each `user_id`'s prefix
+(`github|…`), so a user who linked a second provider counts under the first.
 
 ### Metadata
 
-Supabase's `raw_user_meta_data`, which a user can edit on Supabase, goes to
-Clerk's `unsafe_metadata`, which is the user-editable one. Public metadata is
-read-only to the user, so putting it there would take away an edit the user
-had. A Clerk Dashboard CSV carries no metadata.
+Metadata a user can edit on the source platform — Auth0's `user_metadata`,
+Supabase's `raw_user_meta_data` — goes to Clerk's `unsafe_metadata`, which is
+the user-editable one. Public metadata is read-only to the user, so putting it
+there would take away an edit the user had. Auth0's `app_metadata` goes to
+`private_metadata`. A Clerk Dashboard CSV carries no metadata.
 
 ### Verified vs unverified identifiers
 
@@ -957,7 +1008,7 @@ which style it uses. An identifier the source never confirmed is routed to
 field, because Clerk creates primary identifiers **verified** — sending an
 unconfirmed address there would silently promote it.
 
-- **Boolean** (`firebase`): `true`/`false`. A CSV export stringifies these, so `"false"` is
+- **Boolean** (`auth0`, `firebase`): `true`/`false`. A CSV export stringifies these, so `"false"` is
   read as false, not as a non-empty string. `TRUE`, `FALSE`, `t` and `f` read
   too, as a spreadsheet or psql writes them.
 - **Timestamp** (`supabase`): a nullable confirmation time. Any real value
@@ -1092,10 +1143,12 @@ The checks also read the instance's Frontend API `GET /v1/environment`
 attributes and enabled social providers. Nothing in `clerk migrate` writes
 instance settings: the checks print the `clerk config patch` to run instead.
 
-`export firebase` talks to Google rather than to Clerk:
+Two exports talk to their own platform rather than to Clerk:
 
 | Method | Path                                           | Used by                                              |
 | ------ | ---------------------------------------------- | ---------------------------------------------------- |
+| `POST` | `https://<tenant>/oauth/token`                 | `export auth0` — Management API access token         |
+| `GET`  | `https://<tenant>/api/v2/users`                | `export auth0` — 100 per page, 1000 users maximum    |
 | `POST` | `https://oauth2.googleapis.com/token`          | `export firebase` — RS256 assertion → access token   |
 | `GET`  | `…/v1/projects/{project_id}/accounts:batchGet` | `export firebase` — pages users, 1000 at a time      |
 | `GET`  | `…/admin/v2/projects/{project_id}/config`      | `export firebase` — reads the scrypt hash parameters |

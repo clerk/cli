@@ -101,7 +101,7 @@ import {
   loadUsersFromFile,
   resolveImportFilePath,
 } from "./lib/transform.ts";
-import { resolveSource, sourceKeys } from "./sources/registry.ts";
+import { getSource, resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
 import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
 import { login } from "../auth/login.ts";
@@ -295,6 +295,8 @@ async function resolveInput(options: MigrateRunOptions): Promise<{
   exportSha256?: string;
   /** The instance an export run read its users from. */
   exportInstanceId?: string;
+  /** The export run's source cut it short, so its file is not every user. */
+  exportTruncated?: true;
 }> {
   const value = options.input;
   if (!value) {
@@ -352,6 +354,7 @@ async function resolveInput(options: MigrateRunOptions): Promise<{
     fromExport: record.id,
     exportSha256: sha256,
     ...(record.target.instanceId ? { exportInstanceId: record.target.instanceId } : {}),
+    ...(record.truncated ? { exportTruncated: true as const } : {}),
   };
 }
 
@@ -385,7 +388,7 @@ async function applySource(options: MigrateRunOptions): Promise<MigrateRunOption
  * The source an export file names for itself, checked against the one the
  * flags name.
  *
- * @throws UsageError when the two disagree: importing a Clerk export through
+ * @throws UsageError when the two disagree: importing an Auth0 export through
  *   the Supabase mapping would create users with the wrong fields.
  */
 function applyEnvelope(
@@ -1027,6 +1030,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),
+          socialProviders: getSource(source).socialProviders,
           settings,
           existingUsers,
           instanceType: limits.instanceType,
@@ -1038,6 +1042,14 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
           spinner,
         }),
       );
+      // With the checks' warnings, so `--json` carries it too: an agent reads
+      // stdout, not the stderr a separate warning would go to.
+      if (input.exportTruncated) {
+        checks.warnings.unshift(
+          `Export run ${input.fromExport} did not get every user: the source cut it short. ` +
+            "Users it never reached are not in this import.",
+        );
+      }
 
       const refused = checks.rejects.length > 0 && !options.allowPartial;
       // The users --require-password left out never reach the checks, so the

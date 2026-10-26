@@ -170,13 +170,19 @@ export function finishExport(input: FinishExportInput): FinishedExport {
         `Nothing was written. Run the export again${options.output ? " with another --output" : ""}.`,
     );
   }
-  run.update({ file: { path: outputPath, sha256: sha256File(outputPath) } });
+  run.update({
+    file: { path: outputPath, sha256: sha256File(outputPath) },
+    ...(input.truncated ? { truncated: true } : {}),
+  });
   const record = run.finish();
   // Only the runs folder: the export's --secret-key, --app and --instance name
   // the source, and would aim the import at it.
   const carry = carryFlags({ runsDir: options.runsDir });
   const next = withFlags(`clerk migrate import ${record.id}`, carry);
   const skipped = record.counts.skipped ?? 0;
+  // Partial, like an import with failures: the file holds what came back, and
+  // the exit says it is not everyone, where `truncated` alone is easy to miss.
+  if (input.truncated) process.exitCode = 1;
 
   if (options.json) {
     log.data(
