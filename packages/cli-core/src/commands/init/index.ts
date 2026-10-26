@@ -74,35 +74,38 @@ import {
   type StarterProjectSummary,
 } from "./ios/coordinator.js";
 import { withNativeProgress } from "./native/progress.js";
+import { applicationRequired as nativeApplicationRequired } from "./native/status.js";
 import { StarterInputRequired, type AppleStarter } from "./ios/starter-bootstrap.js";
+import { runAndroidInit, type AndroidInitOptions } from "./android/coordinator.js";
 
-type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
-  /** Framework to set up (skips auto-detection). */
-  framework?: string;
-  pm?: PackageManager;
-  name?: string;
-  yes?: boolean;
-  /** Install the optional agent skills (set to false via `--no-skills` to skip). */
-  skills?: boolean;
-  /** Create a new project from a starter template. */
-  starter?: boolean;
-  /** Apple Developer Team ID for a new iOS or macOS starter. */
-  teamId?: string;
-  /** Link to a specific Clerk application by ID (skips the interactive picker). */
-  app?: string;
-  /** Force accountless setup (auto-generated dev keys, no login). */
-  accountless?: boolean;
-  /** Deprecated alias for `accountless`. */
-  keyless?: boolean;
-  /** Force the authenticated flow (log in and link a real app) instead of defaulting to accountless. */
-  login?: boolean;
-  /** Pre-configure the accountless application from a Clerk application template. */
-  template?: KeylessTemplate;
-  /** Replace an existing unclaimed accountless application instead of keeping it. */
-  fresh?: boolean;
-  /** Let an agent replace the link to a different application that `--app` would overwrite. */
-  relink?: boolean;
-};
+type InitOptions = Omit<AppleInitOptions, "root" | "agent"> &
+  Omit<AndroidInitOptions, "root" | "agent"> & {
+    /** Framework to set up (skips auto-detection). */
+    framework?: string;
+    pm?: PackageManager;
+    name?: string;
+    yes?: boolean;
+    /** Install the optional agent skills (set to false via `--no-skills` to skip). */
+    skills?: boolean;
+    /** Create a new project from a starter template. */
+    starter?: boolean;
+    /** Apple Developer Team ID for a new iOS or macOS starter. */
+    teamId?: string;
+    /** Link to a specific Clerk application by ID (skips the interactive picker). */
+    app?: string;
+    /** Force accountless setup (auto-generated dev keys, no login). */
+    accountless?: boolean;
+    /** Deprecated alias for `accountless`. */
+    keyless?: boolean;
+    /** Force the authenticated flow (log in and link a real app) instead of defaulting to accountless. */
+    login?: boolean;
+    /** Pre-configure the accountless application from a Clerk application template. */
+    template?: KeylessTemplate;
+    /** Replace an existing unclaimed accountless application instead of keeping it. */
+    fresh?: boolean;
+    /** Let an agent replace the link to a different application that `--app` would overwrite. */
+    relink?: boolean;
+  };
 
 export async function init(options: InitOptions = {}) {
   const cwd = process.cwd();
@@ -115,12 +118,18 @@ export async function init(options: InitOptions = {}) {
   }
   await assertUsableFlags(options, agent, optsAccountless);
 
-  // macOS apps use the iOS (Swift) setup; the value only picks which starter to create.
+  const androidFlags = ANDROID_FLAGS.filter(([key]) => options[key] != null).map(
+    ([, flag]) => flag,
+  );
+  // macOS apps use the iOS (Swift) setup; the value only picks which starter to create. A
+  // platform's own flags select its setup even when the directory has no root marker.
   const frameworkOverride = options.framework
     ? (lookupFramework(options.framework === MACOS ? "ios" : options.framework) ?? undefined)
     : options.xcodeProject
       ? (lookupFramework("ios") ?? undefined)
-      : undefined;
+      : androidFlags.length
+        ? (lookupFramework("android") ?? undefined)
+        : undefined;
   // Before any bootstrap, so an unsupported flag never leaves a new project behind.
   if (frameworkOverride) assertFrameworkFlags(options, frameworkOverride);
 
@@ -156,12 +165,13 @@ export async function init(options: InitOptions = {}) {
   intro("Setting up Clerk");
 
   setTelemetryStage("detect");
-  // Only an existing native Apple project supports these outside a new starter, so they
+  // Only an existing native project supports these outside a new starter, so they
   // skip project creation instead of being rejected after it.
   const existingProjectFlags = [
     options.dryRun && "--dry-run",
     options.json && !options.starter && "--json",
     ...(options.starter ? [] : appleFlags),
+    ...androidFlags,
   ].filter((flag): flag is string => Boolean(flag));
   // A new app inside a repository linked elsewhere would move the whole repository's link, so an
   // agent hears about it before anything is written. An iOS or macOS starter asks once its own
@@ -225,11 +235,19 @@ export async function init(options: InitOptions = {}) {
     ...(bootstrap?.apple && starterAppleOptions(options, bootstrap)),
   };
   const newApp = appleOptions.starterProject;
+  const androidOptions: AndroidInitOptions = { ...options, root: ctx.cwd, agent };
   // A new app's guidance and its JSON statuses name the same command.
   if (ctx.framework.dep === "ios")
     ctx.nativeContinuation = newApp?.continuation ?? appleContinuation(options);
-  // Only native Apple supports a dry run today; it inspects without signing in.
-  if (options.dryRun) return withNativeProgress(async () => runAppleInit(appleOptions, undefined));
+  else if (ctx.framework.dep === "android")
+    ctx.nativeContinuation = nativeContinuation(options, ANDROID_FLAGS);
+  // Only native setup supports a dry run; it inspects without signing in.
+  if (options.dryRun)
+    return withNativeProgress(async () =>
+      ctx.framework.dep === "android"
+        ? runAndroidInit(androidOptions, undefined)
+        : runAppleInit(appleOptions, undefined),
+    );
 
   await enrichProjectContext(ctx);
 
@@ -280,7 +298,9 @@ export async function init(options: InitOptions = {}) {
         options.app,
         createIfMissing,
         // Native setup continues right after linking, so link's `clerk env pull` advice doesn't apply.
-        ctx.framework.dep === "ios" && canSetUpXcode() ? { showNextSteps: false } : {},
+        (ctx.framework.dep === "ios" && canSetUpXcode()) || ctx.framework.dep === "android"
+          ? { showNextSteps: false }
+          : {},
       );
     } catch (error) {
       // The new app is already on disk; say where, and how to finish it, instead of only failing.
@@ -290,19 +310,36 @@ export async function init(options: InitOptions = {}) {
     }
   }
 
-  // Native Apple setup edits the Xcode project and registers the app instead of
+  // Native setup edits the Xcode or Gradle project and registers the app instead of
   // scaffolding files and pulling keys into an env file.
-  if (ctx.framework.dep === "ios" && strategy === "authenticate" && canSetUpXcode()) {
+  const native =
+    ctx.framework.dep === "android"
+      ? "android"
+      : ctx.framework.dep === "ios" && canSetUpXcode()
+        ? "ios"
+        : undefined;
+  if (native && strategy === "authenticate") {
     const linked = await resolveProfile(ctx.cwd);
     if (!linked)
       throw new CliError("Link a Clerk application before native setup.", {
         code: ERROR_CODE.NOT_LINKED,
       });
-    return withNativeProgress(async () => runAppleInit(appleOptions, linked.profile.appId));
+    return withNativeProgress(async () =>
+      native === "android"
+        ? runAndroidInit(androidOptions, linked.profile.appId)
+        : runAppleInit(appleOptions, linked.profile.appId),
+    );
   }
   // An agent that asked for JSON gets the usual "choose an app" guidance as data.
   if (ctx.framework.dep === "ios" && strategy === "manual" && options.json) {
     log.data(JSON.stringify(applicationRequired(ctx.nativeContinuation, newApp), null, 2));
+    setTelemetryStage("done");
+    return;
+  }
+  if (ctx.framework.dep === "android" && strategy === "manual" && options.json) {
+    log.data(
+      JSON.stringify(nativeApplicationRequired(ctx.nativeContinuation, "Android project"), null, 2),
+    );
     setTelemetryStage("done");
     return;
   }
@@ -430,6 +467,19 @@ async function assertUsableFlags(
   if (options.appleSdk === "core" && options.prebuiltAuthUi) {
     throwUsageError("--prebuilt-auth-ui needs ClerkKitUI; use --apple-sdk ui or omit --apple-sdk.");
   }
+  const androidSelection = ANDROID_FLAGS.filter(([key]) => options[key] != null).map(
+    ([, flag]) => flag,
+  );
+  if (options.starter && androidSelection.length) {
+    throwUsageError(
+      `${androidSelection.join(", ")} ${androidSelection.length === 1 ? "selects" : "select"} an existing Android project and can't be combined with --starter.`,
+    );
+  }
+  for (const value of options.androidFingerprint ?? [])
+    if (!/^(?:SHA-?256:\s*)?[A-Fa-f0-9]{2}(?::?[A-Fa-f0-9]{2}){31}$/i.test(value.trim()))
+      throwUsageError(
+        `--android-fingerprint must be a SHA-256 signing certificate fingerprint (64 hex digits, optionally colon-separated); got "${value}".`,
+      );
   // Presence-only here would repeat the hang below: an agent can't complete an
   // interactive login, so a stored-but-broken credential must read as
   // unauthenticated rather than let this guard wave the request through.
@@ -450,6 +500,13 @@ const APPLE_FLAGS = [
   ["teamId", "--team-id"],
   ["signInWithApple", "--sign-in-with-apple"],
   ["prebuiltAuthUi", "--prebuilt-auth-ui"],
+] as const;
+
+const ANDROID_FLAGS = [
+  ["androidModule", "--android-module"],
+  ["androidPackage", "--android-package"],
+  ["androidFingerprint", "--android-fingerprint"],
+  ["androidSdk", "--android-sdk"],
 ] as const;
 
 /** `--framework macos` creates a macOS starter; for an existing app it means the iOS (Swift) setup. */
@@ -509,6 +566,25 @@ function appleContinuation(
     const value = values[key];
     if (value === true) parts.push(flag);
     else if (typeof value === "string" && value) parts.push(flag, quoteArg(value));
+  }
+  return parts.join(" ");
+}
+
+/**
+ * The `clerk init` an agent runs once it has chosen an application for an existing native project,
+ * carrying the platform's setup options so the next run doesn't fall back to defaults.
+ */
+function nativeContinuation(
+  options: InitOptions,
+  flags: readonly (readonly [keyof InitOptions, string])[],
+): string {
+  const parts = ["clerk init --app <app_id> --json", ...(options.relink ? ["--relink"] : [])];
+  for (const [key, flag] of flags) {
+    const value = options[key];
+    if (value === true) parts.push(flag);
+    else if (typeof value === "string" && value) parts.push(flag, quoteArg(value));
+    else if (Array.isArray(value) && value.length)
+      parts.push(flag, ...value.map((item) => quoteArg(String(item))));
   }
   return parts.join(" ");
 }
@@ -616,6 +692,11 @@ function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): v
   if (apple.length && framework.dep !== "ios")
     throwUsageError(
       `${apple.join(", ")} ${apple.length === 1 ? "applies" : "apply"} only to iOS (Swift) projects.`,
+    );
+  const android = ANDROID_FLAGS.filter(([key]) => options[key] != null).map(([, flag]) => flag);
+  if (android.length && framework.dep !== "android")
+    throwUsageError(
+      `${android.join(", ")} ${android.length === 1 ? "applies" : "apply"} only to Android (Kotlin) projects.`,
     );
 }
 
@@ -826,13 +907,15 @@ function printBootstrapManualSetupInfo(ctx: ProjectContext): void {
   const { framework } = ctx;
   // Only reachable for frameworks without accountless support: capable ones resolve to
   // the "keyless" or "authenticate" strategy in agent mode instead.
-  const native = framework.dep === "ios" && canSetUpXcode() && ctx.nativeContinuation;
+  const native =
+    ((framework.dep === "ios" && canSetUpXcode()) || framework.dep === "android") &&
+    ctx.nativeContinuation;
   const lines = [
     `\n  Set up Clerk for ${framework.name}:`,
     `    ${framework.name} requires API keys — set them up manually:`,
     `    ${native || "clerk init --app <app_id>"}`,
-    // Swift apps configure the key in source; there's no env file to pull into.
-    ...(framework.dep === "ios" && canSetUpXcode() ? [] : ["    clerk env pull"]),
+    // Swift and Kotlin apps configure the key in source; there's no env file to pull into.
+    ...(native ? [] : ["    clerk env pull"]),
   ];
   log.info(lines.map(dim).join("\n"));
 }
@@ -1143,9 +1226,9 @@ export function registerInit(program: Program): void {
     )
     .option(
       "--dry-run",
-      "Inspect the project and print the setup plan without changing anything (iOS only)",
+      "Inspect the project and print the setup plan without changing anything (iOS, macOS, and Android)",
     )
-    .option("--json", "Print the setup result as JSON (iOS only)")
+    .option("--json", "Print the setup result as JSON (iOS, macOS, and Android)")
     .option("--xcode-project <path>", "Xcode project or workspace to set up")
     .option("--xcode-target <name-or-id>", "Xcode app target to set up, by name or ID")
     .option("--xcode-configuration <name>", "Xcode build configuration to inspect")
@@ -1168,6 +1251,24 @@ export function registerInit(program: Program): void {
     .option(
       "--prebuilt-auth-ui",
       "Add ClerkKitUI's prebuilt sign-in screen to an unchanged SwiftUI starter",
+    )
+    .option(
+      "--android-module <path>",
+      "Android application module to set up, relative to the project root",
+    )
+    .option(
+      "--android-package <id>",
+      "Installed applicationId to register, including any variant suffix",
+    )
+    .option(
+      "--android-fingerprint <sha256...>",
+      "SHA-256 signing certificate fingerprints to register, besides the debug keystore's",
+    )
+    .addOption(
+      createOption(
+        "--android-sdk <artifact>",
+        "Clerk SDK artifact: core (clerk-android-api) or ui (clerk-android-ui)",
+      ).choices(["core", "ui"]),
     )
     .option("--relink", "Let --app replace this folder's link to a different application")
     .option("-y, --yes", "Skip confirmation prompts")
@@ -1209,7 +1310,11 @@ export function registerInit(program: Program): void {
       },
       {
         command: "clerk init --dry-run --json",
-        description: "Inspect an Xcode project and print its setup plan as JSON",
+        description: "Inspect an Xcode or Android project and print its setup plan as JSON",
+      },
+      {
+        command: "clerk init --android-sdk ui --android-fingerprint <sha256>",
+        description: "Set up an Android app with Clerk's UI and register a release certificate",
       },
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },

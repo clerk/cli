@@ -16,15 +16,18 @@ clerk doctor --fix       # Offer to auto-fix issues
 
 ## Options
 
-| Flag                           | Description                                                      |
-| ------------------------------ | ---------------------------------------------------------------- |
-| `--verbose`                    | Show detailed diagnostic info for each check                     |
-| `--json`                       | Output results as machine-readable JSON                          |
-| `--spotlight`                  | Only show warnings and failures (hide passing checks)            |
-| `--fix`                        | Offer to auto-fix issues with known remedies                     |
-| `--xcode-project <path>`       | Xcode project or workspace to check; also selects the iOS checks |
-| `--xcode-target <name-or-id>`  | Xcode app target to check                                        |
-| `--xcode-configuration <name>` | Xcode build configuration to check                               |
+| Flag                                | Description                                                          |
+| ----------------------------------- | -------------------------------------------------------------------- |
+| `--verbose`                         | Show detailed diagnostic info for each check                         |
+| `--json`                            | Output results as machine-readable JSON                              |
+| `--spotlight`                       | Only show warnings and failures (hide passing checks)                |
+| `--fix`                             | Offer to auto-fix issues with known remedies                         |
+| `--xcode-project <path>`            | Xcode project or workspace to check; also selects the iOS checks     |
+| `--xcode-target <name-or-id>`       | Xcode app target to check                                            |
+| `--xcode-configuration <name>`      | Xcode build configuration to check                                   |
+| `--android-module <path>`           | Android application module to check; also selects the Android checks |
+| `--android-package <id>`            | Installed `applicationId` to check, including any variant suffix     |
+| `--android-fingerprint <sha256...>` | Signing certificate fingerprints to check against the registration   |
 
 ## Checks
 
@@ -103,6 +106,34 @@ configuration's `EXCLUDED_SOURCE_FILE_NAMES`. Anything else is reported as
 Without a production instance these become one passing note, since production
 is optional (the Instances check already mentions it). Selecting only Debug with
 `--xcode-configuration Debug` skips them the same way. Without the flag, doctor inspects only configurations named Debug and Release, so when a target's release configuration has another name (such as Production), it warns that nothing was checked and names the configuration to pass.
+
+### Android projects
+
+When the directory is an Android project (an `AndroidManifest.xml` at `app/src/main/` or
+`src/main/`, or an `--android-*` flag is given), doctor skips the env-file check, since
+native apps configure Clerk in Kotlin, and adds read-only checks from the same engine as
+`clerk init` (see [Android (Kotlin)](../init/README.md#android-kotlin)). It never edits the
+project, runs Gradle, or writes to Clerk; `keytool` is the only tool it runs, to read the
+debug certificate. The local checks never block on what setup would refuse to edit: a Kotlin
+version the SDK can't be consumed by is a failing check, not an error. If Clerk can't be
+reached, the local checks still run and a warning says so. Each failing check carries its
+own remedy:
+
+| Check                       | Passes when                                                                                                                                                                      |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Android module coverage     | Always; names the build script, manifest, and `applicationId` inspected (the debug variant's when a suffix applies). Other modules, variants, and signing remain unverified      |
+| SDK dependency              | `com.clerk:clerk-android-api` or `clerk-android-ui` is declared, directly or through the version catalog                                                                         |
+| SDK version requirement     | The declared version meets the `1.3.0` baseline (warns when it can't be read)                                                                                                    |
+| Kotlin compiler             | The Kotlin version the build declares (catalog, plugin version, or classpath) is 2.3 or newer; AGP 9's built-in Kotlin without a declared plugin counts as its bundled 2.2.10    |
+| minSdk                      | `defaultConfig.minSdk` is 24 or more                                                                                                                                             |
+| Manifest                    | `<application>` registers an `Application` subclass and the `INTERNET` permission is declared                                                                                    |
+| Clerk initialization        | That class calls `Clerk.initialize`                                                                                                                                              |
+| Development publishable key | The key it passes (the `clerk_publishable_key` resource or a string literal) is the linked development instance's; warns when it can't be read. Keys are compared, never printed |
+| Native API                  | Native API is enabled on the development instance                                                                                                                                |
+| Native registration         | The `applicationId` is registered there. A registration that lacks this machine's debug fingerprint fails with the Dashboard remedy, since the CLI can't update it yet           |
+| Debug signing fingerprint   | This machine's debug certificate could be read and is registered (warns when there is no keystore or `keytool` yet)                                                              |
+
+Without a linked application the three Clerk checks become one warning.
 
 ## Auto-Fix (`--fix`)
 
@@ -183,3 +214,10 @@ instances:
 | ------ | ---------------------------------------------------------------------------------- | ---------------------------------- |
 | `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_settings`         | Whether Native API is enabled      |
 | `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_applications/ios` | Registered Bundle IDs and prefixes |
+
+Android projects read, for the development instance:
+
+| Method | Endpoint                                                                               | Description                                       |
+| ------ | -------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_settings`             | Whether Native API is enabled                     |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_applications/android` | Registered package names and signing fingerprints |

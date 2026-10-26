@@ -96,6 +96,9 @@ export type TelemetryStage =
   | "ios_inspect"
   | "ios_plan"
   | "ios_apply"
+  | "android_inspect"
+  | "android_plan"
+  | "android_apply"
   // `clerk auth login`
   | "session_check"
   | "awaiting_callback"
