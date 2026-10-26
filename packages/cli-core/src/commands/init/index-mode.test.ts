@@ -47,4 +47,17 @@ describe("clerk init --starter --json", () => {
       await inHumanMode(["--mode", "human", "init", "--starter", "--framework", "ios", "--json"]),
     ).toBe("human");
   });
+
+  test("an explicit CLERK_MODE wins", async () => {
+    const original = process.env.CLERK_MODE;
+    process.env.CLERK_MODE = "human";
+    try {
+      expect(await inHumanMode(["init", "--starter", "--framework", "ios", "--json"])).toBe(
+        "human",
+      );
+    } finally {
+      if (original === undefined) delete process.env.CLERK_MODE;
+      else process.env.CLERK_MODE = original;
+    }
+  });
 });

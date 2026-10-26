@@ -520,7 +520,7 @@ describe("clerk init for native Apple projects", () => {
       expect(JSON.parse(captured.out)).toEqual({
         status: "input-required",
         appIntegrationComplete: false,
-        starter: {
+        input: {
           field: "name",
           flag: "--name",
           question: "What would you like to name your app?",
@@ -641,7 +641,7 @@ describe("clerk init for native Apple projects", () => {
         ).rejects.toBe(failure);
         expect(JSON.parse(captured.out)).toMatchObject({
           status: "input-required",
-          starter: { field: "name", issue: failure.message },
+          input: { field: "name", issue: failure.message },
         });
         expect(check).not.toHaveBeenCalled();
       });

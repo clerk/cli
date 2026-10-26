@@ -185,7 +185,7 @@ export async function init(options: InitOptions = {}) {
         JSON.stringify({
           status: "input-required",
           appIntegrationComplete: false,
-          starter: error.describe(),
+          input: error.describe(),
         }),
       );
     if (!(error instanceof ProjectWritten)) throw error;
@@ -1188,10 +1188,11 @@ export function registerInit(program: Program): void {
     ])
     // A --json starter is read by a program, and agent mode is how every prompt in init (sign-in,
     // the app picker, relinking, the starter's questions) knows to stand down, with an
-    // input-required or application-required status instead. An explicit --mode still wins.
+    // input-required or application-required status instead. An explicit --mode or CLERK_MODE
+    // still wins, as it does over detection.
     .hook("preAction", (_command, actionCommand) => {
       const opts = actionCommand.optsWithGlobals();
-      if (opts.starter && opts.json && !opts.mode) setMode("agent");
+      if (opts.starter && opts.json && !opts.mode && !process.env.CLERK_MODE) setMode("agent");
     })
     .action(init);
 }

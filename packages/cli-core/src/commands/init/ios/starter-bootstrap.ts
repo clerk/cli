@@ -55,11 +55,14 @@ export class StarterInputRequired extends CliError {
   }
 
   describe() {
+    const { choices, ...extra } = this.extra;
     return {
       field: this.field,
       ...STARTER_QUESTIONS[this.field],
       issue: this.message,
-      ...this.extra,
+      ...extra,
+      // No teams to offer means the user enters a Team ID, so an empty list isn't sent.
+      ...(choices?.length && { choices }),
     };
   }
 }
@@ -212,7 +215,8 @@ async function chooseTeam(
       throw new StarterInputRequired(
         `Invalid --team-id "${options.teamId}": use the 10-character Team ID from Xcode › Settings › Accounts.`,
         "teamId",
-        { choices: teams },
+        // Sign in with Apple can't use a Personal Team, so only teams that could sign it are offered.
+        { choices: options.signInWithApple ? teams.filter((team) => !team.personal) : teams },
       );
     return teams.find((team) => team.id === id) ?? { id, name: id, personal: false };
   }

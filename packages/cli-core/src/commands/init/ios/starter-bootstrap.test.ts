@@ -398,18 +398,67 @@ describe("promptAppleStarter", () => {
       });
     });
 
-    test("Sign in with Apple on a Personal Team offers the paid teams", async () => {
-      xcode({ teams: [PERSONAL] });
+    test.each([
+      {
+        label: "Sign in with Apple on a Personal Team",
+        teamId: PERSONAL.id,
+        signInWithApple: true,
+        listed: [PAID, PERSONAL],
+        choices: [PAID],
+      },
+      {
+        label: "an invalid --team-id",
+        teamId: "nope",
+        signInWithApple: false,
+        listed: [PAID, PERSONAL],
+        choices: [PAID, PERSONAL],
+      },
+      {
+        label: "an invalid --team-id with Sign in with Apple",
+        teamId: "nope",
+        signInWithApple: true,
+        listed: [PAID, PERSONAL],
+        choices: [PAID],
+      },
+    ])(
+      "$label offers the teams that could sign it",
+      async ({ label: _label, listed, choices, ...options }) => {
+        xcode({ teams: [...listed] });
 
-      expect(
-        await inputRequired({
+        expect(
+          await inputRequired({ name: "MyApp", bundleId: "com.example.MyApp", ...options }),
+        ).toMatchObject({ field: "teamId", choices });
+      },
+    );
+
+    test.each([
+      {
+        label: "Sign in with Apple on a Personal Team",
+        teamId: PERSONAL.id,
+        signInWithApple: true,
+        listed: [PERSONAL],
+      },
+      {
+        label: "an invalid --team-id with Sign in with Apple",
+        teamId: "nope",
+        signInWithApple: true,
+        listed: [PERSONAL],
+      },
+      { label: "no team in Xcode", teamId: undefined, signInWithApple: false, listed: [] },
+    ])(
+      "$label with no team to offer leaves choices out",
+      async ({ label: _label, listed, ...options }) => {
+        xcode({ teams: [...listed] });
+
+        const input = await inputRequired({
           name: "MyApp",
           bundleId: "com.example.MyApp",
-          teamId: PERSONAL.id,
-          signInWithApple: true,
-        }),
-      ).toMatchObject({ field: "teamId", choices: [] });
-    });
+          ...options,
+        });
+        expect(input.field).toBe("teamId");
+        expect(input).not.toHaveProperty("choices");
+      },
+    );
 
     test("asks for a Bundle ID when Xcode can't suggest one", async () => {
       xcode({ teams: [PAID] });
