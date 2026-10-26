@@ -19,7 +19,7 @@ import {
   FRAMEWORK_NAMES,
   type FrameworkInfo,
 } from "../../lib/framework.js";
-import { resolveProfile } from "../../lib/config.js";
+import { getProfile, resolveProfile } from "../../lib/config.js";
 import { getGitRepoRoot } from "../../lib/git.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
@@ -171,7 +171,7 @@ export async function init(options: InitOptions = {}) {
     else {
       await assertApplicationChosen(cwd, options);
       // A link left for a folder of the same name (since removed) would be inherited too.
-      if (projectDir) await assertApplicationChosen(projectDir, options);
+      if (projectDir) await assertApplicationChosen(projectDir, options, { exact: true });
     }
   };
   if (appleStarter && agent) overrides.beforeWrite = linkChecks;
@@ -556,12 +556,21 @@ async function assertLinkKept(
  * a parent's or the repository's, which may belong to another project. An agent names the
  * application instead: `--app` with the linked one to share it, or with another.
  */
-async function assertApplicationChosen(cwd: string, options: InitOptions): Promise<void> {
-  const inherited = await resolveProfile(cwd);
+async function assertApplicationChosen(
+  cwd: string,
+  options: InitOptions,
+  { exact = false }: { exact?: boolean } = {},
+): Promise<void> {
+  // `exact` reads the link saved for `cwd` itself, which may not exist yet. Git isn't asked about
+  // a missing folder: it caches the miss, and the new app's link would then skip the repository.
+  const exactProfile = exact ? await getProfile(cwd) : undefined;
+  const inherited = exact
+    ? exactProfile && { path: cwd, profile: exactProfile }
+    : await resolveProfile(cwd);
   if (!inherited) return;
   const { appId, appName } = inherited.profile;
   const current = appName ? `${appName} (${appId})` : appId;
-  const scope = (await getGitRepoRoot(cwd)) ?? inherited.path;
+  const scope = exact ? cwd : ((await getGitRepoRoot(cwd)) ?? inherited.path);
   const message = `${scope} is linked to ${current}, so a new app here would use it too. Choose the new app's application: pass --app ${appId} to share it, or --app with another application (\`clerk apps create\` makes a new one).`;
   if (options.json)
     log.data(

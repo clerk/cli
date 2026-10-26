@@ -11,6 +11,7 @@ import {
   bootstrapMod,
   scaffoldMod,
 } from "../../test/lib/init-harness.ts";
+import * as gitMod from "../../lib/git.ts";
 import * as apple from "./ios/coordinator.ts";
 import { StarterInputRequired } from "./ios/starter-bootstrap.ts";
 import { ios } from "./frameworks/ios.ts";
@@ -332,6 +333,7 @@ describe("clerk init for native Apple projects", () => {
       spyOn(config, "resolveProfile").mockResolvedValue({
         profile: { appId: "app_test" },
       } as never);
+      track(spyOn(config, "getProfile").mockResolvedValue(undefined));
       return run;
     }
 
@@ -710,11 +712,14 @@ describe("clerk init for native Apple projects", () => {
 
       test("stops for a link left at the new app's own folder", async () => {
         starter({}, { isAgent: true });
-        spyOn(config, "resolveProfile").mockImplementation(async (dir) =>
-          dir === STARTER.projectDir
-            ? ({ path: dir, profile: { appId: "app_OLD", appName: "Old" } } as never)
-            : undefined,
+        const inherited = spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+        spyOn(config, "getProfile").mockImplementation(async (dir) =>
+          dir === STARTER.projectDir ? ({ appId: "app_OLD", appName: "Old" } as never) : undefined,
         );
+        // Git caches a miss for a folder that doesn't exist yet, which would key the new app's link
+        // to that folder instead of its repository.
+        const git = spyOn(gitMod, "getGitRepoRoot");
+        track(git);
 
         await expect(init({ starter: true, framework: "ios", json: true })).rejects.toThrow(
           `${STARTER.projectDir} is linked to Old (app_OLD), so a new app here would use it too.`,
@@ -724,6 +729,8 @@ describe("clerk init for native Apple projects", () => {
           link: { flag: "--app", current: { appId: "app_OLD" }, scope: STARTER.projectDir },
         });
         expect(written).toBe(false);
+        expect(inherited).not.toHaveBeenCalledWith(STARTER.projectDir);
+        expect(git).not.toHaveBeenCalledWith(STARTER.projectDir);
       });
 
       test("with nothing to inherit, writes the app and asks for one after", async () => {
