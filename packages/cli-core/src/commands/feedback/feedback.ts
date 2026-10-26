@@ -157,8 +157,8 @@ export interface FeedbackOptions {
  * the same way `__complete.ts` reads `_hidden`: which child runs when the
  * group is invoked bare, whether the group runs anything itself, and whether
  * a command is hidden from help (and so from the subcommands an error
- * suggests). `options` is Commander's public option list, read for the
- * root's global flags and whether each takes a value.
+ * suggests). `options` is Commander's public option list, read for the flags
+ * each command takes and whether each takes a value.
  */
 export type CommandTree = {
   name(): string;
@@ -284,33 +284,35 @@ function dropPackageRunner(words: string[]): void {
 }
 
 /**
- * Drop the global flags before the command, with the value of each that
- * takes one, read from the root's own options as Commander parses them:
- * `--mode agent`, `--mode=agent`, `--verbose`. False when the line runs no
- * command, so no usage event carries one for it: the version flag (it prints
- * the version and exits; help does the same and is not in the option list at
- * all), a flag the root does not have, a value attached to a flag that takes
- * none (`--verbose=foo`), or a missing value.
+ * How many words the flag at `words[i]` takes, with its value if it has one,
+ * read from the options of `owners` (the commands named so far, root first)
+ * as Commander parses them: `--mode agent`, `--mode=agent`, `--verbose`. 0
+ * when none of them has the flag. Null when the line runs no command, so no
+ * usage event carries one for it: the version flag (it prints the version and
+ * exits; help does the same and is not in the option list at all), a value
+ * attached to a flag that takes none (`--verbose=foo`), or a missing value.
  */
-function dropGlobalFlags(root: CommandTree, words: string[]): boolean {
-  while (words[0]?.startsWith("-")) {
-    const word = words.shift()!;
-    const long = word.startsWith("--");
-    const name = long ? word.split("=", 1)[0] : word.slice(0, 2);
-    const option = root.options?.find((o) => (long ? o.long : o.short) === name);
-    if (!option || option.attributeName?.() === root._versionOptionName) return false;
+function flagLength(
+  owners: readonly CommandTree[],
+  words: readonly string[],
+  i: number,
+): number | null {
+  const word = words[i]!;
+  const long = word.startsWith("--");
+  const name = long ? word.split("=", 1)[0] : word.slice(0, 2);
+  for (const owner of owners) {
+    const option = owner.options?.find((o) => (long ? o.long : o.short) === name);
+    if (!option) continue;
+    if (option.attributeName?.() === owner._versionOptionName) return null;
     const takesValue = option.required || option.optional;
     const attached = long ? word.includes("=") : word.length > 2;
-    if (attached && !takesValue) return false;
-    if (attached || !takesValue) continue;
-    if (option.required) {
-      if (words.length === 0) return false;
-      words.shift();
-    } else if (words[0] !== undefined && !words[0].startsWith("-")) {
-      words.shift();
-    }
+    if (attached) return takesValue ? 1 : null;
+    if (!takesValue) return 1;
+    const next = words[i + 1];
+    if (option.required) return next === undefined ? null : 2;
+    return next !== undefined && !next.startsWith("-") ? 2 : 1;
   }
-  return true;
+  return 0;
 }
 
 /**
@@ -318,12 +320,15 @@ function dropGlobalFlags(root: CommandTree, words: string[]): boolean {
  * action ran (`commandPathOf` in `lib/telemetry.ts`). The input is the path
  * as typed after `clerk`, a leading `clerk` tolerated (also as `clerk@latest`,
  * after `npx`, `bunx` or `pnpm dlx` and their own flags, or as a path to the
- * binary), and may be a whole pasted command line: global flags before the
- * command are skipped, and anything after the command is dropped (arguments
- * and flags are never sent).
+ * binary), and may be a whole pasted command line: flags are skipped, and
+ * anything after the command is dropped (arguments and flags are never sent).
  *
  * Walk rules, in the order Commander dispatches (`_parseCommand`), verified
- * against the real tree: at a group, a word that names a child is that child.
+ * against the real tree: Commander reads the options of every command named
+ * so far wherever they come, so such a flag is skipped with its value
+ * (`users --mode agent list` → `users list`). Any other flag ends the walk:
+ * it may be the default child's own (`open --print`), and before any command
+ * it is an error. At a group, a word that names a child is that child.
  * Otherwise a group with a default child hands the word to that child, which
  * must take an argument (`open users` → `open dashboard`; `deploy run` takes
  * none, so `deploy statsu` is an error). Otherwise the word is the group's
@@ -342,16 +347,25 @@ export function resolveCommand(tree: CommandTree, input: string): CommandResolut
   const words = input.trim().split(/\s+/).filter(Boolean);
   dropPackageRunner(words);
   if (isClerk(words[0])) words.shift();
-  if (!dropGlobalFlags(tree, words)) return { path: null, reason: "unknown" };
-  if (words[0] === "help") return resolveHelp(tree, words.slice(1));
   let node = tree;
+  const owners = [tree];
   const parts: string[] = [];
-  for (const word of words) {
-    if (word.startsWith("-")) break;
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i]!;
+    if (word.startsWith("-")) {
+      if (node.commands.length === 0) break;
+      const length = flagLength(owners, words, i);
+      if (length === null) return { path: null, reason: "unknown" };
+      if (length === 0) break;
+      i += length - 1;
+      continue;
+    }
+    if (node === tree && word === "help") return resolveHelp(tree, words.slice(i + 1));
     const child = findChild(node, word);
     if (child) {
       parts.push(child.name());
       node = child;
+      owners.push(child);
       continue;
     }
     // Not a subcommand: an argument of something, or a typo. A leaf takes it
@@ -723,6 +737,22 @@ const CONNECTION_NEVER_MADE = new Set([
 const CONNECT_DENIED = new Set(["EPERM", "EACCES"]);
 
 /**
+ * A server certificate the client rejected (self-signed, an untrusted chain,
+ * expired or not yet valid, issued for another host): the TLS handshake
+ * fails before any request is sent. Bun's fetch throws these codes, and
+ * Node's puts the same ones on the cause.
+ */
+const CERTIFICATE_REJECTED = new Set([
+  "DEPTH_ZERO_SELF_SIGNED_CERT",
+  "SELF_SIGNED_CERT_IN_CHAIN",
+  "UNABLE_TO_GET_ISSUER_CERT_LOCALLY",
+  "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+  "CERT_HAS_EXPIRED",
+  "CERT_NOT_YET_VALID",
+  "ERR_TLS_CERT_ALTNAME_INVALID",
+]);
+
+/**
  * Whether the error proves no connection was made: one of the codes above,
  * or a permission error raised by `connect`. Read only from structured
  * fields (`code`, `syscall`) on the error or on its cause, where Node's
@@ -737,7 +767,7 @@ function provesNoConnection(error: unknown): boolean {
     const fields = candidate as { code?: unknown; syscall?: unknown } | null | undefined;
     const code = fields?.code;
     if (typeof code !== "string") continue;
-    if (CONNECTION_NEVER_MADE.has(code)) return true;
+    if (CONNECTION_NEVER_MADE.has(code) || CERTIFICATE_REJECTED.has(code)) return true;
     if (CONNECT_DENIED.has(code) && fields?.syscall === "connect") return true;
   }
   return false;
@@ -758,12 +788,12 @@ function provesNoConnection(error: unknown): boolean {
  * a retry loop against a refusing endpoint stays bounded. A failure that
  * proves no connection was made ({@link provesNoConnection}: refused,
  * unresolvable host, no network, a socket that could not open, a permission
- * error on connect) sent nothing, so it is `send_failed` with no id and no
- * count, like a failure before the POST (the config could not be read, the
- * notice could not be recorded). An interrupt is rethrown for the CLI's
- * interrupt path; a send that may have reached the server is counted first,
- * usually, since the CLI's interrupt handler can exit before the record is
- * written.
+ * error on connect, a rejected certificate) sent nothing, so it is
+ * `send_failed` with no id and no count, like a failure before the POST (the
+ * config could not be read, the notice could not be recorded). An interrupt
+ * is rethrown for the CLI's interrupt path; a send that may have reached the
+ * server is counted first, usually, since the CLI's interrupt handler can
+ * exit before the record is written.
  */
 async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   try {

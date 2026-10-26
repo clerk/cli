@@ -154,17 +154,19 @@ describe("agent mode through the real program", () => {
     expect(http.requests).toHaveLength(0);
   });
 
-  test("--command lands as the usage-event spelling: prefix dropped, default child, trailing arguments dropped", async () => {
+  test("--command lands as the usage-event spelling: prefix dropped, default child, global flags skipped, trailing arguments dropped", async () => {
     await readyToSend();
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "clerk users list");
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "apps list");
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "clerk deploy");
+    await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "deploy --verbose status");
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "users list --limit 5");
     const feedbackEvents = events().filter((e) => e.event === "CLI_FEEDBACK");
     expect(feedbackEvents.map((e) => e.payload.command)).toEqual([
       "users list",
       "apps list",
       "deploy run",
+      "deploy status",
       "users list",
     ]);
     // Nothing after the command name is ever sent.
@@ -333,7 +335,7 @@ describe("help", () => {
     expect(help).toContain("telemetry opt-out");
     expect(help).toContain("scrubbed before it leaves your machine, on a best-effort basis");
     expect(help).toContain(
-      "a pasted command line is fine: global flags before the command are skipped",
+      "a pasted command line is fine: global flags are skipped wherever they come",
     );
     expect(help).toContain(
       "It misses values that span lines, structured config files such as YAML and pretty-printed JSON, passwords with spaces, and Markdown formatting around a label, so never include secrets",

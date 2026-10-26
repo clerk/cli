@@ -15,17 +15,22 @@
  * The record is a JSON file in the cache directory, read-modify-write with
  * the same best-effort stance as the update check's cache file: an unreadable
  * or missing file counts as empty, a failed write is logged at debug level
- * and nothing else. Two agents sending at once can each read the same count,
- * which the cap tolerates. Every attempted POST is recorded, accepted or not:
- * a send that timed out or was answered with an error may still have landed,
- * and a retry loop against a slow endpoint must still meet the cap. A send
- * the endpoint refused with a 4xx was not stored, so it is recorded with
+ * and nothing else. Each write is renamed into place, so a send racing
+ * another reads the old record or the new one, never a partial file, which
+ * would count as empty and wipe the record. Sends racing each other can
+ * still drop one another's entries, so a burst of parallel sends may be
+ * undercounted. Every attempted POST is recorded, accepted or not: a send
+ * that timed out or was answered with an error may still have landed, and a
+ * retry loop against a slow endpoint must still meet the cap. A send the
+ * endpoint refused with a 4xx was not stored, so it is recorded with
  * `dailyTotalOnly`: it counts toward the daily total, which keeps a retry
- * loop against a refusing endpoint bounded, but never blocks a repeat. A send
- * refused before any POST (opt-out, cap, a config failure) is not recorded.
+ * loop against a refusing endpoint bounded, but never blocks a repeat. A
+ * send refused before any POST (opt-out, cap, a config failure) is not
+ * recorded.
  */
 
-import { mkdir } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import {
   CLERK_CACHE_DIR,
@@ -86,9 +91,9 @@ function isFeedbackSend(value: unknown): value is FeedbackSend {
 export async function readRecentFeedbackSends(now: number = Date.now()): Promise<FeedbackSend[]> {
   const path = sendsFile();
   try {
-    const file = Bun.file(path);
-    if (!(await file.exists())) return [];
-    const data: unknown = await file.json();
+    // No exists() first: a Bun.file handle keeps the size it first saw, so a
+    // file another send replaced in between reads cut short.
+    const data: unknown = await Bun.file(path).json();
     const sends = (data as { sends?: unknown })?.sends;
     if (!Array.isArray(sends)) return [];
     const valid = sends
@@ -99,7 +104,9 @@ export async function readRecentFeedbackSends(now: number = Date.now()): Promise
       .filter((send) => windowEnd - send.sentAt < FEEDBACK_WINDOW_MS)
       .sort((a, b) => a.sentAt - b.sentAt);
   } catch (error) {
-    log.debug(`feedback: failed to read ${path}: ${error}`);
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+      log.debug(`feedback: failed to read ${path}: ${error}`);
+    }
     return [];
   }
 }
@@ -127,12 +134,15 @@ export function checkFeedbackRateLimit(
 /** Append one attempted send, pruning anything outside the window (measured as {@link readRecentFeedbackSends} does). Best effort. */
 export async function recordFeedbackSend(send: FeedbackSend): Promise<void> {
   const path = sendsFile();
+  const temp = `${path}.${process.pid}-${randomUUID()}.tmp`;
   try {
     const recent = await readRecentFeedbackSends(send.sentAt);
     await mkdir(dirname(path), { recursive: true });
-    await Bun.write(path, JSON.stringify({ sends: [...recent, send] }));
+    await Bun.write(temp, JSON.stringify({ sends: [...recent, send] }));
+    await rename(temp, path);
     log.debug(`feedback: recorded send in ${path}`);
   } catch (error) {
+    await rm(temp, { force: true }).catch(() => {});
     log.debug(`feedback: failed to write ${path}: ${error}`);
   }
 }

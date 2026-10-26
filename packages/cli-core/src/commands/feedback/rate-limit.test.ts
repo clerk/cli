@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, open, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -206,5 +206,33 @@ describe("the sends file", () => {
     await Bun.write(file(), JSON.stringify({ sends: [send(NOW - FEEDBACK_WINDOW_MS - 1)] }));
     await recordFeedbackSend(send(NOW));
     expect(await readRecentFeedbackSends(NOW)).toEqual([send(NOW)]);
+  });
+
+  // A record cut short reads as empty, and the next write would then keep
+  // only its own send. Sends racing each other may drop one another's
+  // entries, but never the ones recorded before.
+  test("a burst of parallel sends keeps every send recorded before it", async () => {
+    await Bun.write(file(), JSON.stringify({ sends: sends(30) }));
+    await Promise.all(Array.from({ length: 200 }, (_, i) => recordFeedbackSend(send(NOW + 1 + i))));
+    const recent = await readRecentFeedbackSends(NOW + 200);
+    expect(recent.filter((s) => s.sentAt <= NOW)).toHaveLength(30);
+  });
+
+  test("a send replaces the file whole, so a reader that already opened it reads the earlier record", async () => {
+    await recordFeedbackSend(send(NOW - 1));
+    const reader = await open(file(), "r");
+    try {
+      await recordFeedbackSend(send(NOW));
+      expect(JSON.parse(await reader.readFile("utf8"))).toEqual({ sends: [send(NOW - 1)] });
+    } finally {
+      await reader.close();
+    }
+    expect(await readRecentFeedbackSends(NOW)).toEqual([send(NOW - 1), send(NOW)]);
+  });
+
+  test("a write that fails leaves no temporary file behind", async () => {
+    await mkdir(join(file(), "occupied"), { recursive: true });
+    await recordFeedbackSend(send(NOW));
+    expect(await readdir(cacheDir)).toEqual([FEEDBACK_SENDS_FILE_NAME]);
   });
 });

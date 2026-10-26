@@ -46,7 +46,7 @@ export function registerFeedback(program: Program): void {
     .option("--outcome <outcome>", `How it ended: ${FEEDBACK_OUTCOMES.join(", ")} (required)`)
     .option(
       "--command <path>",
-      'The CLI command involved, as typed after `clerk` (e.g. "users list"); a pasted command line is fine: global flags before the command are skipped, and arguments and flags after it are dropped',
+      'The CLI command involved, as typed after `clerk` (e.g. "users list"); a pasted command line is fine: global flags are skipped wherever they come, and arguments and flags after the command are dropped',
     )
     .option("--error-text <text>", "The exact error you saw")
     .option(

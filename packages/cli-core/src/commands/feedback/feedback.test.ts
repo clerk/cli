@@ -172,8 +172,10 @@ describe("resolveCommand", () => {
     ["users list --limit 5", "users list"],
     ["clerk users open user_123", "users open"],
     ["deploy status extra words", "deploy status"],
-    // A flag stops the walk.
+    // A flag no command named so far takes stops the walk.
     ["users --json list", "users"],
+    // ...since it may be the default child's own.
+    ["open --print", "open dashboard"],
     // A typo under a group is still an error.
     ["users lst", null],
     ["nope", null],
@@ -182,23 +184,34 @@ describe("resolveCommand", () => {
     ["auth", null],
     ["apps", null],
     ["clerk env", null],
-    // Global flags before the command are skipped, with the value of any that
-    // takes one, as Commander reads them from the root's own options.
+    // Global flags are skipped wherever they come, with the value of any that
+    // takes one, as Commander reads them from the root's own options. A
+    // group's own flags are skipped the same way after its name.
     ["--mode agent users list", "users list"],
     ["--mode=agent users list", "users list"],
     ["--verbose users list", "users list"],
     ["--input-json @f users list", "users list"],
     ["clerk --mode agent users list", "users list"],
     ["npx clerk@latest --verbose users list", "users list"],
+    ["users --mode agent list", "users list"],
+    ["users --mode=agent list", "users list"],
+    ["deploy --verbose status", "deploy status"],
+    ["apps --verbose list", "apps list"],
+    ["auth --input-json @f login", "auth login"],
+    ["--verbose users --mode agent list", "users list"],
+    ["users --app app_123 list", "users list"],
     // A flag the root does not know fails in Commander before any command runs.
     ["--nosuch users list", null],
     // The version flag prints the version and runs no command, like help.
     ["--version users list", null],
     ["-v users list", null],
+    ["users -v list", null],
     // A value attached to a flag that takes none fails option parsing.
     ["--verbose=foo users list", null],
+    ["users --verbose=foo list", null],
     // A value-taking flag with nothing after it leaves no command.
     ["--mode", null],
+    ["users --mode", null],
     ["", null],
     ["clerk", null],
     // `clerk help <command>` is real, though Commander answers it before any
@@ -713,6 +726,32 @@ describe("sending", () => {
       const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
       respondWith = connectionError(code);
       // Nothing left the machine, so there is no report anyone could remove.
+      expect(await run(report)).toEqual({
+        sent: false,
+        reason: "send_failed",
+        fallback: GITHUB_ISSUES_URL,
+      });
+      respondWith = () => new Response("{}");
+      expect((await run(report)).sent).toBe(true);
+    },
+  );
+
+  // The TLS handshake fails before the request is written. The codes are the
+  // ones Bun's fetch throws for each case.
+  test.each([
+    ["self-signed", "DEPTH_ZERO_SELF_SIGNED_CERT"],
+    ["an untrusted root sent in the chain", "SELF_SIGNED_CERT_IN_CHAIN"],
+    ["an untrusted root behind an intermediate", "UNABLE_TO_GET_ISSUER_CERT_LOCALLY"],
+    ["an unknown issuer", "UNABLE_TO_VERIFY_LEAF_SIGNATURE"],
+    ["expired", "CERT_HAS_EXPIRED"],
+    ["not yet valid", "CERT_NOT_YET_VALID"],
+    ["issued for another host", "ERR_TLS_CERT_ALTNAME_INVALID"],
+  ])(
+    "a rejected server certificate (%s) is not counted and prints no report id",
+    async (_label, code) => {
+      await readyToSend();
+      const report = { ...COMPLETE, command: "users list", errorCode: "boom" };
+      respondWith = connectionError(code);
       expect(await run(report)).toEqual({
         sent: false,
         reason: "send_failed",
