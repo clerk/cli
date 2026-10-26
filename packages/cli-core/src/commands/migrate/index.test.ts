@@ -124,6 +124,20 @@ describe("registerMigrate", () => {
     ).toEqual(["--service-account", "--output", "--yes", "--runs-dir", "--json"]);
   });
 
+  test("migrate export workos takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "workos"])?.options.map((option) => option.long),
+    ).toEqual([
+      "--api-key",
+      "--with-identities",
+      "--no-with-identities",
+      "--output",
+      "--yes",
+      "--runs-dir",
+      "--json",
+    ]);
+  });
+
   test.each(exportPlatformKeys())(
     "migrate export %s names the run folder as the default output",
     (platform) => {
