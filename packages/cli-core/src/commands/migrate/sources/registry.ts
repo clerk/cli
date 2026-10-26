@@ -10,6 +10,7 @@
 import { throwUsageError } from "../../../lib/errors.ts";
 import type { SourceEntry } from "../types.ts";
 import auth0Source from "./auth0.ts";
+import betterAuthSource from "./betterauth.ts";
 import clerkSource from "./clerk.ts";
 import firebaseSource from "./firebase.ts";
 import supabaseSource from "./supabase.ts";
@@ -18,6 +19,7 @@ import workosSource from "./workos.ts";
 export const sources: SourceEntry[] = [
   clerkSource,
   auth0Source,
+  betterAuthSource,
   firebaseSource,
   supabaseSource,
   workosSource,

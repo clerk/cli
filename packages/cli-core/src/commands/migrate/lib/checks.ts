@@ -25,6 +25,7 @@ import { isEnabled, isRequired, type AttributeName } from "../../users/interacti
 import { splitIdentifiers } from "../import-users.ts";
 import type { User } from "../types.ts";
 import { analyzeFields, hasValue } from "./analysis.ts";
+import { argon2Variant } from "../sources/shared.ts";
 import { decodesLikeClerk } from "./firebase-hash.ts";
 import {
   clerkOffersProvider,
@@ -85,6 +86,13 @@ export type ImportChecks = {
   /** Users that do not, each with the first reason that applies to them. */
   rejects: Reject[];
   rejectReasons: ReasonCount[];
+  /**
+   * Users their source asked to skip (a soft-deleted or anonymous account),
+   * with its reason. Left out like a reject, but never a reason to stop the
+   * import: nobody is meant to bring them across.
+   */
+  skipped: Reject[];
+  skippedReasons: ReasonCount[];
   warnings: string[];
   fixes: Fix[];
   quota?: Quota;
@@ -159,7 +167,9 @@ export function hashShapeProblem(password: string, hasher: string): string | und
     }
     case "argon2i":
     case "argon2id":
-      return password.startsWith("$argon2") ? undefined : "password is not an argon2 hash";
+      return argon2Variant(password) === hasher
+        ? undefined
+        : `password is not an ${hasher} hash Clerk can verify ($${hasher}$v=19$m=…,t=…,p=…$salt$hash)`;
     case "scrypt_werkzeug":
       return /^scrypt:\d+:\d+:\d+\$[^$]+\$[0-9a-f]+$/i.test(password)
         ? undefined
@@ -1003,6 +1013,7 @@ function placeholderWarning(count: number): string[] {
 export const ALREADY_IMPORTED = "already in the instance, with this source ID";
 
 export async function checkImport(input: CheckInput): Promise<ImportChecks> {
+  const skipped: Reject[] = [];
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
     reason: `invalid: ${failure.error}`,
@@ -1078,9 +1089,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         usernameProblem(user, input.settings, loosePhones) ??
         hashProblem ??
         disabledProviders.get(user.userId));
-    if (reason) {
-      const inFile =
-        reason === original.skipReason || reason === refusedOnly || reason === hashProblem;
+    if (reason && reason === original.skipReason) {
+      skipped.push({ sourceId: user.userId, reason, inFile: true });
+    } else if (reason) {
+      const inFile = reason === refusedOnly || reason === hashProblem;
       rejects.push({ sourceId: user.userId, reason, ...(inFile ? { inFile: true as const } : {}) });
     } else {
       passed.push(sent);
@@ -1174,6 +1186,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     ),
     rejects,
     rejectReasons: countReasons(rejects),
+    skipped,
+    skippedReasons: countReasons(skipped),
     warnings: [
       ...buildWarnings(
         input,

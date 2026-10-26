@@ -64,6 +64,7 @@ describe("promptForSource", () => {
     expect(selectCall(0)?.choices.map((choice) => choice.value)).toEqual([
       "clerk",
       "auth0",
+      "betterauth",
       "firebase",
       "supabase",
       "workos",
@@ -73,7 +74,7 @@ describe("promptForSource", () => {
   test("labels each choice with the source's display name", async () => {
     mockSelect.mockResolvedValue("clerk");
     await promptForSource();
-    expect(selectCall(0)?.choices.map((choice) => choice.name)).toContain("Supabase");
+    expect(selectCall(0)?.choices.map((choice) => choice.name)).toContain("Better Auth");
   });
 });
 

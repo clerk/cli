@@ -75,6 +75,7 @@ import {
   hasRetryableUsers,
   NO_PASSWORD_CODE,
   IN_FILE_CODE,
+  SOURCE_SKIP_CODE,
   unfinishedUndoMessage,
   inUseMessage,
   openUndoOf,
@@ -518,6 +519,13 @@ function printChecks(checks: ImportChecks): void {
     }
   }
 
+  if (checks.skipped.length > 0) {
+    log.info(`  ${dim("-")} ${plural(checks.skipped.length, "user")} skipped, as the source asked`);
+    for (const { reason, count } of checks.skippedReasons) {
+      log.info(`      ${count}: ${dim(reason)}`);
+    }
+  }
+
   if (checks.warnings.length > 0) {
     log.info(`  ${yellow("⚠")} ${yellow("Imported, but not everything comes across")}`);
     for (const warning of checks.warnings) log.info(`      ${dim(warning)}`);
@@ -547,6 +555,8 @@ function checksJson(checks: ImportChecks) {
     importable: checks.importable.length,
     rejects: checks.rejects,
     rejectReasons: checks.rejectReasons,
+    skipped: checks.skipped,
+    skippedReasons: checks.skippedReasons,
     warnings: checks.warnings,
     fixes: checks.fixes,
     ...(checks.quota ? { quota: checks.quota } : {}),
@@ -755,8 +765,9 @@ function continueWithExport(run: Run, fromExport: string | undefined): Run {
 }
 
 /**
- * Records the checks' rejects as skipped users, so the run says who they were.
- * The checks never reject an adopted user: it is created already.
+ * Records the checks' rejects, and the users their source skipped, as skipped
+ * users, so the run says who they were. The checks never reject an adopted
+ * user: it is created already.
  */
 function recordRejects(run: Run, checks: ImportChecks): void {
   for (const { sourceId, reason, keptSourceId, inFile } of checks.rejects) {
@@ -766,6 +777,9 @@ function recordRejects(run: Run, checks: ImportChecks): void {
       reason: keptSourceId ? `${reason} (kept: ${keptSourceId})` : reason,
       ...(inFile ? { code: IN_FILE_CODE } : {}),
     });
+  }
+  for (const { sourceId, reason } of checks.skipped) {
+    run.append({ sourceId, status: "skipped", reason, code: SOURCE_SKIP_CODE });
   }
 }
 
@@ -1156,6 +1170,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       if (
         checks.importable.length === 0 &&
         checks.rejects.length === 0 &&
+        checks.skipped.length === 0 &&
         withoutPassword.length === 0 &&
         attachOnly.length === 0
       ) {
@@ -1192,7 +1207,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const toCreate = plural(checks.importable.length, "user");
       const attaches =
         attachOnly.length > 0 ? `, attach identifiers to ${plural(attachOnly.length, "user")}` : "";
-      const skipping = checks.rejects.length + withoutPassword.length;
+      const skipping = checks.rejects.length + checks.skipped.length + withoutPassword.length;
       const skips = skipping > 0 ? ` and skip ${plural(skipping, "user")}` : "";
       if (!options.yes) {
         if (!canPrompt(options)) {
@@ -1301,7 +1316,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
                 notSent: summary.notSent,
                 pending: record.counts.pending ?? 0,
                 ...(summary.stopReason ? { stopReason: summary.stopReason } : {}),
-                skipped: checks.rejects.length + withoutPassword.length,
+                skipped: checks.rejects.length + checks.skipped.length + withoutPassword.length,
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
                 warnings: [...summary.droppedPhones].map(([reason, count]) => ({
                   warning: `imported without their phone: ${reason}`,
@@ -1319,7 +1334,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       log.blank();
       for (const line of formatSummary(
         summary,
-        checks.rejects.length + withoutPassword.length,
+        checks.rejects.length + checks.skipped.length + withoutPassword.length,
         record,
         run.dir,
         limits.instanceType,
