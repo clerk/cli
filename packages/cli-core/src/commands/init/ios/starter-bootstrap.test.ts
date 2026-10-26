@@ -8,7 +8,11 @@ import { log } from "../../../lib/log.ts";
 import * as coordinator from "./coordinator.ts";
 import * as xcodeTools from "./xcode-tools.ts";
 import * as teams from "./teams.ts";
-import { promptAppleStarter, type AppleStarterOptions } from "./starter-bootstrap.ts";
+import {
+  promptAppleStarter,
+  StarterInputRequired,
+  type AppleStarterOptions,
+} from "./starter-bootstrap.ts";
 
 const PAID = { id: "COMPANY001", name: "Acme", personal: false };
 const OTHER_PAID = { id: "COMPANY002", name: "Globex", personal: false };
@@ -281,6 +285,83 @@ describe("promptAppleStarter", () => {
     spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(false));
     await expect(run({ name: "MyApp" })).rejects.toMatchObject({
       message: expect.stringContaining("needs Xcode on macOS"),
+    });
+  });
+
+  describe("answers only the user can give", () => {
+    async function inputRequired(options: Partial<AppleStarterOptions>) {
+      const error = await run(options).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(StarterInputRequired);
+      return (error as StarterInputRequired).describe();
+    }
+
+    test("with --json, asks for the name instead of defaulting it", async () => {
+      xcode({ teams: [PAID], bundleIdentifierPrefix: "com.acme" });
+
+      expect(await inputRequired({ requireName: true })).toEqual({
+        field: "name",
+        flag: "--name",
+        question: "What would you like to name your app?",
+        issue: "--name is required for a new app with --json.",
+        suggestion: "MyClerkApp",
+      });
+      expect(existsSync(join(tmp, "MyClerkApp"))).toBe(false);
+    });
+
+    test("names the --name rule a name breaks", async () => {
+      xcode({ teams: [PAID] });
+
+      expect(await inputRequired({ name: "SwiftUI" })).toMatchObject({
+        field: "name",
+        issue: expect.stringContaining("SwiftUI is a module the app imports"),
+      });
+    });
+
+    test("an existing folder asks for another name and keeps its error code", async () => {
+      xcode({ teams: [PAID] });
+      mkdirSync(join(tmp, "MyApp"));
+
+      const error = await run({ name: "MyApp", bundleId: "com.example.MyApp" }).catch(
+        (caught: unknown) => caught,
+      );
+      expect(error).toMatchObject({ code: ERROR_CODE.PROJECT_DIR_EXISTS, exitCode: 1 });
+      expect((error as StarterInputRequired).describe()).toMatchObject({
+        field: "name",
+        flag: "--name",
+      });
+    });
+
+    test("offers the paid teams when more than one could sign the app", async () => {
+      xcode({ teams: [PAID, OTHER_PAID, PERSONAL], bundleIdentifierPrefix: "com.acme" });
+
+      expect(await inputRequired({ name: "MyApp" })).toMatchObject({
+        field: "teamId",
+        flag: "--team-id",
+        question: "Which Apple Developer team should sign your app?",
+        choices: [PAID, OTHER_PAID],
+      });
+    });
+
+    test("Sign in with Apple on a Personal Team offers the paid teams", async () => {
+      xcode({ teams: [PERSONAL] });
+
+      expect(
+        await inputRequired({
+          name: "MyApp",
+          bundleId: "com.example.MyApp",
+          teamId: PERSONAL.id,
+          signInWithApple: true,
+        }),
+      ).toMatchObject({ field: "teamId", choices: [] });
+    });
+
+    test("asks for a Bundle ID when Xcode can't suggest one", async () => {
+      xcode({ teams: [PAID] });
+
+      expect(await inputRequired({ name: "MyApp" })).toMatchObject({
+        field: "bundleId",
+        flag: "--bundle-id",
+      });
     });
   });
 });

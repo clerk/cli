@@ -3,7 +3,7 @@ import type { Program } from "../../cli-program.ts";
 import { login } from "../auth/login.js";
 import { link, replacedLink } from "../link/index.js";
 import { pull } from "../env/pull.js";
-import { isAgent } from "../../mode.js";
+import { isAgent, setMode } from "../../mode.js";
 import { dim, bold } from "../../lib/color.js";
 import {
   throwUserAbort,
@@ -20,6 +20,7 @@ import {
   type FrameworkInfo,
 } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
+import { getGitRepoRoot } from "../../lib/git.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
 import { quoteArg } from "../../lib/json-body.ts";
@@ -57,6 +58,7 @@ import { installSkills } from "./skills.js";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
 import {
   promptAndBootstrap,
+  rejectAccountlessApple,
   confirmOverwrite,
   type BootstrapOverrides,
   type BootstrapResult,
@@ -67,10 +69,12 @@ import {
   applicationRequired,
   canSetUpXcode,
   runAppleInit,
+  setupInterrupted,
   type AppleInitOptions,
+  type StarterProjectSummary,
 } from "./ios/coordinator.js";
 import { withNativeProgress } from "./ios/progress.js";
-import type { AppleStarter } from "./ios/starter-bootstrap.js";
+import { StarterInputRequired, type AppleStarter } from "./ios/starter-bootstrap.js";
 
 type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   /** Framework to set up (skips auto-detection). */
@@ -127,11 +131,16 @@ export async function init(options: InitOptions = {}) {
     options.template != null && "--template",
     options.fresh && "--fresh",
   ].filter((flag): flag is string => Boolean(flag));
+  const appleStarter =
+    options.starter === true && (options.framework === "ios" || options.framework === MACOS);
+  // Before the link checks below, whose advice (--app) these flags would contradict.
+  if (appleStarter && accountlessFlags.length) rejectAccountlessApple(accountlessFlags);
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
     skipConfirm: options.yes || agent,
     pmOverride: options.pm,
     nameOverride: options.name,
+    json: options.json,
     ...(accountlessFlags.length && { accountlessFlags }),
     ...((appleFlags.length || options.framework === MACOS) && {
       apple: {
@@ -151,18 +160,32 @@ export async function init(options: InitOptions = {}) {
   // skip project creation instead of being rejected after it.
   const existingProjectFlags = [
     options.dryRun && "--dry-run",
-    options.json && "--json",
+    options.json && !options.starter && "--json",
     ...(options.starter ? [] : appleFlags),
   ].filter((flag): flag is string => Boolean(flag));
   // A new app inside a repository linked elsewhere would move the whole repository's link, so an
   // agent hears about it before anything is written.
   if (options.starter && agent && options.app)
     await assertLinkKept(cwd, options, { newProject: true });
-  const resolved = existingProjectFlags.length
-    ? await resolveExistingProjectContext(cwd, frameworkOverride, overrides, existingProjectFlags)
-    : options.starter
-      ? await handleStarter(cwd, frameworkOverride, overrides)
-      : await resolveProjectContext(cwd, frameworkOverride, overrides);
+  else if (appleStarter && agent) await assertApplicationChosen(cwd, options);
+  let resolved: ResolvedContext | undefined;
+  try {
+    resolved = existingProjectFlags.length
+      ? await resolveExistingProjectContext(cwd, frameworkOverride, overrides, existingProjectFlags)
+      : options.starter
+        ? await handleStarter(cwd, frameworkOverride, overrides)
+        : await resolveProjectContext(cwd, frameworkOverride, overrides);
+  } catch (error) {
+    if (options.json && error instanceof StarterInputRequired)
+      log.data(
+        JSON.stringify({
+          status: "input-required",
+          appIntegrationComplete: false,
+          starter: error.describe(),
+        }),
+      );
+    throw error;
+  }
 
   if (!resolved) return;
 
@@ -173,14 +196,16 @@ export async function init(options: InitOptions = {}) {
   }
 
   assertFrameworkFlags(options, ctx.framework);
-  if (ctx.framework.dep === "ios")
-    ctx.nativeContinuation = appleContinuation(options, bootstrap?.apple && bootstrap);
   const appleOptions: AppleInitOptions = {
     ...options,
     root: ctx.cwd,
     agent,
-    ...(bootstrap?.apple && starterAppleOptions(options, bootstrap.projectName, bootstrap.apple)),
+    ...(bootstrap?.apple && starterAppleOptions(options, bootstrap)),
   };
+  const newApp = appleOptions.starterProject;
+  // A new app's guidance and its JSON statuses name the same command.
+  if (ctx.framework.dep === "ios")
+    ctx.nativeContinuation = newApp?.continuation ?? appleContinuation(options);
   // Only native Apple supports a dry run today; it inspects without signing in.
   if (options.dryRun) return withNativeProgress(async () => runAppleInit(appleOptions, undefined));
 
@@ -225,13 +250,20 @@ export async function init(options: InitOptions = {}) {
     // A project init generated without --starter (a blank directory) had no check before it was
     // written, so it's checked now, as itself. A --starter app was checked before writing.
     if (!options.starter && agent && options.app) await assertLinkKept(ctx.cwd, options);
-    await authenticateAndLink(
-      ctx.cwd,
-      options.app,
-      createIfMissing,
-      // Native setup continues right after linking, so link's `clerk env pull` advice doesn't apply.
-      ctx.framework.dep === "ios" && canSetUpXcode() ? { showNextSteps: false } : {},
-    );
+    try {
+      await authenticateAndLink(
+        ctx.cwd,
+        options.app,
+        createIfMissing,
+        // Native setup continues right after linking, so link's `clerk env pull` advice doesn't apply.
+        ctx.framework.dep === "ios" && canSetUpXcode() ? { showNextSteps: false } : {},
+      );
+    } catch (error) {
+      // The new app is already on disk; say where, and how to finish it, instead of only failing.
+      if (options.json && newApp)
+        log.data(JSON.stringify(setupInterrupted(newApp, error), null, 2));
+      throw error;
+    }
   }
 
   // Native Apple setup edits the Xcode project and registers the app instead of
@@ -246,7 +278,7 @@ export async function init(options: InitOptions = {}) {
   }
   // An agent that asked for JSON gets the usual "choose an app" guidance as data.
   if (ctx.framework.dep === "ios" && strategy === "manual" && options.json) {
-    log.data(JSON.stringify(applicationRequired(ctx.nativeContinuation), null, 2));
+    log.data(JSON.stringify(applicationRequired(ctx.nativeContinuation, newApp), null, 2));
     setTelemetryStage("done");
     return;
   }
@@ -327,8 +359,19 @@ async function assertUsableFlags(
       "--fresh applies to accountless applications and cannot be combined with --login.",
     );
   }
-  if (options.starter && (options.dryRun || options.json)) {
-    throwUsageError("--dry-run and --json work on an existing project, not with --starter.");
+  if (options.starter && options.dryRun) {
+    throwUsageError("--dry-run works on an existing project, not with --starter.");
+  }
+  // A web starter's generator writes to the terminal, so only a native one can report JSON.
+  if (
+    options.starter &&
+    options.json &&
+    options.framework !== "ios" &&
+    options.framework !== MACOS
+  ) {
+    throwUsageError(
+      "--json works with --starter only for a new iOS or macOS app: add --framework ios or --framework macos.",
+    );
   }
   if (options.dryRun && (options.app || accountless || options.login)) {
     throwUsageError(
@@ -386,16 +429,27 @@ const MACOS = "macos";
  * wrote, registers it with the starter's team as the App ID Prefix instead of asking again, and
  * skips the confirmation that protects existing projects.
  */
-function starterAppleOptions(
-  options: InitOptions,
-  projectName: string,
-  apple: AppleStarter,
-): Partial<AppleInitOptions> {
+/** The identity setup uses for a new starter, and the continuation that finishes it carries. */
+function starterIdentity(options: InitOptions, apple: AppleStarter) {
   return {
     // The project already carries `--bundle-id`; passing it again would mask what Xcode reports.
     bundleId: undefined,
     appIdPrefix: options.appIdPrefix ?? apple.teamId,
-    starterProject: { projectName, platform: apple.platform },
+  };
+}
+
+function starterAppleOptions(
+  options: InitOptions,
+  starter: { projectDir: string; projectName: string; apple: AppleStarter },
+): Partial<AppleInitOptions> & { starterProject: StarterProjectSummary } {
+  return {
+    ...starterIdentity(options, starter.apple),
+    starterProject: {
+      projectName: starter.projectName,
+      platform: starter.apple.platform,
+      projectDir: starter.projectDir,
+      continuation: appleContinuation(options, starter, options.app),
+    },
   };
 }
 
@@ -408,14 +462,16 @@ function starterAppleOptions(
 function appleContinuation(
   options: InitOptions,
   starter?: { projectName: string; apple: AppleStarter },
+  appId?: string,
 ): string {
   const values: Partial<InitOptions> = {
     ...options,
-    ...(starter && starterAppleOptions(options, starter.projectName, starter.apple)),
+    ...(starter && starterIdentity(options, starter.apple)),
   };
   const parts = [
     ...(starter ? [`cd ${quoteArg(starter.projectName)}`, "&&"] : []),
-    "clerk init --app <app_id> --json",
+    `clerk init --app ${appId ? quoteArg(appId) : "<app_id>"} --json`,
+    ...(options.relink ? ["--relink"] : []),
   ];
   for (const [key, flag] of APPLE_FLAGS) {
     if (key === "teamId" || (starter && key === "bundleId")) continue;
@@ -467,6 +523,35 @@ async function assertLinkKept(
           },
           requested: options.app,
           scope: replaced.scope,
+        },
+      }),
+    );
+  throw new LinkDecisionRequired(message);
+}
+
+/**
+ * A new app made here would otherwise set itself up against whatever link covers this directory,
+ * a parent's or the repository's, which may belong to another project. An agent names the
+ * application instead: `--app` with the linked one to share it, or with another.
+ */
+async function assertApplicationChosen(cwd: string, options: InitOptions): Promise<void> {
+  const inherited = await resolveProfile(cwd);
+  if (!inherited) return;
+  const { appId, appName } = inherited.profile;
+  const current = appName ? `${appName} (${appId})` : appId;
+  const scope = (await getGitRepoRoot(cwd)) ?? inherited.path;
+  const message = `${scope} is linked to ${current}, so a new app here would use it too. Choose the new app's application: pass --app ${appId} to share it, or --app with another application (\`clerk apps create\` makes a new one).`;
+  if (options.json)
+    log.data(
+      JSON.stringify({
+        status: "input-required",
+        appIntegrationComplete: false,
+        link: {
+          flag: "--app",
+          question: `Should the new app use ${current}, or another application?`,
+          issue: message,
+          current: { appId, ...(appName && { appName }) },
+          scope,
         },
       }),
     );
@@ -1066,5 +1151,12 @@ export function registerInit(program: Program): void {
       { command: "clerk init -y", description: "Skip all confirmation prompts" },
       { command: "clerk init --no-skills", description: "Skip the agent skills install prompt" },
     ])
+    // A --json starter is read by a program, and agent mode is how every prompt in init (sign-in,
+    // the app picker, relinking, the starter's questions) knows to stand down, with an
+    // input-required or application-required status instead. An explicit --mode still wins.
+    .hook("preAction", (_command, actionCommand) => {
+      const opts = actionCommand.optsWithGlobals();
+      if (opts.starter && opts.json && !opts.mode) setMode("agent");
+    })
     .action(init);
 }

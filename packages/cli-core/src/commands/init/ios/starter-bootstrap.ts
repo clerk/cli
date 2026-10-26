@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
-import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE, type ErrorCode } from "../../../lib/errors.ts";
 import { quoteArg } from "../../../lib/json-body.ts";
 import { dirExists } from "../context.ts";
 import { canSetUpXcode } from "./coordinator.ts";
@@ -30,9 +30,45 @@ export interface AppleStarter {
   personalTeam: boolean;
 }
 
+/** The questions a new app's answers come from, for an agent to ask the user. */
+const STARTER_QUESTIONS = {
+  name: { flag: "--name", question: "What would you like to name your app?" },
+  bundleId: { flag: "--bundle-id", question: "What Bundle ID should your app use?" },
+  teamId: { flag: "--team-id", question: "Which Apple Developer team should sign your app?" },
+} as const;
+
+/**
+ * A new app's answer that only the user can give. It fails like any usage error; with `--json`,
+ * init also reports it as an `input-required` status naming the flag to rerun with.
+ */
+export class StarterInputRequired extends CliError {
+  constructor(
+    message: string,
+    public field: keyof typeof STARTER_QUESTIONS,
+    public extra: { suggestion?: string; choices?: AppleTeam[] } = {},
+    code: ErrorCode = ERROR_CODE.USAGE_ERROR,
+  ) {
+    super(message, {
+      code,
+      exitCode: code === ERROR_CODE.USAGE_ERROR ? EXIT_CODE.USAGE : EXIT_CODE.GENERAL,
+    });
+  }
+
+  describe() {
+    return {
+      field: this.field,
+      ...STARTER_QUESTIONS[this.field],
+      issue: this.message,
+      ...this.extra,
+    };
+  }
+}
+
 export interface AppleStarterOptions {
   /** Non-interactive: take every answer from flags or Xcode's settings. */
   skipConfirm: boolean;
+  /** `--json`: the user names the app, so a missing `--name` is asked for instead of defaulted. */
+  requireName?: boolean;
   name?: string;
   bundleId?: string;
   teamId?: string;
@@ -72,10 +108,15 @@ async function availableName(cwd: string): Promise<string> {
 async function chooseName(cwd: string, options: AppleStarterOptions): Promise<string> {
   if (options.name) {
     const problem = nameProblem(options.name);
-    if (problem) throwUsageError(`Invalid --name "${options.name}": ${problem}`);
+    if (problem)
+      throw new StarterInputRequired(`Invalid --name "${options.name}": ${problem}`, "name");
     return options.name;
   }
   const suggested = await availableName(cwd);
+  if (options.requireName)
+    throw new StarterInputRequired("--name is required for a new app with --json.", "name", {
+      suggestion: suggested,
+    });
   if (options.skipConfirm) return suggested;
   const name = await text({
     message: "App name:",
@@ -106,7 +147,11 @@ async function chooseBundleIdentifier(
 ): Promise<string> {
   if (options.bundleId) {
     const problem = bundleProblem(options.bundleId);
-    if (problem) throwUsageError(`Invalid --bundle-id "${options.bundleId}": ${problem}`);
+    if (problem)
+      throw new StarterInputRequired(
+        `Invalid --bundle-id "${options.bundleId}": ${problem}`,
+        "bundleId",
+      );
     return options.bundleId;
   }
   // A Bundle ID allows letters, digits, hyphens, and periods; like Xcode, turn a name's underscores into hyphens.
@@ -117,8 +162,9 @@ async function chooseBundleIdentifier(
   const suggested = prefixed && !bundleProblem(prefixed) ? prefixed : undefined;
   if (options.skipConfirm) {
     if (suggested) return suggested;
-    throwUsageError(
+    throw new StarterInputRequired(
       `--bundle-id is required for a new app when Xcode has no usable Organization Identifier. Example: --bundle-id com.example.${component}`,
+      "bundleId",
     );
   }
   const value = await text({
@@ -161,8 +207,10 @@ async function chooseTeam(
   if (options.teamId) {
     const id = options.teamId.trim();
     if (!TEAM_ID.test(id))
-      throwUsageError(
+      throw new StarterInputRequired(
         `Invalid --team-id "${options.teamId}": use the 10-character Team ID from Xcode › Settings › Accounts.`,
+        "teamId",
+        { choices: teams },
       );
     return teams.find((team) => team.id === id) ?? { id, name: id, personal: false };
   }
@@ -170,10 +218,12 @@ async function chooseTeam(
     const paid = teams.filter((team) => !team.personal);
     const candidates = paid.length ? paid : teams;
     if (candidates.length === 1) return candidates[0]!;
-    throwUsageError(
+    throw new StarterInputRequired(
       candidates.length
         ? `Choose the Apple Developer team with --team-id: ${candidates.map((team) => teamLabel(team, platform)).join(", ")}.`
         : NO_TEAM,
+      "teamId",
+      { choices: candidates },
     );
   }
   if (!teams.length) {
@@ -243,16 +293,20 @@ export async function promptAppleStarter(
   const name = await chooseName(cwd, options);
   const projectDir = join(cwd, name);
   if (await dirExists(projectDir))
-    throw new CliError(
+    throw new StarterInputRequired(
       `Directory '${name}' already exists. Pick a different name or remove it first.`,
-      { code: ERROR_CODE.PROJECT_DIR_EXISTS },
+      "name",
+      {},
+      ERROR_CODE.PROJECT_DIR_EXISTS,
     );
   const bundleIdentifier = await chooseBundleIdentifier(name, options, defaults);
   const team = await chooseTeam(options, defaults.teams, platform);
   if (team.personal) {
     if (options.signInWithApple)
-      throwUsageError(
+      throw new StarterInputRequired(
         "Sign in with Apple needs a paid Apple Developer Program team. Choose a paid team with --team-id, or drop --sign-in-with-apple.",
+        "teamId",
+        { choices: defaults.teams.filter((candidate) => !candidate.personal) },
       );
     log.info(PERSONAL_TEAM_NOTE[platform]);
   }
