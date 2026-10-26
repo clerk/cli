@@ -219,6 +219,8 @@ export type BootstrapOverrides = {
   accountlessFlags?: readonly string[];
   /** `--json`: a native starter asks for its name instead of defaulting it. */
   json?: boolean;
+  /** A native iOS or macOS starter runs this once its answers are settled, before writing. */
+  beforeWrite?: () => Promise<void>;
   /** Answers for a native iOS or macOS starter; `flags` names the Apple flags that were passed. */
   apple?: {
     platform?: ApplePlatform;
@@ -249,6 +251,7 @@ export async function promptAndBootstrap(
     accountlessFlags = [],
     json,
     apple,
+    beforeWrite,
   }: BootstrapOverrides = { skipConfirm: false },
 ): Promise<BootstrapResult> {
   if (!skipConfirm && !implicitBootstrap) {
@@ -284,6 +287,7 @@ export async function promptAndBootstrap(
       bundleId: apple?.bundleId,
       teamId: apple?.teamId,
       signInWithApple: apple?.signInWithApple,
+      beforeWrite,
     });
   }
   if (!frameworkOverride) validateName();

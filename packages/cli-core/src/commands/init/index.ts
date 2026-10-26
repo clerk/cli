@@ -164,10 +164,14 @@ export async function init(options: InitOptions = {}) {
     ...(options.starter ? [] : appleFlags),
   ].filter((flag): flag is string => Boolean(flag));
   // A new app inside a repository linked elsewhere would move the whole repository's link, so an
-  // agent hears about it before anything is written.
-  if (options.starter && agent && options.app)
-    await assertLinkKept(cwd, options, { newProject: true });
-  else if (appleStarter && agent) await assertApplicationChosen(cwd, options);
+  // agent hears about it before anything is written. An iOS or macOS starter asks once its own
+  // answers are valid, so an agent never settles the link for a name or folder it then rejects.
+  const linkChecks = async () => {
+    if (options.app) await assertLinkKept(cwd, options, { newProject: true });
+    else await assertApplicationChosen(cwd, options);
+  };
+  if (appleStarter && agent) overrides.beforeWrite = linkChecks;
+  else if (options.starter && agent && options.app) await linkChecks();
   let resolved: ResolvedContext | undefined;
   try {
     resolved = existingProjectFlags.length

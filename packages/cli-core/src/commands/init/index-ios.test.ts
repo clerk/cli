@@ -312,6 +312,8 @@ describe("clerk init for native Apple projects", () => {
       },
     };
 
+    let written = false;
+
     function starter(
       apple: Partial<typeof STARTER.apple> = {},
       overrides: { isAgent?: boolean } = {},
@@ -320,9 +322,12 @@ describe("clerk init for native Apple projects", () => {
       spyOn(frameworkMod, "lookupFramework").mockImplementation((name) =>
         name === "ios" ? iosFramework : null,
       );
-      spyOn(bootstrapMod, "promptAndBootstrap").mockResolvedValue({
-        ...STARTER,
-        apple: { ...STARTER.apple, ...apple },
+      written = false;
+      // Like the real starter: the link checks run once its answers are valid, then it writes.
+      spyOn(bootstrapMod, "promptAndBootstrap").mockImplementation(async (_cwd, _fw, options) => {
+        await options?.beforeWrite?.();
+        written = true;
+        return { ...STARTER, apple: { ...STARTER.apple, ...apple } };
       });
       spyOn(config, "resolveProfile").mockResolvedValue({
         profile: { appId: "app_test" },
@@ -596,7 +601,69 @@ describe("clerk init for native Apple projects", () => {
         "/repo is linked to app_A. Linking a new app here to app_B switches every Clerk CLI command in /repo to app_B. Rerun with --relink to switch it, pass --app app_A to share its application, or create the new app outside this repository.",
       );
       expect(check).toHaveBeenCalledWith(expect.any(String), "app_B", { newProject: true });
-      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+      expect(written).toBe(false);
+    });
+
+    describe("in a folder linked elsewhere, the starter's own answers come first", () => {
+      function linked() {
+        starter({}, { isAgent: true });
+        spyOn(config, "resolveProfile").mockResolvedValue({
+          path: "/work",
+          profile: { appId: "app_P", appName: "Parent" },
+        } as never);
+        const check = spyOn(linkMod, "replacedLink").mockResolvedValue({
+          appId: "app_A",
+          scope: "/repo",
+        });
+        track(check);
+        return check;
+      }
+
+      test.each([
+        {
+          name: "an invalid name",
+          failure: new StarterInputRequired('Invalid --name "Swift": it names a module.', "name"),
+        },
+        {
+          name: "an existing folder",
+          failure: new StarterInputRequired(
+            "Directory 'MyApp' already exists. Pick a different name or remove it first.",
+            "name",
+          ),
+        },
+      ])("$name is asked about, not the link", async ({ failure }) => {
+        const check = linked();
+        // The real starter rejects these before it runs the link checks.
+        spyOn(bootstrapMod, "promptAndBootstrap").mockRejectedValue(failure);
+
+        await expect(
+          init({ starter: true, framework: "ios", json: true, app: "app_B" }),
+        ).rejects.toBe(failure);
+        expect(JSON.parse(captured.out)).toMatchObject({
+          status: "input-required",
+          starter: { field: "name", issue: failure.message },
+        });
+        expect(check).not.toHaveBeenCalled();
+      });
+
+      test.each([
+        { name: "with --app", options: { app: "app_B" }, flag: "--relink" },
+        { name: "without --app", options: {}, flag: "--app" },
+      ])(
+        "$name, valid answers still ask about the link before writing",
+        async ({ options, flag }) => {
+          linked();
+
+          await expect(
+            init({ starter: true, framework: "ios", json: true, ...options }),
+          ).rejects.toThrow(flag);
+          expect(JSON.parse(captured.out)).toMatchObject({
+            status: "input-required",
+            link: { flag },
+          });
+          expect(written).toBe(false);
+        },
+      );
     });
 
     test("an agent's continuation keeps --relink", async () => {
@@ -638,7 +705,7 @@ describe("clerk init for native Apple projects", () => {
             current: { appId: "app_P", appName: "Parent" },
           },
         });
-        expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+        expect(written).toBe(false);
       });
 
       test("with nothing to inherit, writes the app and asks for one after", async () => {

@@ -201,6 +201,62 @@ describe("promptAppleStarter", () => {
     });
   });
 
+  describe("beforeWrite", () => {
+    test("runs once the answers are valid, before the app is written", async () => {
+      xcode({ teams: [PAID] });
+      let written: boolean | undefined;
+      await run({
+        name: "MyApp",
+        bundleId: "com.example.MyApp",
+        beforeWrite: async () => {
+          written = existsSync(join(tmp, "MyApp"));
+        },
+      });
+      expect(written).toBe(false);
+      expect(existsSync(join(tmp, "MyApp/MyApp.xcodeproj/project.pbxproj"))).toBe(true);
+    });
+
+    test("a throw from it writes nothing", async () => {
+      xcode({ teams: [PAID] });
+      const failure = new Error("link decision required");
+      await expect(
+        run({
+          name: "MyApp",
+          bundleId: "com.example.MyApp",
+          beforeWrite: async () => {
+            throw failure;
+          },
+        }),
+      ).rejects.toBe(failure);
+      expect(existsSync(join(tmp, "MyApp"))).toBe(false);
+    });
+
+    test.each([
+      { name: "an invalid name", options: { name: "Swift" }, field: "name" },
+      { name: "an existing folder", options: { name: "Taken" }, field: "name" },
+      { name: "a missing name with --json", options: { requireName: true }, field: "name" },
+      {
+        name: "Sign in with Apple on a Personal Team",
+        options: { name: "MyApp", signInWithApple: true, teams: [PERSONAL] },
+        field: "teamId",
+      },
+    ])("doesn't run for $name", async ({ options: { teams: listed, ...options }, field }) => {
+      xcode({ teams: listed ? [...listed] : [PAID] });
+      mkdirSync(join(tmp, "Taken"));
+      let ran = false;
+      const error = await run({
+        bundleId: "com.example.MyApp",
+        ...options,
+        beforeWrite: async () => {
+          ran = true;
+        },
+      }).catch((caught: unknown) => caught);
+      expect(error).toBeInstanceOf(StarterInputRequired);
+      expect((error as StarterInputRequired).describe().field).toBe(field);
+      expect(ran).toBe(false);
+    });
+  });
+
   test("labels each team once, marking a Personal Team simulator-only", async () => {
     xcode({ teams: [PAID, { ...PERSONAL, name: "Sean Perez (Personal Team)" }, OTHER_PAID] });
     let labels: string[] = [];

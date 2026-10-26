@@ -73,6 +73,8 @@ export interface AppleStarterOptions {
   bundleId?: string;
   teamId?: string;
   signInWithApple?: boolean;
+  /** Runs once every answer is settled, right before the app is written; a throw writes nothing. */
+  beforeWrite?: () => Promise<void>;
 }
 
 const DEFAULT_NAME = "MyClerkApp";
@@ -310,6 +312,7 @@ export async function promptAppleStarter(
       );
     log.info(PERSONAL_TEAM_NOTE[platform]);
   }
+  await options.beforeWrite?.();
 
   log.blank();
   log.info(`Creating \`${name}\` ${platform === "ios" ? "iOS" : "macOS"} app...`);
