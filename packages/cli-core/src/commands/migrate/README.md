@@ -950,9 +950,9 @@ no limit. New development instances are created with a 100-user limit, and
 production instances have none by default. An API that predates the field
 leaves a development instance at `CLERK_MIGRATE_DEV_USER_LIMIT`, or 100, and a
 production one unchecked: the import then stops at the first refusal.
-`--allow-partial` imports up to the headroom, and `--json`'s `checks.quota`
-says where the limit came from (`limitSource`: `instance`, `env` or
-`default`).
+`--allow-partial` imports up to the headroom. When a limit applies, `--json`'s
+`checks.quota` says where it came from (`limitSource`: `instance`, `env` or
+`default`). When no limit applies, `checks.quota` is omitted.
 
 Users that do exceed the limit come back in the error breakdown as
 `You have reached your limit of N users`, annotated with what a development
