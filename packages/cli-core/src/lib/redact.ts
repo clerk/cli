@@ -24,8 +24,9 @@
  * tried as a start:
  *
  * - A start is pinned by a literal (`-----BEGIN`, `Authorization`, a key
- *   prefix) or by a lookbehind that refuses to start inside a run of name
- *   characters.
+ *   prefix) or by a lookbehind that refuses a start an earlier one in the
+ *   same run has already scanned: inside a run of name characters, at a
+ *   second `eyJ` in a run, or after the first of a token's trailing dots.
  * - A run of name characters is taken atomically: a lookahead captures the
  *   whole run and a backreference consumes it, so a later failure cannot make
  *   the engine retry every shorter prefix. The run is tested once for a
@@ -103,6 +104,9 @@
  *   credential, so the next JSON field still parses.
  * - Pass 1 also matches PGP headers and a block with no END line, and bounds
  *   the header words.
+ * - Its JWT pattern tries every `eyJ` of a run like `-eyJ-eyJ…`, each to the
+ *   end of the run, which takes quadratic time; pass 5's tries only the
+ *   first, which finds the same JWTs.
  *
  * ## Known limits, each pinned by a test
  *
@@ -162,17 +166,23 @@ const PRIVATE_KEY_BLOCK =
 
 // ── Quoted values, shared by passes 2 and 4 ─────────────────────────────────
 
-/** A closed quoted value on one line; an escaped quote inside it is part of it. */
-const QUOTED = String.raw`"(?:\\.|[^"\\\r\n])*"|'(?:\\.|[^'\\\r\n])*'`;
+/**
+ * A closed quoted value on one line; an escaped quote inside it is part of it.
+ * Each quoted shape repeats its group once per escape, not once per
+ * character: Bun's regex engine gives up without an error on a group repeated
+ * tens of thousands of times, so a value with that many escapes still goes
+ * unmatched.
+ */
+const QUOTED = String.raw`"[^"\\\r\n]*(?:\\.[^"\\\r\n]*)*"|'[^'\\\r\n]*(?:\\.[^'\\\r\n]*)*'`;
 /** An opening quote with no partner on its line: the value runs to the end of the line. */
-const OPEN_QUOTED = String.raw`"(?:\\.|[^"\\\r\n])*\\?(?![^\r\n])|'(?:\\.|[^'\\\r\n])*\\?(?![^\r\n])`;
+const OPEN_QUOTED = String.raw`"[^"\\\r\n]*(?:\\.[^"\\\r\n]*)*\\?(?![^\r\n])|'[^'\\\r\n]*(?:\\.[^'\\\r\n]*)*\\?(?![^\r\n])`;
 /**
  * JSON pasted inside a string arrives with its quotes escaped:
  * `{\"password\":\"x\"}`. The value ends at the next `\"`, and a bare `"`
  * cannot occur inside it. Closed and unterminated forms, each on one line.
  */
-const ESCAPED_QUOTED = String.raw`\\"(?:[^"\\\r\n]|\\[^"\r\n])*\\"|\\'(?:[^'\\\r\n]|\\[^'\r\n])*\\'`;
-const ESCAPED_OPEN_QUOTED = String.raw`\\"(?:[^"\\\r\n]|\\[^"\r\n])*\\?(?![^\r\n])|\\'(?:[^'\\\r\n]|\\[^'\r\n])*\\?(?![^\r\n])`;
+const ESCAPED_QUOTED = String.raw`\\"[^"\\\r\n]*(?:\\[^"\r\n][^"\\\r\n]*)*\\"|\\'[^'\\\r\n]*(?:\\[^'\r\n][^'\\\r\n]*)*\\'`;
+const ESCAPED_OPEN_QUOTED = String.raw`\\"[^"\\\r\n]*(?:\\[^"\r\n][^"\\\r\n]*)*\\?(?![^\r\n])|\\'[^'\\\r\n]*(?:\\[^'\r\n][^'\\\r\n]*)*\\?(?![^\r\n])`;
 /** Every quoted shape, most specific first. */
 const ANY_QUOTED = `${ESCAPED_QUOTED}|${ESCAPED_OPEN_QUOTED}|${QUOTED}|${OPEN_QUOTED}`;
 
@@ -403,7 +413,7 @@ const UPSTREAM_PREFIX_PATTERNS = [
   /\bAIza[0-9A-Za-z_-]{30,}\b/g,
   /\bGOCSPX-[A-Za-z0-9_-]{8,}/g,
   /\bwhsec_[A-Za-z0-9+/=]{20,}/g,
-  /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
+  /\beyJ(?<!eyJ[A-Za-z0-9_-]*?-eyJ)[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g,
 ];
 
 /**
@@ -504,12 +514,12 @@ function stripQuotes(value: string): string {
 // ── Entry points ────────────────────────────────────────────────────────────
 
 /**
- * A literal `\n`, `\r` or `\t`, a URL-encoded blank or line break, or an ANSI
- * escape. Each ends in a letter or digit, so a secret right after one is not
- * at a word edge and every pass would skip it; {@link redactText} scrubs the
- * text between them again.
+ * A literal `\n`, `\r` or `\t`, a URL-encoded character, or an ANSI escape.
+ * Each ends in a letter or digit, so a secret right after one is not at a
+ * word edge and every pass would skip it; {@link redactText} scrubs the text
+ * between them again.
  */
-const ESCAPE_SEQUENCE = new RegExp(String.raw`(\\[nrt]|%(?:20|0[9AaDd])|\x1b\[[0-9;?]*[A-Za-z])`);
+const ESCAPE_SEQUENCE = new RegExp(String.raw`(\\[nrt]|%[0-9A-Fa-f]{2}|\x1b\[[0-9;?]*[A-Za-z])`);
 
 /**
  * Scrub secrets, home-directory paths and email addresses from `text`, in
@@ -528,7 +538,7 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
   if (pieces.length === 1) return whole;
   let redactions = whole.redactions;
   const out = pieces.map((piece, i) => {
-    if (i % 2 === 1) return piece;
+    if (i % 2 === 1 || piece === "") return piece;
     const scrubbed = scrub(piece, literalHome);
     redactions += scrubbed.redactions;
     return scrubbed.text;
@@ -562,7 +572,7 @@ function scrub(text: string, literalHome: RegExp | null): Redaction {
   out = out.replace(
     SCHEME_CREDENTIAL,
     (match, scheme: string, open: string, value: string, close: string) => {
-      const token = value.replace(/\.+$/, "");
+      const token = value.replace(/(?<!\.)\.+$/, "");
       if (!isCredential(scheme, token)) return match;
       redactions += 1;
       // A quote pair around the token goes with it; a lone closing quote

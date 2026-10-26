@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { homedir } from "node:os";
+import { FEEDBACK_FIELD_MAX_LENGTH } from "./constants.ts";
 import {
   EMAIL_MARKER,
   REDACTED,
@@ -65,6 +66,7 @@ describe("secret shapes never reach the output", () => {
     ["Google client secret", "google GOCSPX-abcdefgh1234", "GOCSPX-abcdefgh1234"],
     ["Stripe webhook secret", `stripe ${STRIPE_WEBHOOK_SECRET}`, STRIPE_WEBHOOK_SECRET],
     ["JWT", `jwt ${JWT}`, JWT],
+    ["JWT right after a dash", `id-${JWT}`, JWT],
     ["PGP private key block", `log:\n${PGP_KEY_BLOCK}\nmore`, PGP_BODY],
     ["OpenAI project key", `error: invalid key ${OPENAI_KEY} (401)`, OPENAI_KEY],
     ["Anthropic key", `error: invalid x-api-key ${ANTHROPIC_KEY}`, ANTHROPIC_KEY],
@@ -131,6 +133,13 @@ describe("exact replacements", () => {
   test("an unterminated private key block is scrubbed to the end of the field", () => {
     expect(redact("log:\n-----BEGIN PRIVATE KEY-----\nMIIabc\nmore lines")).toEqual({
       text: `log:\n${REDACTED}`,
+      redactions: 1,
+    });
+  });
+
+  test("dots after a Bearer token stay", () => {
+    expect(redact("sent Bearer abc123def456ghi789... then 401.")).toEqual({
+      text: `sent ${REDACTED}... then 401.`,
       redactions: 1,
     });
   });
@@ -976,6 +985,7 @@ describe("large pastes stay linear", () => {
     ["run of a secret word followed by one separator", (n) => fill("token", n) + "=x"],
     ["dotted run", (n) => fill("a.", n)],
     ["dashed run", (n) => fill("a-", n)],
+    ["dashes before eyJ", (n) => fill("-eyJ", n)],
     ["flag run with no value", (n) => fill("--token ", n)],
     ["one long flag name", (n) => "--" + fill("token-", n)],
     ["unterminated quoted value on every line", (n) => fill('password="abc,def\n', n)],
@@ -1018,6 +1028,7 @@ describe("large pastes stay linear", () => {
     ["one long camelCase flag name", (n) => "--" + fill("dbPass-", n)],
     ["Authorization headers on one line", (n) => fill("Authorization: ", n)],
     ["Bearer words", (n) => fill("Bearer ", n)],
+    ["a run of dots inside a Bearer token", (n) => "Bearer a" + fill(".", n) + "a"],
     ["email local part with no domain", (n) => fill("a.", n) + "@"],
     ["email domain with no top-level domain", (n) => "a@" + fill("b.", n)],
     ["minified JSON log", (n) => fill('{"level":"info","user":"bob","n":1},', n)],
@@ -1190,8 +1201,9 @@ describe("escaped JSON inside a string", () => {
   });
 });
 
-// A literal `\n` or `\t` (escaped text), a URL-encoded blank or an ANSI color
-// code ends in a letter or digit, which would otherwise hide the next word's start.
+// A literal `\n` or `\t` (escaped text), a URL-encoded character or an ANSI
+// color code ends in a letter or digit, which would otherwise hide the next
+// word's start.
 describe("secrets right after an escape sequence", () => {
   const BEARER_TOKEN = "abcdefghijklmnopqrstuvwxyz123456";
   test.each([
@@ -1206,6 +1218,9 @@ describe("secrets right after an escape sequence", () => {
     ["curl -u after a literal \\n", `"x\\ncurl -u bob:s3cretpw https://x.io"`, "s3cretpw"],
     ["home path after a literal \\n", `"x\\n/Users/alice/app"`, "alice"],
     ["Clerk key after %20", `q=x%20${"sk_live_"}abc123def456`, "abc123def456"],
+    ["Clerk key after %3D", `q=x%26key%3D${"sk_live_"}abc123def456`, "abc123def456"],
+    ["Clerk key after %22", `q=%22${"sk_live_"}abc123def456%22`, "abc123def456"],
+    ["Clerk key after a lowercase %2c", `a=1%2c${"sk_live_"}abc123def456`, "abc123def456"],
     [
       "Clerk key inside an ANSI color code",
       `\x1b[31m${"sk_live_"}abc123def456\x1b[0m`,
@@ -1218,7 +1233,7 @@ describe("secrets right after an escape sequence", () => {
   });
 
   test("the escape sequences themselves survive", () => {
-    expect(redact(`a\\nsk_live_abc123def456\\tb%20c`).text).toBe(`a\\n${REDACTED}\\tb%20c`);
+    expect(redact(`a\\nsk_live_abc123def456\\tb%20c%3Dd`).text).toBe(`a\\n${REDACTED}\\tb%20c%3Dd`);
   });
 });
 
@@ -1233,5 +1248,27 @@ describe("a secret followed by a long run", () => {
     for (const size of [10_000, 60_000, 200_000]) {
       expect(redact(shape("a".repeat(size))).text).not.toContain("hunter2xyz");
     }
+  });
+});
+
+// The same engine limit, inside the value: a quoted value as long as a field
+// may be is still taken whole.
+describe.each([
+  ["double-quoted", (value: string) => `password="${value}"`, `password=${REDACTED}`],
+  ["single-quoted", (value: string) => `password='${value}'`, `password=${REDACTED}`],
+  ["unterminated", (value: string) => `password="${value}`, `password=${REDACTED}`],
+  [
+    "escaped JSON",
+    (value: string) => `{\\"password\\":\\"${value}\\"}`,
+    `{\\"password\\":${REDACTED}}`,
+  ],
+  ["JSON field", (value: string) => `{"apiToken": "${value}"}`, `{"apiToken": ${REDACTED}}`],
+  ["camelCase name", (value: string) => `dbPass="${value}"`, `dbPass=${REDACTED}`],
+])("a long %s value", (_label, shape, expected) => {
+  test.each([60_000, 200_000, FEEDBACK_FIELD_MAX_LENGTH])("%d characters", (size) => {
+    expect(redact(shape(`hunter2xyz${"a".repeat(size)}`))).toEqual({
+      text: expected,
+      redactions: 1,
+    });
   });
 });
