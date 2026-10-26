@@ -184,7 +184,21 @@ export async function init(options: InitOptions = {}) {
           starter: error.describe(),
         }),
       );
-    throw error;
+    if (!(error instanceof ProjectWritten)) throw error;
+    // The new app is on disk, so rerunning --starter would refuse its folder; say how to finish it.
+    const { bootstrap } = error;
+    if (options.json && bootstrap.apple)
+      log.data(
+        JSON.stringify(
+          setupInterrupted(
+            starterAppleOptions(options, { ...bootstrap, apple: bootstrap.apple }).starterProject,
+            error.failure,
+          ),
+          null,
+          2,
+        ),
+      );
+    throw error.failure;
   }
 
   if (!resolved) return;
@@ -664,13 +678,30 @@ async function bootstrapAndDetect(
   setTelemetryStage("bootstrap");
   const bootstrap = await promptAndBootstrap(cwd, frameworkOverride, overrides);
 
-  const ctx = await gatherContext(bootstrap.projectDir);
-  if (!ctx) {
-    throw new CliError("Project generation did not produce a detectable framework.", {
-      code: ERROR_CODE.FRAMEWORK_UNDETECTED,
-    });
+  try {
+    const ctx = await gatherContext(bootstrap.projectDir);
+    if (!ctx) {
+      throw new CliError("Project generation did not produce a detectable framework.", {
+        code: ERROR_CODE.FRAMEWORK_UNDETECTED,
+      });
+    }
+    return { ctx, bootstrap };
+  } catch (error) {
+    throw new ProjectWritten(bootstrap, error);
   }
-  return { ctx, bootstrap };
+}
+
+/**
+ * Detecting the project failed after it was written. `init` reports where the new app is (a
+ * native starter's `setup-interrupted`) and rethrows `failure` itself.
+ */
+class ProjectWritten extends Error {
+  constructor(
+    public bootstrap: BootstrapResult,
+    public failure: unknown,
+  ) {
+    super(errorMessage(failure));
+  }
 }
 
 async function handleStarter(

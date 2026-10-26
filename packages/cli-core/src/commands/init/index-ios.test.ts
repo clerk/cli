@@ -652,6 +652,50 @@ describe("clerk init for native Apple projects", () => {
       });
     });
 
+    describe("detecting the new app fails after it's written", () => {
+      test.each([
+        {
+          name: "throws",
+          fail: () =>
+            spyOn(context, "gatherContext").mockRejectedValue(
+              new Error("project.pbxproj unreadable"),
+            ),
+          message: "project.pbxproj unreadable",
+        },
+        {
+          name: "finds no framework",
+          fail: () => spyOn(context, "gatherContext").mockResolvedValue(null),
+          message: "Project generation did not produce a detectable framework.",
+        },
+      ])("when it $name, says where the app is and how to finish it", async ({ fail, message }) => {
+        agentStarter();
+        fail();
+
+        await expect(init({ starter: true, framework: "ios", json: true })).rejects.toThrow(
+          message,
+        );
+        expect(JSON.parse(captured.out)).toMatchObject({
+          status: "setup-interrupted",
+          error: message,
+          starter: {
+            projectName: "MyApp",
+            projectDir: "/tmp/test/MyApp",
+            continuation: "cd MyApp && clerk init --app <app_id> --json --app-id-prefix COMPANY001",
+          },
+          next: [expect.stringContaining("Don't run --starter again")],
+        });
+      });
+
+      test("without --json, the original error comes through alone", async () => {
+        agentStarter();
+        const failure = new Error("project.pbxproj unreadable");
+        spyOn(context, "gatherContext").mockRejectedValue(failure);
+
+        await expect(init({ starter: true, framework: "ios" })).rejects.toBe(failure);
+        expect(captured.out).toBe("");
+      });
+    });
+
     test("--team-id needs --starter", async () => {
       setup();
 
