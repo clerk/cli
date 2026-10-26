@@ -2,7 +2,13 @@ import { readdirSync } from "node:fs";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
-import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  errorMessage,
+  throwUsageError,
+  throwUserAbort,
+} from "../../../lib/errors.ts";
 import { setTelemetryStage } from "../../../lib/telemetry.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.ts";
@@ -141,10 +147,14 @@ export function printSetupResult(
  * What an agent needs to do before native setup can run: choose a Clerk application, then run
  * `command`, which carries this run's setup options.
  */
-export function applicationRequired(command = "clerk init --app <app_id> --json") {
+export function applicationRequired(
+  command = "clerk init --app <app_id> --json",
+  starter?: StarterProjectSummary,
+) {
   return {
     status: "application-required",
     appIntegrationComplete: false,
+    ...(starter && { starter }),
     next: [
       'Run `clerk apps list --json` and ask the user which application to use, or create one with `clerk apps create "<name>" --json`. If listing fails because you are not signed in, run `clerk auth login` first.',
       `Then run \`${command}\` to link it, configure the Xcode project, and register the app with Clerk.`,
@@ -174,6 +184,26 @@ export interface AppleInitOptions {
 export interface StarterProjectSummary {
   projectName: string;
   platform: "ios" | "macos";
+  /** Where the new app was written. */
+  projectDir?: string;
+  /** The `clerk init` that finishes setting up the new app, run from where the starter ran. */
+  continuation?: string;
+}
+
+/**
+ * A new app was written, but setup stopped with an error that has no status of its own. Running
+ * `--starter` again would refuse the existing folder, so the agent continues inside the new app.
+ */
+export function setupInterrupted(starter: StarterProjectSummary, error: unknown) {
+  return {
+    status: "setup-interrupted",
+    appIntegrationComplete: false,
+    error: errorMessage(error),
+    starter,
+    next: [
+      `Resolve the error, then run \`${starter.continuation}\` to finish setting up the new app. Don't run --starter again.`,
+    ],
+  };
 }
 
 /**
@@ -190,6 +220,13 @@ export async function runAppleInit(
   // As elsewhere in init, agent mode implies --yes.
   const interactive = !options.agent && !options.yes;
   const signal = interruptSignal();
+  const newApp = options.starterProject;
+  // Whether this run already printed its JSON status, so an error doesn't print a second one.
+  let reported = false;
+  const report = (status: object, indent?: number) => {
+    reported = true;
+    log.data(JSON.stringify({ ...status, ...(newApp && { starter: newApp }) }, null, indent));
+  };
   const setup: SetupOptions = {
     root: options.root,
     project: options.xcodeProject,
@@ -362,7 +399,7 @@ export async function runAppleInit(
     setTelemetryStage("ios_apply");
     const result = await applySetup(preview, dependencies, signal);
     stopNativeProgress();
-    if (json) log.data(JSON.stringify(result, null, 2));
+    if (json) report(result, 2);
     else
       printSetupResult(
         result,
@@ -385,21 +422,18 @@ export async function runAppleInit(
       );
   } catch (error) {
     if (json && error instanceof IdentityRequired)
-      log.data(
-        JSON.stringify({
-          status: "input-required",
-          appIntegrationComplete: false,
-          identity: describeIdentity(error.discovery),
-        }),
-      );
-    if (json && error instanceof SelectionNeeded)
-      log.data(
-        JSON.stringify({
-          status: "selection-required",
-          choices: error.choices,
-          appIntegrationComplete: false,
-        }),
-      );
+      report({
+        status: "input-required",
+        appIntegrationComplete: false,
+        identity: describeIdentity(error.discovery),
+      });
+    else if (json && error instanceof SelectionNeeded)
+      report({
+        status: "selection-required",
+        choices: error.choices,
+        appIntegrationComplete: false,
+      });
+    else if (json && newApp && !reported) report(setupInterrupted(newApp, error), 2);
     throw error;
   }
 }

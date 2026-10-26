@@ -201,6 +201,13 @@ export async function confirmOverwrite(cwd: string): Promise<void> {
   if (!proceed) throwUserAbort();
 }
 
+/** iOS and macOS have no accountless setup, so a native starter can't take these flags. */
+export function rejectAccountlessApple(flags: readonly string[]): never {
+  throwUsageError(
+    `${flags.join(", ")} ${flags.length === 1 ? "applies" : "apply"} only to accountless web setup; iOS and macOS apps link a Clerk application instead.`,
+  );
+}
+
 export type BootstrapOverrides = {
   /** Non-interactive mode: require --framework, auto-resolve PM/name, skip all prompts. */
   skipConfirm: boolean;
@@ -210,6 +217,10 @@ export type BootstrapOverrides = {
   nameOverride?: string;
   /** Accountless-only flags that were passed, which a native iOS or macOS starter can't use. */
   accountlessFlags?: readonly string[];
+  /** `--json`: a native starter asks for its name instead of defaulting it. */
+  json?: boolean;
+  /** A native iOS or macOS starter runs this once its answers are settled, before writing. */
+  beforeWrite?: (projectDir: string) => Promise<void>;
   /** Answers for a native iOS or macOS starter; `flags` names the Apple flags that were passed. */
   apple?: {
     platform?: ApplePlatform;
@@ -238,7 +249,9 @@ export async function promptAndBootstrap(
     pmOverride,
     nameOverride,
     accountlessFlags = [],
+    json,
     apple,
+    beforeWrite,
   }: BootstrapOverrides = { skipConfirm: false },
 ): Promise<BootstrapResult> {
   if (!skipConfirm && !implicitBootstrap) {
@@ -266,16 +279,15 @@ export async function promptAndBootstrap(
 
   const choice = await pickFramework(frameworkOverride, apple?.platform);
   if (choice.kind === "apple") {
-    if (accountlessFlags.length)
-      throwUsageError(
-        `${accountlessFlags.join(", ")} ${accountlessFlags.length === 1 ? "applies" : "apply"} only to accountless web setup; iOS and macOS apps link a Clerk application instead.`,
-      );
+    if (accountlessFlags.length) rejectAccountlessApple(accountlessFlags);
     return promptAppleStarter(cwd, choice.platform, {
       skipConfirm,
+      requireName: json,
       name: nameOverride,
       bundleId: apple?.bundleId,
       teamId: apple?.teamId,
       signInWithApple: apple?.signInWithApple,
+      beforeWrite,
     });
   }
   if (!frameworkOverride) validateName();
