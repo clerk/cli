@@ -113,6 +113,33 @@ describe("agent mode through the real program", () => {
     }
   });
 
+  test.each([
+    [
+      "as flags",
+      (attempted: string, issue: string) => ["--attempted", attempted, "--issue", issue],
+    ],
+    [
+      "through --input-json",
+      (attempted: string, issue: string) => ["--input-json", JSON.stringify({ attempted, issue })],
+    ],
+  ])("values that start like the root's -v and -h are sent, %s", async (_label, fields) => {
+    await readyToSend();
+    const attempted = "-v printed nothing";
+    const issue = "-h is ignored";
+    const result = await clerk(
+      "--mode",
+      "agent",
+      "feedback",
+      "--goal",
+      "x",
+      "--outcome",
+      "blocked",
+      ...fields(attempted, issue),
+    );
+    expect(JSON.parse(result.stdout).sent).toBe(true);
+    expect(events()[0]!.payload).toMatchObject({ attempted, issue });
+  });
+
   test("an opted-out run prints sent: false with the issues URL and exits 0", async () => {
     await markNoticeAlreadyShown();
     process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;

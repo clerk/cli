@@ -284,10 +284,10 @@ const SPACED_SECRET_NAME = String.raw`(?:api key|access token|refresh token|auth
  * like an ordinary word; after a secret-looking name it is a credential
  * whatever it looks like.
  */
-const SCHEME_VALUE = String.raw`(?:Bearer|Basic)[ \t]+(?:[^\s"\\]|\\(?!"))+`;
+const SCHEME_VALUE = String.raw`(?:Bearer|Basic)[ \t]+(?:[^\s"\\]+|\\(?!"))+`;
 
 /** A shell word: non-blank characters, through any quoted part they contain (`MY_TOKEN="alpha beta"`). */
-const SHELL_WORD = String.raw`(?:${ANY_QUOTED}|[^\s"'])+`;
+const SHELL_WORD = String.raw`(?:${ANY_QUOTED}|[^\s"']+)+`;
 /** A JSON field's value: quoted, or a number or boolean that stops at `,`, `;` or `}`. */
 const JSON_VALUE = String.raw`(?:${ANY_QUOTED}|[^\s,;}]+)`;
 /**
@@ -295,7 +295,7 @@ const JSON_VALUE = String.raw`(?:${ANY_QUOTED}|[^\s,;}]+)`;
  * quote (an escaped one included). Stopping at a double quote keeps the rest
  * of a JSON string or log line that the assignment sits in.
  */
-const BARE_VALUE = String.raw`(?:${SCHEME_VALUE}|${ANY_QUOTED}|(?:[^\s"\\]|\\(?!"))+)`;
+const BARE_VALUE = String.raw`(?:${SCHEME_VALUE}|${ANY_QUOTED}|(?:[^\s"\\]+|\\(?!"))+)`;
 
 /**
  * Separator of an assignment or a field: `:` or `=`, or a two- or three-
@@ -504,15 +504,39 @@ function stripQuotes(value: string): string {
 // ── Entry points ────────────────────────────────────────────────────────────
 
 /**
+ * A literal `\n`, `\r` or `\t`, a URL-encoded blank or line break, or an ANSI
+ * escape. Each ends in a letter or digit, so a secret right after one is not
+ * at a word edge and every pass would skip it; {@link redactText} scrubs the
+ * text between them again.
+ */
+const ESCAPE_SEQUENCE = new RegExp(String.raw`(\\[nrt]|%(?:20|0[9AaDd])|\x1b\[[0-9;?]*[A-Za-z])`);
+
+/**
  * Scrub secrets, home-directory paths and email addresses from `text`, in
- * the eight passes the module comment lists. `homedir` is injectable for
- * tests; production callers omit it.
+ * the eight passes the module comment lists, then once more between
+ * {@link ESCAPE_SEQUENCE}s. `homedir` is injectable for tests; production
+ * callers omit it.
  *
  * Counting: passes 2 and 4 leave a value alone, uncounted, when it already
  * starts with the marker (an earlier pass took the credential inside it);
  * every other pass counts each match.
  */
 export function redactText(text: string, options: { homedir?: string } = {}): Redaction {
+  const literalHome = literalHomeDirPattern(options.homedir ?? homedir());
+  const whole = scrub(text, literalHome);
+  const pieces = whole.text.split(ESCAPE_SEQUENCE);
+  if (pieces.length === 1) return whole;
+  let redactions = whole.redactions;
+  const out = pieces.map((piece, i) => {
+    if (i % 2 === 1) return piece;
+    const scrubbed = scrub(piece, literalHome);
+    redactions += scrubbed.redactions;
+    return scrubbed.text;
+  });
+  return { text: out.join(""), redactions };
+}
+
+function scrub(text: string, literalHome: RegExp | null): Redaction {
   let redactions = 0;
   const count = (): string => {
     redactions += 1;
@@ -584,7 +608,6 @@ export function redactText(text: string, options: { homedir?: string } = {}): Re
     redactions += 1;
     return "~";
   };
-  const literalHome = literalHomeDirPattern(options.homedir ?? homedir());
   if (literalHome) out = out.replace(literalHome, tilde);
   out = out.replace(GENERIC_HOME_DIR, tilde);
 

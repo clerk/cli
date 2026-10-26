@@ -67,9 +67,10 @@ import {
 export const FEEDBACK_EVENT = "CLI_FEEDBACK";
 
 /**
- * Same values as the MCP server's `submit_feedback` tool, so the two sources
- * combine. The one list the help text, the prompt and the shell completion
- * all derive from.
+ * Same values as the MCP server's `submit_feedback` tool, so the two read the
+ * same. They are not stored together: this event goes to the telemetry
+ * warehouse, not the MCP server's feedback store. The one list the help text,
+ * the prompt and the shell completion all derive from.
  */
 export const FEEDBACK_OUTCOME_CHOICES = [
   { value: "blocked", description: "Could not finish" },

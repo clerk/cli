@@ -1021,6 +1021,7 @@ describe("large pastes stay linear", () => {
     ["email local part with no domain", (n) => fill("a.", n) + "@"],
     ["email domain with no top-level domain", (n) => "a@" + fill("b.", n)],
     ["minified JSON log", (n) => fill('{"level":"info","user":"bob","n":1},', n)],
+    ["literal \\n escapes between assignments", (n) => fill("a\\npassword=x%20", n)],
   ];
 
   const timed = (input: string): number => {
@@ -1186,5 +1187,51 @@ describe("escaped JSON inside a string", () => {
     ['log: {\\"password\\":\\"hunter2xyz', `log: {\\"password\\":${REDACTED}`],
   ])("%s → %s", (input, expected) => {
     expect(redact(input)).toEqual({ text: expected, redactions: 1 });
+  });
+});
+
+// A literal `\n` or `\t` (escaped text), a URL-encoded blank or an ANSI color
+// code ends in a letter or digit, which would otherwise hide the next word's start.
+describe("secrets right after an escape sequence", () => {
+  const BEARER_TOKEN = "abcdefghijklmnopqrstuvwxyz123456";
+  test.each([
+    [
+      "Clerk key after a literal \\n",
+      `{"msg":"line one\\n${"sk_live_"}abc123def456"}`,
+      "abc123def456",
+    ],
+    ["JWT after a literal \\n", `"x\\n${JWT}"`, JWT],
+    ["Bearer token after a literal \\n", `"h\\nBearer ${BEARER_TOKEN}"`, BEARER_TOKEN],
+    ["password after a literal \\t", `"x\\tpassword=hunter2xyz"`, "hunter2xyz"],
+    ["curl -u after a literal \\n", `"x\\ncurl -u bob:s3cretpw https://x.io"`, "s3cretpw"],
+    ["home path after a literal \\n", `"x\\n/Users/alice/app"`, "alice"],
+    ["Clerk key after %20", `q=x%20${"sk_live_"}abc123def456`, "abc123def456"],
+    [
+      "Clerk key inside an ANSI color code",
+      `\x1b[31m${"sk_live_"}abc123def456\x1b[0m`,
+      "abc123def456",
+    ],
+  ])("%s", (_label, input, secret) => {
+    const { text, redactions } = redact(input);
+    expect(text).not.toContain(secret);
+    expect(redactions).toBeGreaterThan(0);
+  });
+
+  test("the escape sequences themselves survive", () => {
+    expect(redact(`a\\nsk_live_abc123def456\\tb%20c`).text).toBe(`a\\n${REDACTED}\\tb%20c`);
+  });
+});
+
+// Bun's regex engine gives up on a long run without an error and reports no match.
+describe("a secret followed by a long run", () => {
+  test.each([
+    ["URL query", (tail: string) => `password=hunter2xyz&data=${tail}`],
+    ["flag", (tail: string) => `--token hunter2xyz${tail}`],
+    ["JSON field", (tail: string) => `{"password":"hunter2xyz","data":"${tail}"}`],
+    ["camelCase name", (tail: string) => `dbPass=hunter2xyz${tail}`],
+  ])("%s", (_label, shape) => {
+    for (const size of [10_000, 60_000, 200_000]) {
+      expect(redact(shape("a".repeat(size))).text).not.toContain("hunter2xyz");
+    }
   });
 });
