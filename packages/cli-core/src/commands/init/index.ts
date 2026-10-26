@@ -8,10 +8,12 @@ import { dim, bold } from "../../lib/color.js";
 import {
   throwUserAbort,
   throwUsageError,
+  UserAbortError,
   CliError,
   ERROR_CODE,
   EXIT_CODE,
   errorMessage,
+  withApiContext,
 } from "../../lib/errors.js";
 import {
   lookupFramework,
@@ -21,6 +23,7 @@ import {
 } from "../../lib/framework.js";
 import { resolveProfile } from "../../lib/config.js";
 import { getGitRepoRoot } from "../../lib/git.js";
+import { createApplication } from "../../lib/plapi.js";
 import { deriveProjectName } from "../../lib/project-name.js";
 import { log } from "../../lib/log.js";
 import { quoteArg } from "../../lib/json-body.ts";
@@ -69,11 +72,15 @@ import {
   applicationRequired,
   canSetUpXcode,
   runAppleInit,
+  applicationInterrupted,
+  inspectAppleProject,
   setupInterrupted,
   type AppleInitOptions,
   type StarterProjectSummary,
 } from "./ios/coordinator.js";
 import { withNativeProgress } from "./ios/progress.js";
+import { SelectionNeeded } from "./ios/discovery.js";
+import { IdentityRequired } from "./ios/identity.js";
 import { StarterInputRequired, type AppleStarter } from "./ios/starter-bootstrap.js";
 
 type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
@@ -102,9 +109,15 @@ type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
   fresh?: boolean;
   /** Let an agent replace the link to a different application that `--app` would overwrite. */
   relink?: boolean;
+  /**
+   * Create a new Clerk application named after the app, once every check that could stop setup
+   * has passed, so a stopped run never leaves an unused application behind.
+   */
+  createApp?: boolean;
 };
 
 export async function init(options: InitOptions = {}) {
+  emailLookup = undefined;
   const cwd = process.cwd();
   const agent = isAgent();
 
@@ -133,7 +146,7 @@ export async function init(options: InitOptions = {}) {
   ].filter((flag): flag is string => Boolean(flag));
   const appleStarter =
     options.starter === true && (options.framework === "ios" || options.framework === MACOS);
-  // Before the link checks below, whose advice (--app) these flags would contradict.
+  // Before the link checks below, whose advice (--app, --create-app) these flags would contradict.
   if (appleStarter && accountlessFlags.length) rejectAccountlessApple(accountlessFlags);
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
@@ -165,7 +178,7 @@ export async function init(options: InitOptions = {}) {
   ].filter((flag): flag is string => Boolean(flag));
   // A new app inside a repository linked elsewhere would move the whole repository's link, so an
   // agent hears about it before anything is written.
-  if (options.starter && agent && options.app)
+  if (options.starter && (options.createApp || (agent && options.app)))
     await assertLinkKept(cwd, options, { newProject: true });
   else if (appleStarter && agent) await assertApplicationChosen(cwd, options);
   let resolved: ResolvedContext | undefined;
@@ -226,8 +239,10 @@ export async function init(options: InitOptions = {}) {
       ? await isAuthenticatedForAgent()
       : await isAuthenticated();
   const linkedProfile =
-    !optsAccountless && agent && !options.app ? await resolveProfile(ctx.cwd) : undefined;
-  const hasRealAppTarget = Boolean(options.app || linkedProfile);
+    !optsAccountless && agent && !options.app && !options.createApp
+      ? await resolveProfile(ctx.cwd)
+      : undefined;
+  const hasRealAppTarget = Boolean(options.app || options.createApp || linkedProfile);
 
   const strategy = pickStrategy({
     optsAccountless,
@@ -244,26 +259,76 @@ export async function init(options: InitOptions = {}) {
   if (strategy === "authenticate") {
     setTelemetryStage("link");
     bar();
-    const createIfMissing = agent
-      ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
-      : undefined;
+    // The name an agent's missing application, or --create-app's new one, is given.
+    const appName =
+      agent || options.createApp
+        ? await deriveProjectName(ctx.cwd, bootstrap?.projectName)
+        : undefined;
+    const createIfMissing = agent ? appName : undefined;
     // A project init generated without --starter (a blank directory) had no check before it was
     // written, so it's checked now, as itself. A --starter app was checked before writing.
-    if (!options.starter && agent && options.app) await assertLinkKept(ctx.cwd, options);
+    if (!options.starter && (options.createApp || (agent && options.app)))
+      await assertLinkKept(ctx.cwd, options);
+    let createdAppId: string | undefined;
     try {
+      // The Xcode target, whether its team allows the requested features, and the new
+      // application's native identity are settled before --create-app makes an application
+      // that a stopped setup would leave unused.
+      if (options.createApp && ctx.framework.dep === "ios" && canSetUpXcode()) {
+        appleOptions.inspection = (
+          await inspectAppleProject(appleOptions, {}, { newApplication: true })
+        ).inspection;
+      }
       await authenticateAndLink(
         ctx.cwd,
         options.app,
         createIfMissing,
         // Native setup continues right after linking, so link's `clerk env pull` advice doesn't apply.
         ctx.framework.dep === "ios" && canSetUpXcode() ? { showNextSteps: false } : {},
+        options.createApp && appName
+          ? {
+              name: appName,
+              // From here on, finishing the new app must link the application just created,
+              // not create another.
+              onCreate: (appId) => {
+                createdAppId = appId;
+                if (newApp && bootstrap?.apple)
+                  newApp.continuation = appleContinuation(options, bootstrap, appId);
+              },
+            }
+          : undefined,
       );
     } catch (error) {
+      // A target to choose or an identity to supply already printed its own status.
+      // A deliberate "no" isn't an interruption either.
+      const reported =
+        error instanceof SelectionNeeded ||
+        error instanceof IdentityRequired ||
+        error instanceof UserAbortError;
       // The new app is already on disk; say where, and how to finish it, instead of only failing.
-      if (options.json && newApp)
-        log.data(JSON.stringify(setupInterrupted(newApp, error), null, 2));
+      if (options.json && newApp && !reported)
+        log.data(JSON.stringify(setupInterrupted(newApp, error, createdAppId), null, 2));
+      // An application created for an existing project must be reused, not created again.
+      else if (options.json && createdAppId && !reported && ctx.framework.dep === "ios")
+        log.data(
+          JSON.stringify(
+            applicationInterrupted(
+              createdAppId,
+              appleContinuation(options, undefined, createdAppId),
+              error,
+            ),
+            null,
+            2,
+          ),
+        );
       throw error;
     }
+    // If setup fails from here, it names this application so it's reused, not created again.
+    if (createdAppId)
+      appleOptions.createdApplication = {
+        appId: createdAppId,
+        continuation: newApp?.continuation ?? appleContinuation(options, undefined, createdAppId),
+      };
   }
 
   // Native Apple setup edits the Xcode project and registers the app instead of
@@ -339,14 +404,46 @@ async function assertUsableFlags(
   if (accountless && options.login) {
     throwUsageError("--accountless and --login cannot be combined.");
   }
-  if (options.relink && !options.app) {
+  if (options.relink && !options.app && !options.createApp) {
     throwUsageError(
-      "--relink applies with --app: it lets it replace a link to a different application.",
+      "--relink applies with --app or --create-app: it lets them replace a link to a different application.",
     );
   }
   if (accountless && options.app) {
     throwUsageError(
       "--accountless cannot be combined with --app. Drop --accountless to link the app, or drop --app to use temporary development keys.",
+    );
+  }
+  // Agents are why --create-app exists: a person picks or creates an application interactively.
+  if (options.createApp && !agent) {
+    throwUsageError(
+      "--create-app is for agent runs (--mode agent, or any --json starter). Without it, clerk init asks which application to use and offers to create one.",
+    );
+  }
+  if (options.createApp && options.app) {
+    throwUsageError(
+      "--create-app and --app cannot be combined. Pass --app to use an existing application, or --create-app to create one.",
+    );
+  }
+  if (options.createApp && (accountless || options.dryRun)) {
+    throwUsageError(
+      `--create-app creates a real Clerk application, so it can't be combined with ${accountless ? "--accountless" : "--dry-run"}.`,
+    );
+  }
+  // A named framework is known now, so an unsupported one is named before signing in matters.
+  if (
+    options.createApp &&
+    options.framework &&
+    options.framework !== "ios" &&
+    options.framework !== MACOS
+  )
+    throwUsageError(CREATE_APP_APPLE_ONLY);
+  // Signing in is the one check an agent can't fix mid-run, so it comes before a starter is written.
+  if (options.createApp && agent && !(await isAuthenticatedForAgent())) {
+    throwUsageError(
+      "--create-app needs a signed-in Clerk CLI. Ask the user to run `clerk auth login`, then re-run `clerk init`.",
+      undefined,
+      ERROR_CODE.AUTH_REQUIRED,
     );
   }
   if (options.template && options.login) {
@@ -470,7 +567,7 @@ function appleContinuation(
   };
   const parts = [
     ...(starter ? [`cd ${quoteArg(starter.projectName)}`, "&&"] : []),
-    `clerk init --app ${appId ? quoteArg(appId) : "<app_id>"} --json`,
+    `clerk init ${appId ? `--app ${quoteArg(appId)}` : options.createApp ? "--create-app" : "--app <app_id>"} --json`,
     ...(options.relink ? ["--relink"] : []),
   ];
   for (const [key, flag] of APPLE_FLAGS) {
@@ -493,21 +590,29 @@ class LinkDecisionRequired extends CliError {
  * In agent mode, `--app` naming a different application than this folder's link would silently
  * replace it, and inside a Git repository that link is shared by every project there. Without
  * `--relink`, stop and say so instead; with `--json`, also as an `input-required` status.
+ * `--create-app` (agent runs only) is checked before the application exists.
  */
 async function assertLinkKept(
   cwd: string,
   options: InitOptions,
   { newProject = false }: { newProject?: boolean } = {},
 ): Promise<void> {
-  if (!options.app || options.relink) return;
+  if ((!options.app && !options.createApp) || options.relink) return;
   const replaced = await replacedLink(cwd, options.app, { newProject });
   if (!replaced) return;
   const current = replaced.appName ? `${replaced.appName} (${replaced.appId})` : replaced.appId;
+  const target = options.app ?? "a new application";
   // Sharing the linked application is usually right for an app in the same product's repository.
   const keep = newProject
     ? `pass --app ${replaced.appId} to share its application, or create the new app outside this repository`
-    : `or pass --app ${replaced.appId} to keep the current link`;
-  const message = `${replaced.scope} is linked to ${current}. Linking ${newProject ? "a new app here" : "it"} to ${options.app} switches every Clerk CLI command in ${replaced.scope} to ${options.app}. Rerun with --relink to switch it, ${keep}.`;
+    : options.app
+      ? `or pass --app ${replaced.appId} to keep the current link`
+      : `or pass --app ${replaced.appId} instead of --create-app to keep the current link`;
+  const subject = newProject ? "a new app here" : "it";
+  const change = options.app
+    ? `Linking ${subject} to ${options.app} switches every Clerk CLI command in ${replaced.scope} to ${options.app}`
+    : `Linking ${subject} to a new Clerk application switches every Clerk CLI command in ${replaced.scope} to that application`;
+  const message = `${replaced.scope} is linked to ${current}. ${change}. Rerun with --relink to switch it, ${keep}.`;
   if (options.json)
     log.data(
       JSON.stringify({
@@ -515,13 +620,13 @@ async function assertLinkKept(
         appIntegrationComplete: false,
         link: {
           flag: "--relink",
-          question: `Switch the Clerk CLI link for ${replaced.scope} from ${current} to ${options.app}?`,
+          question: `Switch the Clerk CLI link for ${replaced.scope} from ${current} to ${target}?`,
           issue: message,
           current: {
             appId: replaced.appId,
             ...(replaced.appName && { appName: replaced.appName }),
           },
-          requested: options.app,
+          ...(options.app ? { requested: options.app } : { createApp: true }),
           scope: replaced.scope,
         },
       }),
@@ -532,7 +637,7 @@ async function assertLinkKept(
 /**
  * A new app made here would otherwise set itself up against whatever link covers this directory,
  * a parent's or the repository's, which may belong to another project. An agent names the
- * application instead: `--app` with the linked one to share it, or with another.
+ * application instead: `--app` with the linked one to share it, or another, or `--create-app`.
  */
 async function assertApplicationChosen(cwd: string, options: InitOptions): Promise<void> {
   const inherited = await resolveProfile(cwd);
@@ -540,7 +645,7 @@ async function assertApplicationChosen(cwd: string, options: InitOptions): Promi
   const { appId, appName } = inherited.profile;
   const current = appName ? `${appName} (${appId})` : appId;
   const scope = (await getGitRepoRoot(cwd)) ?? inherited.path;
-  const message = `${scope} is linked to ${current}, so a new app here would use it too. Choose the new app's application: pass --app ${appId} to share it, or --app with another application (\`clerk apps create\` makes a new one).`;
+  const message = `${scope} is linked to ${current}, so a new app here would use it too. Choose the new app's application: pass --app ${appId} to share it, --app with another application, or --create-app to create one.`;
   if (options.json)
     log.data(
       JSON.stringify({
@@ -548,7 +653,7 @@ async function assertApplicationChosen(cwd: string, options: InitOptions): Promi
         appIntegrationComplete: false,
         link: {
           flag: "--app",
-          question: `Should the new app use ${current}, or another application?`,
+          question: `Should the new app use ${current}, another application, or a new one?`,
           issue: message,
           current: { appId, ...(appName && { appName }) },
           scope,
@@ -559,7 +664,11 @@ async function assertApplicationChosen(cwd: string, options: InitOptions): Promi
 }
 
 /** Rejects flags the detected (or requested) framework can't honour. */
+const CREATE_APP_APPLE_ONLY =
+  "--create-app applies only to iOS and macOS apps. For other frameworks, an agent run already creates an application named after the project when none is linked.";
+
 function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): void {
+  if (options.createApp && framework.dep !== "ios") throwUsageError(CREATE_APP_APPLE_ONLY);
   if (options.dryRun && !framework.supportsDryRun)
     throwUsageError(`--dry-run isn't supported for ${framework.name} yet.`);
   if (options.json && !framework.supportsJson)
@@ -591,7 +700,15 @@ function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): v
  */
 async function isAuthenticatedForAgent(): Promise<boolean> {
   if (process.env.CLERK_PLATFORM_API_KEY) return true;
-  return (await getAuthenticatedEmail()) !== null;
+  return (await authenticatedEmail()) !== null;
+}
+
+// Several checks in one run ask who's signed in (the flag checks, the strategy, the sign-in
+// label), and each answer is a network request, so a run asks once. `init` clears it per run.
+let emailLookup: Promise<string | null> | undefined;
+async function authenticatedEmail(): Promise<string | null> {
+  emailLookup ??= getAuthenticatedEmail();
+  return emailLookup;
 }
 
 /**
@@ -856,7 +973,7 @@ async function resolveAuthLabel(): Promise<string> {
   const hasApiKey = Boolean(process.env.CLERK_PLATFORM_API_KEY);
   if (hasApiKey) return "Using API key";
 
-  const email = await getAuthenticatedEmail();
+  const email = await authenticatedEmail();
   if (email) return `Logged in as ${email}`;
 
   await login({ showNextSteps: false });
@@ -868,8 +985,36 @@ async function authenticateAndLink(
   app: string | undefined,
   createIfMissing: string | undefined,
   linkOptions: { showNextSteps?: false } = {},
+  createApp?: { name: string; onCreate(appId: string): void },
 ): Promise<void> {
   const label = await resolveAuthLabel();
+  if (createApp) {
+    if (label) log.info(dim(label));
+    const created = await withApiContext(
+      createApplication(createApp.name),
+      "Failed to create application",
+    );
+    createApp.onCreate(created.application_id);
+    log.success(`Created ${created.name || created.application_id}`);
+    try {
+      // assertLinkKept already settled any link this replaces.
+      await link({
+        app: created.application_id,
+        application: created,
+        cwd,
+        confirmedRelink: true,
+        ...linkOptions,
+      });
+    } catch (error) {
+      // Rerunning with --create-app would make a second application; name the one to reuse. The
+      // error itself is rethrown as it is, so a cancel or a sign-in failure keeps its handling.
+      log.warn(
+        `The application ${created.application_id} was created, but not linked. Rerun with --app ${created.application_id} instead of --create-app.`,
+      );
+      throw error;
+    }
+    return;
+  }
   const profile = await resolveProfile(cwd);
 
   const alreadyOnRequestedApp = profile && (!app || profile.profile.appId === app);
@@ -1106,7 +1251,14 @@ export function registerInit(program: Program): void {
       "--prebuilt-auth-ui",
       "Add ClerkKitUI's prebuilt sign-in screen to an unchanged SwiftUI starter",
     )
-    .option("--relink", "Let --app replace this folder's link to a different application")
+    .option(
+      "--create-app",
+      "Create a new Clerk application named after the app, once setup's checks pass",
+    )
+    .option(
+      "--relink",
+      "Let --app or --create-app replace this folder's link to a different application",
+    )
     .option("-y, --yes", "Skip confirmation prompts")
     .option("--no-skills", "Skip the optional agent skills install prompt")
     .setExamples([

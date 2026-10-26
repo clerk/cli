@@ -8,6 +8,7 @@ import {
   errorMessage,
   throwUsageError,
   throwUserAbort,
+  UserAbortError,
 } from "../../../lib/errors.ts";
 import { setTelemetryStage } from "../../../lib/telemetry.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
@@ -16,11 +17,11 @@ import { stopNativeProgress, withNativeSpinner } from "./progress.ts";
 import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
-import { inspectSelectedProject } from "./xcode.ts";
+import { inspectSelectedProject, type Inspection } from "./xcode.ts";
 import { signedByPersonalTeam } from "./teams.ts";
 import { nonDefaultXcodeNote } from "./xcode-tools.ts";
-import { SelectionNeeded } from "./discovery.ts";
-import { IdentityRequired, describeIdentity } from "./identity.ts";
+import { SelectionNeeded, type ChooseApp } from "./discovery.ts";
+import { IdentityRequired, describeIdentity, resolveIdentity } from "./identity.ts";
 import {
   applySetup,
   describePreview,
@@ -156,8 +157,10 @@ export function applicationRequired(
     appIntegrationComplete: false,
     ...(starter && { starter }),
     next: [
-      'Run `clerk apps list --json` and ask the user which application to use, or create one with `clerk apps create "<name>" --json`. If listing fails because you are not signed in, run `clerk auth login` first.',
+      "Run `clerk apps list --json` and ask the user which application to use, or whether to create one. If listing fails because you are not signed in, run `clerk auth login` first.",
       `Then run \`${command}\` to link it, configure the Xcode project, and register the app with Clerk.`,
+      // Created by init, an application exists only once nothing left can stop setup.
+      "To create a new application instead, run that command with `--create-app` in place of `--app <app_id>`; don't create it separately first.",
     ],
   };
 }
@@ -177,6 +180,10 @@ export interface AppleInitOptions {
   appIdPrefix?: string;
   signInWithApple?: boolean;
   prebuiltAuthUi?: boolean;
+  /** The Xcode project as `inspectAppleProject` already found it, so setup doesn't ask again. */
+  inspection?: Inspection;
+  /** The application `clerk init --create-app` just created, and the command that reuses it. */
+  createdApplication?: { appId: string; continuation: string };
   /** The app `clerk init --starter` just created, which needs no confirmation before setup. */
   starterProject?: StarterProjectSummary;
 }
@@ -191,19 +198,147 @@ export interface StarterProjectSummary {
 }
 
 /**
- * A new app was written, but setup stopped with an error that has no status of its own. Running
- * `--starter` again would refuse the existing folder, so the agent continues inside the new app.
+ * `--create-app` created an application for an existing project, but setup stopped before using
+ * it. Running `--create-app` again would make another, so the agent continues with this one.
  */
-export function setupInterrupted(starter: StarterProjectSummary, error: unknown) {
+export function applicationInterrupted(appId: string, continuation: string, error: unknown) {
   return {
     status: "setup-interrupted",
     appIntegrationComplete: false,
     error: errorMessage(error),
+    application: { appId, created: true },
+    next: [
+      `Resolve the error, then run \`${continuation}\`. The application already exists, so don't pass --create-app again.`,
+    ],
+  };
+}
+
+/**
+ * A new app was written, but setup stopped with an error that has no status of its own. Running
+ * `--starter` again would refuse the existing folder, so the agent continues inside the new app.
+ */
+export function setupInterrupted(
+  starter: StarterProjectSummary,
+  error: unknown,
+  createdAppId?: string,
+) {
+  return {
+    status: "setup-interrupted",
+    appIntegrationComplete: false,
+    error: errorMessage(error),
+    ...(createdAppId && { application: { appId: createdAppId, created: true } }),
     starter,
     next: [
       `Resolve the error, then run \`${starter.continuation}\` to finish setting up the new app. Don't run --starter again.`,
     ],
   };
+}
+
+const PERSONAL_TEAM_APPLE =
+  "Sign in with Apple needs a paid Apple Developer Program team, and this app is signed by a Personal Team. Choose a paid team in Xcode, or drop --sign-in-with-apple.";
+
+function appChooser(interactive: boolean): ChooseApp | undefined {
+  return interactive
+    ? async (choices) =>
+        select({
+          message: "Which app would you like to set up?",
+          choices: choices.map((choice) => ({
+            name: `${choice.targetName} (${choice.project})`,
+            value: choice,
+          })),
+        })
+    : undefined;
+}
+
+/** How setup reads and plans the selected project; its pre-creation check plans the same way. */
+function setupOptions(
+  options: AppleInitOptions,
+  interactive: boolean,
+  signal: AbortSignal,
+): SetupOptions {
+  return {
+    root: options.root,
+    project: options.xcodeProject,
+    target: options.xcodeTarget,
+    configuration: options.xcodeConfiguration,
+    minimumVersion: CLERK_SWIFT_MINIMUM_VERSION,
+    products: options.appleSdk ?? "ui",
+    capabilities: true,
+    signInWithApple: options.signInWithApple,
+    signInUI: options.prebuiltAuthUi,
+    resolvePackages: !options.dryRun,
+    inspectOnly: options.dryRun,
+    checkAppleConnection: !options.dryRun,
+    signal,
+    chooseApp: appChooser(interactive && !options.dryRun),
+    progress: (message) => log.info(message),
+  };
+}
+
+/**
+ * Everything that can stop setup before a Clerk application is needed, so `clerk init
+ * --create-app` (an agent run) creates one only when nothing local is left to stop it. It runs
+ * setup's own local planning, as a dry run does (the target, deployment version, SDK, and project
+ * checks), then checks the signing team against a requested Sign in with Apple. For a
+ * `newApplication`, which has no native registrations yet, it also settles the Bundle ID and App
+ * ID Prefix from the project and flags. Setup is handed the inspection, so it doesn't inspect
+ * again. With `--json`, a target to choose or an identity to supply is reported as setup reports
+ * it (`selection-required`, `input-required`).
+ */
+export async function inspectAppleProject(
+  options: AppleInitOptions,
+  dependencies: Dependencies = {},
+  { newApplication = false }: { newApplication?: boolean } = {},
+): Promise<{ inspection: Inspection }> {
+  stopNativeProgress();
+  const json = options.json === true;
+  try {
+    // Capabilities and Sign in with Apple need the application, so setup plans those.
+    const preview = await withNativeSpinner("Inspecting Xcode project...", async () =>
+      prepareSetup(
+        {
+          ...setupOptions(options, !options.agent && !options.yes, interruptSignal()),
+          capabilities: false,
+          signInWithApple: false,
+        },
+        dependencies,
+      ),
+    );
+    stopNativeProgress();
+    const { inspection } = preview;
+    if (options.signInWithApple && signedByPersonalTeam(inspection, dependencies.xcodeTeams))
+      throwUsageError(PERSONAL_TEAM_APPLE);
+    if (newApplication) {
+      const identity = await resolveIdentity(
+        { bundleIdentifier: options.bundleId, appIdPrefix: options.appIdPrefix?.trim() },
+        inspection,
+        [],
+      );
+      if (!identity.context) throw new IdentityRequired(identity);
+    }
+    return { inspection };
+  } catch (error) {
+    const starter = options.starterProject && { starter: options.starterProject };
+    if (json && error instanceof SelectionNeeded)
+      log.data(
+        JSON.stringify({
+          status: "selection-required",
+          choices: error.choices,
+          appIntegrationComplete: false,
+          ...starter,
+        }),
+      );
+    if (json && error instanceof IdentityRequired)
+      log.data(
+        JSON.stringify({
+          status: "input-required",
+          appIntegrationComplete: false,
+          identity: describeIdentity(error.discovery),
+          ...starter,
+        }),
+      );
+    throw error;
+  }
 }
 
 /**
@@ -225,35 +360,20 @@ export async function runAppleInit(
   let reported = false;
   const report = (status: object, indent?: number) => {
     reported = true;
-    log.data(JSON.stringify({ ...status, ...(newApp && { starter: newApp }) }, null, indent));
+    const created = options.createdApplication;
+    log.data(
+      JSON.stringify(
+        {
+          ...status,
+          ...(created && { application: { appId: created.appId, created: true } }),
+          ...(newApp && { starter: newApp }),
+        },
+        null,
+        indent,
+      ),
+    );
   };
-  const setup: SetupOptions = {
-    root: options.root,
-    project: options.xcodeProject,
-    target: options.xcodeTarget,
-    configuration: options.xcodeConfiguration,
-    minimumVersion: CLERK_SWIFT_MINIMUM_VERSION,
-    products: options.appleSdk ?? "ui",
-    capabilities: true,
-    signInWithApple: options.signInWithApple,
-    signInUI: options.prebuiltAuthUi,
-    resolvePackages: !options.dryRun,
-    inspectOnly: options.dryRun,
-    checkAppleConnection: !options.dryRun,
-    signal,
-    chooseApp:
-      interactive && !options.dryRun
-        ? async (choices) =>
-            select({
-              message: "Which app would you like to set up?",
-              choices: choices.map((choice) => ({
-                name: `${choice.targetName} (${choice.project})`,
-                value: choice,
-              })),
-            })
-        : undefined,
-    progress: (message) => log.info(message),
-  };
+  const setup = setupOptions(options, interactive, signal);
   try {
     setTelemetryStage("ios_inspect");
     if (!applicationId) {
@@ -284,9 +404,11 @@ export async function runAppleInit(
       }
       return;
     }
-    const inspection = await withNativeSpinner("Inspecting Xcode project...", async () =>
-      inspectSelectedProject(setup, dependencies.run),
-    );
+    const inspection =
+      options.inspection ??
+      (await withNativeSpinner("Inspecting Xcode project...", async () =>
+        inspectSelectedProject(setup, dependencies.run),
+      ));
     stopNativeProgress();
     setup.inspection = inspection;
     const starter = await isUnchangedStarter(inspection);
@@ -295,10 +417,7 @@ export async function runAppleInit(
     // Associated Domains. Xcode's account list says which teams are Personal Teams.
     const personalTeam = signedByPersonalTeam(inspection, dependencies.xcodeTeams);
     if (personalTeam) {
-      if (options.signInWithApple)
-        throwUsageError(
-          "Sign in with Apple needs a paid Apple Developer Program team, and this app is signed by a Personal Team. Choose a paid team in Xcode, or drop --sign-in-with-apple.",
-        );
+      if (options.signInWithApple) throwUsageError(PERSONAL_TEAM_APPLE);
       setup.signInWithApple = false;
       setup.personalTeam = true;
     }
@@ -433,7 +552,19 @@ export async function runAppleInit(
         choices: error.choices,
         appIntegrationComplete: false,
       });
-    else if (json && newApp && !reported) report(setupInterrupted(newApp, error), 2);
+    // Without JSON, the error is still named; the agent reads which application to reuse.
+    if (!json && options.createdApplication && !(error instanceof UserAbortError))
+      log.warn(
+        `The application ${options.createdApplication.appId} was created and linked. Resolve the error, then run \`${options.createdApplication.continuation}\`; don't pass --create-app again.`,
+      );
+    // A deliberate "no" to "Apply this setup?" isn't an interruption.
+    else if (json && !reported && !(error instanceof UserAbortError)) {
+      const created = options.createdApplication;
+      if (newApp) report(setupInterrupted(newApp, error, created?.appId), 2);
+      // Rerunning --create-app would make another application; name the one to reuse.
+      else if (created)
+        report(applicationInterrupted(created.appId, created.continuation, error), 2);
+    }
     throw error;
   }
 }

@@ -39,7 +39,9 @@ test("with Xcode, writes no files and explains how to choose an application", as
 
   expect(plan.actions).toHaveLength(0);
   expect(text).toContain("clerk apps list --json");
-  expect(text).toContain("clerk apps create");
+  // init creates a new application itself, after its checks, so none is left unused.
+  expect(text).toContain("`--create-app` in place of `--app <app_id>`");
+  expect(text).not.toContain("clerk apps create");
   expect(text).toContain("clerk auth login");
   expect(text).toContain("clerk init --app <app_id> --json");
   expect(text).toContain("docs/ios/getting-started/quickstart");

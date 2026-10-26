@@ -35,8 +35,9 @@ export const ios: FrameworkScaffold = {
       actions: [],
       postInstructions: [
         "clerk init sets up this Xcode project once it knows which Clerk application to use.",
-        'Run `clerk apps list --json` and ask the user which application to use, or create one with `clerk apps create "<name>"`. If listing fails because you are not signed in, run `clerk auth login` first.',
+        "Run `clerk apps list --json` and ask the user which application to use, or whether to create one. If listing fails because you are not signed in, run `clerk auth login` first.",
         `Then run \`${ctx.nativeContinuation ?? "clerk init --app <app_id> --json"}\` to link it, configure the Xcode project, and register the app with Clerk.`,
+        "To create a new application instead, run that command with `--create-app` in place of `--app <app_id>`; don't create it separately first.",
         "Full setup guide: https://clerk.com/docs/ios/getting-started/quickstart",
       ],
     };

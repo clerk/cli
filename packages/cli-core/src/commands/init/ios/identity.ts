@@ -97,8 +97,28 @@ export async function discoverRemote(
     api.getNativeSettings(instance.applicationId, instance.instanceId),
     api.listIOSApplications(instance.applicationId, instance.instanceId),
   ]);
-  const registrations = applications;
-  const nativeEnabled = native.api_enabled;
+  const { context, ...identity } = await resolveIdentity(input, inspection, applications, prompt);
+  return {
+    instance,
+    nativeEnabled: native.api_enabled,
+    ...identity,
+    context: context && { ...instance, ...context },
+  };
+}
+
+/**
+ * Settles the Bundle ID and App ID Prefix from the flags, the Xcode project, and an application's
+ * existing native `registrations`. A new application has none, so its identity is settled from
+ * the project and flags alone, before the application exists.
+ */
+export async function resolveIdentity<
+  Registration extends { bundle_id: string; app_id_prefix: string },
+>(
+  input: Pick<RemoteSelection, "bundleIdentifier" | "appIdPrefix">,
+  inspection: Inspection,
+  registrations: Registration[],
+  prompt?: IdentityPrompt,
+) {
   let bundleIdentifier = input.bundleIdentifier ?? (await discoverBundleIdentifier(inspection));
   let bundleSource = input.bundleIdentifier ? "explicit" : bundleIdentifier ? "xcode" : "missing";
   if (!bundleIdentifier && prompt) {
@@ -166,8 +186,6 @@ export async function discoverRemote(
       : []),
   ];
   return {
-    instance,
-    nativeEnabled,
     registrations,
     bundleIdentifier,
     appIdPrefix,
@@ -176,14 +194,20 @@ export async function discoverRemote(
     issues,
     context:
       bundleIdentifier && appIdPrefix && !conflict && !invalidPrefix
-        ? { ...instance, bundleIdentifier, appIdPrefix }
+        ? { bundleIdentifier, appIdPrefix }
         : undefined,
   };
 }
+
 export type IdentityDiscovery = Awaited<ReturnType<typeof discoverRemote>>;
-export function describeIdentity(discovery: IdentityDiscovery) {
+/** What identity needs; `nativeEnabled` is unknown for an application that doesn't exist yet. */
+type IdentityState = Omit<IdentityDiscovery, "instance" | "context" | "nativeEnabled"> & {
+  nativeEnabled?: boolean;
+};
+
+export function describeIdentity(discovery: IdentityState) {
   return {
-    nativeApiEnabled: discovery.nativeEnabled,
+    ...(discovery.nativeEnabled !== undefined && { nativeApiEnabled: discovery.nativeEnabled }),
     registrations: discovery.registrations.map((app) => ({
       bundleIdentifier: app.bundle_id,
       appIdPrefix: app.app_id_prefix,
@@ -196,7 +220,7 @@ export function describeIdentity(discovery: IdentityDiscovery) {
   };
 }
 export class IdentityRequired extends CliError {
-  constructor(public discovery: IdentityDiscovery) {
+  constructor(public discovery: IdentityState) {
     super(discovery.issues.join(" "), { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE });
   }
 }

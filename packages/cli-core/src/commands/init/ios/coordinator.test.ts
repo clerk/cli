@@ -1,4 +1,4 @@
-import { afterEach, expect, spyOn, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +11,7 @@ import { capabilityFixture } from "./capability-test-helpers.ts";
 import { useStarterSources } from "./setup-test-helpers.ts";
 import { createIOSFixture, treeDigest } from "./test-helpers.ts";
 import * as coordinator from "./coordinator.ts";
-import { runAppleInit, type StarterProjectSummary } from "./coordinator.ts";
+import { inspectAppleProject, runAppleInit, type StarterProjectSummary } from "./coordinator.ts";
 import * as xcode from "./xcode.ts";
 import { runIOSDoctorChecks } from "../../doctor/ios.ts";
 import type { DoctorContext } from "../../doctor/types.ts";
@@ -548,4 +548,204 @@ test("an existing app's error prints no extra status", async () => {
     runAppleInit({ root: f.root, agent: true, json: true }, "app_test", f.dependencies),
   ).rejects.toThrow("xcodebuild hung");
   expect(captured.out).toBe("");
+});
+
+test("the pre-creation inspection asks which target before any application is needed", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-public-init-")));
+  roots.push(root);
+  const f = await capabilityFixture(root, "ios", true);
+  await expect(
+    inspectAppleProject({ root, agent: true, json: true }, f.dependencies),
+  ).rejects.toThrow("Choose an app");
+  expect(JSON.parse(captured.out)).toMatchObject({
+    status: "selection-required",
+    choices: [{ targetName: "MyApp" }, { targetName: "AdminApp" }],
+  });
+  expect(f.state.events).toEqual([]);
+});
+
+test("setup reuses the pre-creation inspection instead of inspecting again", async () => {
+  const reads = (run: ReturnType<typeof spyOn>) =>
+    run.mock.calls.filter((call: string[][]) => call[0]!.includes("-showBuildSettings")).length;
+  const setUp = async (handOver: boolean) => {
+    const f = await fixture();
+    const run = spyOn(f.dependencies, "run");
+    spies.push(run);
+    const inspection = handOver
+      ? (await inspectAppleProject({ root: f.root, agent: true }, f.dependencies)).inspection
+      : undefined;
+    const beforeSetup = reads(run);
+    await runAppleInit(
+      { root: f.root, agent: true, json: true, inspection },
+      "app_test",
+      f.dependencies,
+    );
+    captured.clear();
+    return { inspecting: beforeSetup, setup: reads(run) - beforeSetup };
+  };
+  const alone = await setUp(false);
+  const handedOver = await setUp(true);
+  // Setup skips exactly the reads its opening inspection would have made; apply still rereads
+  // the Bundle ID on purpose.
+  expect(handedOver.inspecting).toBeGreaterThan(0);
+  expect(handedOver.setup).toBe(alone.setup - handedOver.inspecting);
+});
+
+test.each([
+  { name: "a new app", starterProject: NEW_APP },
+  { name: "an existing project", starterProject: undefined },
+])(
+  "a setup failure after --create-app names the application ($name)",
+  async ({ starterProject }) => {
+    const f = await fixture(true);
+    spies.push(
+      spyOn(xcode, "inspectSelectedProject").mockRejectedValue(new Error("xcodebuild hung")),
+    );
+    const createdApplication = {
+      appId: "app_made",
+      continuation: "clerk init --app app_made --json",
+    };
+    await expect(
+      runAppleInit(
+        { root: f.root, agent: true, json: true, starterProject, createdApplication },
+        "app_made",
+        f.dependencies,
+      ),
+    ).rejects.toThrow("xcodebuild hung");
+    expect(JSON.parse(captured.out)).toMatchObject({
+      status: "setup-interrupted",
+      application: { appId: "app_made", created: true },
+      ...(starterProject
+        ? { starter: NEW_APP }
+        : {
+            next: [
+              "Resolve the error, then run `clerk init --app app_made --json`. The application already exists, so don't pass --create-app again.",
+            ],
+          }),
+    });
+  },
+);
+
+describe("a new application's identity, settled before it's created", () => {
+  // This fixture's Xcode reports no signing team, and a new application has no registrations.
+  test("without a signing team or --app-id-prefix, asks for the prefix", async () => {
+    const f = await fixture();
+    await expect(
+      inspectAppleProject({ root: f.root, agent: true, json: true }, f.dependencies, {
+        newApplication: true,
+      }),
+    ).rejects.toThrow("Supply the Apple App ID Prefix");
+    expect(JSON.parse(captured.out)).toMatchObject({
+      status: "input-required",
+      identity: { bundleIdentifier: "com.example.MyApp", prefixSource: "missing" },
+    });
+    // The application doesn't exist yet, so whether its Native API is on isn't known.
+    expect(JSON.parse(captured.out).identity).not.toHaveProperty("nativeApiEnabled");
+    expect(f.state.events).toEqual([]);
+  });
+
+  test("settles with --app-id-prefix", async () => {
+    const f = await fixture();
+    await inspectAppleProject(
+      { root: f.root, agent: true, json: true, appIdPrefix: "LEGACY0001" },
+      f.dependencies,
+      { newApplication: true },
+    );
+    expect(captured.out).toBe("");
+  });
+
+  test("settles with the signing team", async () => {
+    const { root, dependencies } = await signedFixture("ios", false, false);
+    await inspectAppleProject({ root, agent: true, json: true }, dependencies, {
+      newApplication: true,
+    });
+    expect(captured.out).toBe("");
+  });
+
+  test("setup's own local checks run first, like an iOS 16 deployment target", async () => {
+    const f = await fixture();
+    const run = f.dependencies.run;
+    f.dependencies.run = async (command, ...rest) => {
+      const output = await run(command, ...rest);
+      return command.includes("-showBuildSettings")
+        ? output.replaceAll(
+            '"IPHONEOS_DEPLOYMENT_TARGET":"17.0"',
+            '"IPHONEOS_DEPLOYMENT_TARGET":"16.0"',
+          )
+        : output;
+    };
+    await expect(
+      inspectAppleProject(
+        { root: f.root, agent: true, json: true, appIdPrefix: "LEGACY0001" },
+        f.dependencies,
+        { newApplication: true },
+      ),
+    ).rejects.toThrow("This recipe requires iOS 17 or newer in the selected configuration.");
+    expect(f.state.events).toEqual([]);
+  });
+});
+
+test("a status setup stops with after --create-app names the application", async () => {
+  const f = await fixture(true);
+  spies.push(
+    spyOn(xcode, "inspectSelectedProject").mockRejectedValue(
+      new (await import("./discovery.ts")).SelectionNeeded([]),
+    ),
+  );
+  await expect(
+    runAppleInit(
+      {
+        root: f.root,
+        agent: true,
+        json: true,
+        createdApplication: { appId: "app_made", continuation: "clerk init --app app_made --json" },
+      },
+      "app_made",
+      f.dependencies,
+    ),
+  ).rejects.toThrow();
+  expect(JSON.parse(captured.out)).toMatchObject({
+    status: "selection-required",
+    application: { appId: "app_made", created: true },
+  });
+});
+
+test('declining "Apply this setup?" with --json prints no interrupted status', async () => {
+  const f = await fixture();
+  promptsFor(false);
+  await expect(
+    runAppleInit(
+      {
+        root: f.root,
+        agent: false,
+        json: true,
+        createdApplication: { appId: "app_made", continuation: "clerk init --app app_made --json" },
+      },
+      "app_test",
+      f.dependencies,
+    ),
+  ).rejects.toThrow("User aborted");
+  expect(captured.out).toBe("");
+});
+
+test("a text-mode setup failure after --create-app names the application to reuse", async () => {
+  const f = await fixture();
+  spies.push(
+    spyOn(xcode, "inspectSelectedProject").mockRejectedValue(new Error("xcodebuild hung")),
+  );
+  await expect(
+    runAppleInit(
+      {
+        root: f.root,
+        agent: true,
+        createdApplication: { appId: "app_made", continuation: "clerk init --app app_made --json" },
+      },
+      "app_made",
+      f.dependencies,
+    ),
+  ).rejects.toThrow("xcodebuild hung");
+  expect(captured.out).toBe("");
+  expect(captured.err).toContain(
+    "The application app_made was created and linked. Resolve the error, then run `clerk init --app app_made --json`; don't pass --create-app again.",
+  );
 });

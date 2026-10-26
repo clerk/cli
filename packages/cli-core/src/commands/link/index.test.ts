@@ -1086,6 +1086,46 @@ describe("link", () => {
       expect((confirmCall![0] as { message: string }).message).toContain("My Cool App");
     });
 
+    test.each([
+      { mode: "human", agent: false },
+      { mode: "agent", agent: true },
+    ])("a confirmed relink replaces the link without asking ($mode)", async ({ agent }) => {
+      mockIsAgent.mockReturnValue(agent);
+      mockResolveProfile.mockResolvedValue({
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+      mockGetToken.mockResolvedValue("token");
+      mockFetchApplication.mockResolvedValue(mockApp);
+      mockGetGitNormalizedRemote.mockResolvedValue("github.com/org/repo");
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link({ app: "app_123", confirmedRelink: true });
+
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        "github.com/org/repo",
+        expect.objectContaining({ appId: "app_123" }),
+      );
+    });
+
+    test("an application already in hand isn't fetched again", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+
+      await link({ app: "app_123", application: mockApp as never, confirmedRelink: true });
+
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        "github.com/org/repo",
+        expect.objectContaining({
+          appId: "app_123",
+          instances: { development: "ins_dev", production: "ins_prod" },
+        }),
+      );
+    });
+
     test("does not show app name in re-link prompt without --app", async () => {
       mockIsAgent.mockReturnValue(false);
       mockResolveProfile.mockResolvedValue({

@@ -28,17 +28,26 @@ interface LinkOptions {
   createIfMissing?: string;
   /** Callers that continue setup themselves (native `clerk init`) skip link's own next steps. */
   showNextSteps?: boolean;
+  /**
+   * The caller already checked what an existing link means for `--app` (see `replacedLink`), so
+   * link replaces it without asking again. Used by `clerk init --create-app`, whose new app can't
+   * be uncreated once a later confirmation is declined.
+   */
+  confirmedRelink?: boolean;
+  /** `options.app`, already fetched or just created, so link doesn't fetch it again. */
+  application?: Application;
 }
 
 /**
  * The link that linking `cwd` to `app` would replace, if any. Inside a Git repository a link is
  * stored for the whole repository (by remote, else by its Git directory), so relinking any folder
  * in it moves every project there to `app`. Outside one, only a link stored for `cwd` itself is
- * replaced. A `newProject` doesn't exist yet, so outside a repository it never replaces one.
+ * replaced. A `newProject` doesn't exist yet, so outside a repository it never replaces one. An
+ * `app` of `undefined` is an application about to be created, which differs from any link.
  */
 export async function replacedLink(
   cwd: string,
-  app: string,
+  app: string | undefined,
   { newProject = false }: { newProject?: boolean } = {},
 ): Promise<{ appId: string; appName?: string; scope: string } | undefined> {
   const existing = await resolveProfile(cwd);
@@ -82,7 +91,9 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
   intro("Linking project");
 
-  if (existing && agent) {
+  if (existing && options.confirmedRelink) {
+    printExistingStatus(existing, normalizedRemote);
+  } else if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
     if (!targetsDifferentApp) {
       await outro();
@@ -98,14 +109,16 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
   await ensureAuth();
 
-  const app = options.app
-    ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
-    : agent && options.createIfMissing
-      ? await withApiContext(
-          createApplication(options.createIfMissing),
-          "Failed to create application",
-        )
-      : await resolveApp(cwd, displayPath, !existing);
+  const app =
+    options.application ??
+    (options.app
+      ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
+      : agent && options.createIfMissing
+        ? await withApiContext(
+            createApplication(options.createIfMissing),
+            "Failed to create application",
+          )
+        : await resolveApp(cwd, displayPath, !existing));
 
   const devInstance = app.instances.find((i) => i.environment_type === "development");
   const prodInstance = app.instances.find((i) => i.environment_type === "production");
