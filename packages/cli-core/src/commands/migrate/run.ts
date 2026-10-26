@@ -49,6 +49,13 @@ import { importUsers } from "./import-users.ts";
 import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
+import {
+  FIREBASE_FLAGS,
+  firebaseHashConfigProblem,
+  fingerprintFirebaseHashConfig,
+  resolveFirebaseHashConfig,
+  type FirebaseHashFlags,
+} from "./lib/firebase-hash.ts";
 import { DEV_USER_LIMIT, resolveLimits, type InstanceType } from "./lib/instance.ts";
 import {
   continueRun,
@@ -96,7 +103,7 @@ import {
 } from "./lib/transform.ts";
 import { resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
-import { promptForFile, promptForSource } from "./wizard.ts";
+import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
 import { login } from "../auth/login.ts";
 import { link } from "../link/index.ts";
 
@@ -126,7 +133,7 @@ export type MigrateRunOptions = {
   instance?: string;
   /** Where runs are kept; overrides `CLERK_MIGRATE_DIR`. */
   runsDir?: string;
-};
+} & FirebaseHashFlags;
 
 /**
  * Validates what a run needs before anything is read or sent.
@@ -651,6 +658,12 @@ function commandFor(
   if (!fromExport && options.source) parts.push("--source", quoteArg(options.source));
   if (options.newRun) parts.push("--new-run");
   parts.push(...importFlags(options));
+  // Names, not `<…>`: pasted as is, a shell reads `<key>` as a redirect.
+  if (options.firebaseSignerKey) parts.push("--firebase-signer-key", "SIGNER_KEY");
+  if (options.firebaseSaltSeparator !== undefined)
+    parts.push("--firebase-salt-separator", "SALT_SEPARATOR");
+  if (options.firebaseRounds) parts.push("--firebase-rounds", "ROUNDS");
+  if (options.firebaseMemCost) parts.push("--firebase-mem-cost", "MEM_COST");
   parts.push(...carry);
   if (options.json) parts.push("--json");
   return [...parts, ...extra].join(" ");
@@ -784,6 +797,47 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
   // The flags every suggested command needs to reach this runs folder and instance.
   const carry = carryFlags(options);
 
+  // A flag is typed for this run, so it wins over the export file. A variable
+  // is ambient, and may be left over from another project, so it only fills in
+  // for an export file without the parameters: with one, a partial flag set is
+  // refused rather than completed from the variables.
+  const fromEnvelope = source === "firebase" ? envelope?.firebase : undefined;
+  const fromFlagsAtAll = FIREBASE_FLAGS.some(([key]) => options[key] !== undefined);
+  const fromFlags =
+    fromFlagsAtAll || !fromEnvelope
+      ? resolveFirebaseHashConfig(options, source, fromEnvelope ? {} : process.env)
+      : undefined;
+  let firebaseHashConfig = fromFlags ?? fromEnvelope;
+  let configFrom = fromFlags
+    ? fromFlagsAtAll
+      ? "the --firebase-* flags"
+      : "the CLERK_FIREBASE_* variables"
+    : "the export file";
+  // `-y` is "import without prompting": it gets the usage error naming the flags.
+  if (source === "firebase" && !firebaseHashConfig && !options.yes && canPrompt(options)) {
+    firebaseHashConfig = await promptForFirebaseHashConfig();
+    configFrom = "the parameters entered";
+    // A suggested command runs with --yes, which never asks: it names the flags.
+    if (firebaseHashConfig) {
+      options = {
+        ...options,
+        firebaseSignerKey: firebaseHashConfig.base64_signer_key,
+        firebaseSaltSeparator: firebaseHashConfig.base64_salt_separator,
+        firebaseRounds: firebaseHashConfig.rounds,
+        firebaseMemCost: firebaseHashConfig.mem_cost,
+      };
+    }
+  }
+  // Wherever they came from, each goes into every password digest.
+  const problem = firebaseHashConfig && firebaseHashConfigProblem(firebaseHashConfig);
+  if (problem) {
+    throwUsageError(
+      `The Firebase hash parameters from ${configFrom} won't work: ${problem}. Nothing was imported.\n` +
+        "Find all four in the Firebase console under Authentication → Users → (⋮) → Password hash parameters.",
+      "https://clerk.com/docs/guides/development/migrating/firebase",
+    );
+  }
+
   await withGutter(
     "Migrating users to Clerk",
     async ({ setNextSteps }) => {
@@ -812,6 +866,23 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       const resume: ResumeCase = options.newRun
         ? { kind: "new" }
         : findResume(runsDir, match, carry);
+
+      // The users this run created carry digests built from its parameters, so
+      // the rest must be built from the same ones. A run from before this was
+      // recorded has none to compare, and continues as it did.
+      const firebaseHash = firebaseHashConfig
+        ? fingerprintFirebaseHashConfig(firebaseHashConfig)
+        : undefined;
+      if (
+        resume.kind === "continue" &&
+        resume.record.firebaseHash &&
+        resume.record.firebaseHash !== firebaseHash
+      ) {
+        throwUsageError(
+          `Run ${resume.record.id} imported this file with different Firebase hash parameters, and the users it created carry digests built from them. Nothing was imported.\n` +
+            "Pass the same --firebase-* flags to continue it, or --new-run to start a new run.",
+        );
+      }
 
       if (resume.kind === "complete") {
         // Imported by path and named now by its export run ID: the record
@@ -882,7 +953,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
       }
 
       const loaded = await withSpinner(`Loading users from ${file}...`, async () =>
-        loadUsersFromFile(file, source),
+        loadUsersFromFile(file, source, { context: { firebaseHashConfig } }),
       );
       let users = loaded.users.filter((user) => !done.has(user.userId));
       const failures = loaded.failures.filter((failure) => !done.has(failure.userId));
@@ -1149,6 +1220,7 @@ export async function run(rawOptions: MigrateRunOptions): Promise<void> {
             source,
             file: { path: filePath, sha256 },
             ...(input.fromExport ? { fromExport: input.fromExport } : {}),
+            ...(firebaseHash ? { firebaseHash } : {}),
             flags,
           });
       // Printed now, not on the way out: on a Ctrl-C the signal handler exits
