@@ -73,7 +73,7 @@ import {
   type AppleInitOptions,
   type StarterProjectSummary,
 } from "./ios/coordinator.js";
-import { withNativeProgress } from "./ios/progress.js";
+import { withNativeProgress } from "./native/progress.js";
 import { StarterInputRequired, type AppleStarter } from "./ios/starter-bootstrap.js";
 
 type InitOptions = Omit<AppleInitOptions, "root" | "agent"> & {
