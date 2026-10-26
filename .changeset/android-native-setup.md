@@ -1,0 +1,5 @@
+---
+"clerk": minor
+---
+
+Native Android setup in `clerk init` and `clerk doctor`: on a linked application, init now configures a Kotlin Android module the way it configures an Xcode project. It adds `com.clerk:clerk-android-api` (or `clerk-android-ui` with `--android-sdk ui`) through the version catalog or a literal dependency, raises `minSdk` to 24, creates or extends the `Application` subclass with `Clerk.initialize`, registers it with the `INTERNET` permission in the manifest, writes the development publishable key to `src/main/res/values/clerk.xml`, then registers the `applicationId` and this machine's debug signing fingerprint with Clerk and enables Native API. `--android-module`, `--android-package`, `--android-fingerprint`, and `--android-sdk` select the module, package, extra certificates, and artifact; `--dry-run` and `--json` now cover Android, with an agent handoff of the remaining Kotlin tasks. `clerk doctor` checks an Android project's dependency, Kotlin version, `minSdk`, manifest, initialization, key, Native API, and registration, each with a remedy.
