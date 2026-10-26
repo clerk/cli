@@ -3,10 +3,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
-import { loadUsersFromFile, transformUsers } from "../lib/transform.ts";
+import { loadUsersFromFile, normalizeUserData, transformUsers } from "../lib/transform.ts";
 import type { FirebaseHashConfig, User } from "../types.ts";
 import { getSource, sourceKeys, sources } from "./registry.ts";
-import { isVerified } from "./shared.ts";
+import { isAuthJsVerified } from "./authjs.ts";
+import { isVerified, toIsoDate } from "./shared.ts";
 
 const FIREBASE_HASH: FirebaseHashConfig = {
   base64_signer_key: "SIGNERKEY==",
@@ -45,10 +46,11 @@ const one = (key: string, record: Record<string, unknown>, context = {}) =>
     | undefined;
 
 describe("registry", () => {
-  test("registers the built-in platforms", () => {
+  test("registers all seven platforms", () => {
     expect(sourceKeys()).toEqual([
       "clerk",
       "auth0",
+      "authjs",
       "betterauth",
       "firebase",
       "supabase",
@@ -117,6 +119,36 @@ describe("isVerified", () => {
     [undefined, false],
   ])("timestamp style: %p -> %p", (value, expected) => {
     expect(isVerified(value, "timestamp")).toBe(expected);
+  });
+});
+
+describe("dates with no offset", () => {
+  // SQL and CSV exports write `2024-08-24 03:40:02` with no offset. Read in
+  // local time, the same file imports differently on every clock, and the
+  // epoch default stops being 0 off UTC. Pin a non-UTC zone so CI sees it too.
+  const originalTz = process.env.TZ;
+  beforeAll(() => {
+    process.env.TZ = "America/New_York";
+  });
+  afterAll(() => {
+    process.env.TZ = originalTz;
+  });
+
+  test("the epoch as a date string is no Auth.js verification", () => {
+    expect(isAuthJsVerified("1970-01-01 00:00:00")).toBe(false);
+  });
+
+  test("a source timestamp converts as UTC", () => {
+    expect(toIsoDate("2024-08-24 03:40:02")).toBe("2024-08-24T03:40:02.000Z");
+  });
+
+  test("a CSV createdAt and legalAcceptedAt normalize as UTC", () => {
+    const result = normalizeUserData({
+      createdAt: "2024-08-24 03:40:02",
+      legalAcceptedAt: "2024-08-24T03:40:02.5",
+    });
+    expect(result.createdAt).toBe("2024-08-24T03:40:02.000Z");
+    expect(result.legalAcceptedAt).toBe("2024-08-24T03:40:02.500Z");
   });
 });
 
@@ -198,6 +230,12 @@ describe("auth0", () => {
     const user = one("auth0", { ...base, name: "a@x.dev" });
     expect(user?.firstName).toBeUndefined();
   });
+
+  // Only the user's own address is a placeholder.
+  test("keeps a one-word name with an @ that is not the user's email", () => {
+    const user = one("auth0", { ...base, name: "ada@work" });
+    expect(user?.firstName).toBe("ada@work");
+  });
 });
 
 describe("workos", () => {
@@ -259,6 +297,71 @@ describe("workos", () => {
     ]);
     expect(users[0]?.userId).toBe("user_01ABC");
     expect("identities" in (users[0] ?? {})).toBe(false);
+  });
+});
+
+describe("authjs", () => {
+  const base = { id: "cuid1", email: "a@x.dev" };
+
+  // Auth.js lets `name` be any string; only the user's own email is dropped.
+  test.each([
+    ["jane@acme", "jane@acme"],
+    ["a@x.dev", undefined],
+  ])("name %p becomes first name %p", (name, firstName) => {
+    expect(one("authjs", { ...base, name })?.firstName).toBe(firstName);
+  });
+
+  test("treats a confirmation timestamp as verified", () => {
+    const user = one("authjs", { ...base, email_verified: "2024-01-15T10:30:00.000Z" });
+    expect(user?.email).toBe("a@x.dev");
+    expect(user?.unverifiedEmailAddresses).toBeUndefined();
+  });
+
+  test.each([
+    [null],
+    [""],
+    [undefined],
+    [0],
+    ["0"],
+    ["not-a-date"],
+    // The epoch as a date string is the same default as `0`.
+    ["1970-01-01T00:00:00.000Z"],
+  ])("treats email_verified=%p as unverified", (value) => {
+    const user = one("authjs", { ...base, email_verified: value });
+    expect(user?.unverifiedEmailAddresses).toBe("a@x.dev");
+  });
+
+  // A SQLite integer column exports as digits, and Postgres or MySQL as a
+  // date string: each is a real verification.
+  test.each([[1700000000000], ["1700000000000"], ["2024-06-29 20:25:06+00"]])(
+    "treats email_verified=%p as verified",
+    (value) => {
+      const user = one("authjs", { ...base, email_verified: value });
+      expect(user?.email).toBe("a@x.dev");
+    },
+  );
+
+  test.each([
+    ["Jane Doe", "Jane", "Doe"],
+    ["Mary Jane Watson", "Mary", "Jane Watson"],
+    ["  Ada   Lovelace  ", "Ada", "Lovelace"],
+  ])("splits %p into %p / %p", (name, firstName, lastName) => {
+    const user = one("authjs", { ...base, name });
+    expect(user?.firstName).toBe(firstName);
+    expect(user?.lastName).toBe(lastName);
+  });
+
+  test("keeps a single-word name as the first name, without inventing a last name", () => {
+    const user = one("authjs", { ...base, name: "Prince" });
+    expect(user?.firstName).toBe("Prince");
+    expect(user?.lastName).toBeUndefined();
+    expect("name" in (user ?? {})).toBe(false);
+  });
+
+  test("imports without a password, since Auth.js core is passwordless", async () => {
+    const { users } = await load("authjs", [{ ...base, email_verified: "2024-01-01" }]);
+    expect(users[0]?.password).toBeUndefined();
+    expect(users[0]?.passwordHasher).toBeUndefined();
   });
 });
 
@@ -862,10 +965,32 @@ describe("auth0 social providers", () => {
   });
 });
 
+describe("authjs social providers", () => {
+  // `providers` is the export's own field: it must reach the checks, not be
+  // reported as a field Clerk won't store.
+  test("carries the export's providers to the checks, by Clerk's names", () => {
+    const result = transformUsers(
+      [
+        {
+          id: "aj1",
+          email: "a@x.dev",
+          email_verified: "2024-01-01",
+          providers: ["github", "azure-ad"],
+        },
+      ],
+      "authjs",
+    );
+    const user = result.transformedData[0] as User;
+    expect(getSource("authjs").socialProviders?.(user)).toEqual(["github", "microsoft"]);
+    expect(result.unknownFields).toEqual({});
+  });
+});
+
 describe("invalid records", () => {
   // Firebase skips such a user instead; see "skips a user with no email or phone".
   const INVALID: [string, Record<string, unknown>][] = [
     ["auth0", { user_id: "a1" }],
+    ["authjs", { id: "a2" }],
     ["betterauth", { user_id: "a3" }],
     ["supabase", { id: "a5" }],
   ];
@@ -889,6 +1014,7 @@ describe("invalid records", () => {
 /** The per-platform source field that becomes a Clerk identifier. */
 function identifierFor(key: string, email = "ok@x.dev"): Record<string, unknown> {
   if (key === "auth0") return { email, email_verified: true };
+  if (key === "authjs") return { email, email_verified: "2024-01-01" };
   if (key === "betterauth") return { email, email_verified: true };
   if (key === "firebase") return { email, emailVerified: true };
   return { email, email_confirmed_at: "2024-01-01 00:00:00+00" };
