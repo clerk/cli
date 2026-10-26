@@ -220,7 +220,7 @@ export type BootstrapOverrides = {
   /** `--json`: a native starter asks for its name instead of defaulting it. */
   json?: boolean;
   /** A native iOS or macOS starter runs this once its answers are settled, before writing. */
-  beforeWrite?: () => Promise<void>;
+  beforeWrite?: (projectDir: string) => Promise<void>;
   /** Answers for a native iOS or macOS starter; `flags` names the Apple flags that were passed. */
   apple?: {
     platform?: ApplePlatform;

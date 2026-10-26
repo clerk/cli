@@ -205,13 +205,16 @@ describe("promptAppleStarter", () => {
     test("runs once the answers are valid, before the app is written", async () => {
       xcode({ teams: [PAID] });
       let written: boolean | undefined;
+      let checked: string | undefined;
       await run({
         name: "MyApp",
         bundleId: "com.example.MyApp",
-        beforeWrite: async () => {
-          written = existsSync(join(tmp, "MyApp"));
+        beforeWrite: async (projectDir) => {
+          checked = projectDir;
+          written = existsSync(projectDir);
         },
       });
+      expect(checked).toBe(join(tmp, "MyApp"));
       expect(written).toBe(false);
       expect(existsSync(join(tmp, "MyApp/MyApp.xcodeproj/project.pbxproj"))).toBe(true);
     });

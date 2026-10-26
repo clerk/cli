@@ -166,9 +166,13 @@ export async function init(options: InitOptions = {}) {
   // A new app inside a repository linked elsewhere would move the whole repository's link, so an
   // agent hears about it before anything is written. An iOS or macOS starter asks once its own
   // answers are valid, so an agent never settles the link for a name or folder it then rejects.
-  const linkChecks = async () => {
+  const linkChecks = async (projectDir?: string) => {
     if (options.app) await assertLinkKept(cwd, options, { newProject: true });
-    else await assertApplicationChosen(cwd, options);
+    else {
+      await assertApplicationChosen(cwd, options);
+      // A link left for a folder of the same name (since removed) would be inherited too.
+      if (projectDir) await assertApplicationChosen(projectDir, options);
+    }
   };
   if (appleStarter && agent) overrides.beforeWrite = linkChecks;
   else if (options.starter && agent && options.app) await linkChecks();

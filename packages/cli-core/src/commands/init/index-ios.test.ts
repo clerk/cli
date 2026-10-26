@@ -325,7 +325,7 @@ describe("clerk init for native Apple projects", () => {
       written = false;
       // Like the real starter: the link checks run once its answers are valid, then it writes.
       spyOn(bootstrapMod, "promptAndBootstrap").mockImplementation(async (_cwd, _fw, options) => {
-        await options?.beforeWrite?.();
+        await options?.beforeWrite?.(STARTER.projectDir);
         written = true;
         return { ...STARTER, apple: { ...STARTER.apple, ...apple } };
       });
@@ -704,6 +704,24 @@ describe("clerk init for native Apple projects", () => {
             question: "Should the new app use Parent (app_P), or another application?",
             current: { appId: "app_P", appName: "Parent" },
           },
+        });
+        expect(written).toBe(false);
+      });
+
+      test("stops for a link left at the new app's own folder", async () => {
+        starter({}, { isAgent: true });
+        spyOn(config, "resolveProfile").mockImplementation(async (dir) =>
+          dir === STARTER.projectDir
+            ? ({ path: dir, profile: { appId: "app_OLD", appName: "Old" } } as never)
+            : undefined,
+        );
+
+        await expect(init({ starter: true, framework: "ios", json: true })).rejects.toThrow(
+          `${STARTER.projectDir} is linked to Old (app_OLD), so a new app here would use it too.`,
+        );
+        expect(JSON.parse(captured.out)).toMatchObject({
+          status: "input-required",
+          link: { flag: "--app", current: { appId: "app_OLD" }, scope: STARTER.projectDir },
         });
         expect(written).toBe(false);
       });
