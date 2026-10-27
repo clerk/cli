@@ -61,22 +61,20 @@ export function planAndroidSetup(
       changes.push(`raise minSdk from ${inspection.minSdk.value} to ${CLERK_ANDROID_MIN_SDK}`);
     } else if (
       inspection.minSdk.source === "catalog" &&
-      inspection.minSdk.catalogKey &&
+      inspection.minSdk.catalogEdit &&
       catalogSource
     ) {
-      // The catalog value is shared, so raising it there moves every module that reads it.
-      const key = inspection.minSdk.catalogKey;
-      catalogSource = catalogSource.replace(
-        new RegExp(
-          `^([ \\t]*${key.replace(/[-.]/g, "\\$&")}[ \\t]*=[ \\t]*["'])${inspection.minSdk.value}(["'])`,
-          "m",
-        ),
-        `$1${CLERK_ANDROID_MIN_SDK}$2`,
-      );
+      // The catalog value is shared, so raising it there moves every module that reads it. The
+      // offsets come from the inspected catalog, like the literal edit's from the build script.
+      const { start, end } = inspection.minSdk.catalogEdit;
+      catalogSource = `${catalogSource.slice(0, start)}${CLERK_ANDROID_MIN_SDK}${catalogSource.slice(end)}`;
       catalogChanges.push(
-        `raise ${key} from ${inspection.minSdk.value} to ${CLERK_ANDROID_MIN_SDK} (every module reading it moves too)`,
+        `raise ${inspection.minSdk.catalogKey} from ${inspection.minSdk.value} to ${CLERK_ANDROID_MIN_SDK} (every module reading it moves too)`,
       );
-    }
+    } else
+      notes.push(
+        `minSdk ${inspection.minSdk.value} comes from the version catalog in a form clerk init can't rewrite; set ${inspection.minSdk.catalogKey ?? "it"} to ${CLERK_ANDROID_MIN_SDK} or newer in gradle/libs.versions.toml.`,
+      );
   }
   const sdk = options.skipDependencies
     ? { build, catalog: catalogSource, added: [] as string[] }

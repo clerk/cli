@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   appendToCatalogSection,
   blocks,
+  catalogValueOffsets,
   childBlock,
   insertIntoBlock,
   integerLiteral,
@@ -108,6 +109,17 @@ android-application = { id = "com.android.application", version.ref = "agp" }
     const created = appendToCatalogSection('[versions]\nx = "1"\n', "libraries", 'a = "b:c:1"');
     expect(created).toBe('[versions]\nx = "1"\n\n[libraries]\na = "b:c:1"\n');
     expect(appendToCatalogSection("", "versions", 'x = "1"')).toBe('[versions]\nx = "1"\n');
+  });
+
+  test("finds a [versions] value by offset, matching the key as text", () => {
+    const source =
+      '[versions]\nminSdk-legacy = "21"\nminSdk = "23" # shared\nminSdk.other = "23"\n';
+    const found = catalogValueOffsets(source, "minSdk", "23")!;
+    expect(source.slice(found.start, found.end)).toBe("23");
+    expect(source.slice(0, found.start)).toEndWith('minSdk = "');
+    expect(catalogValueOffsets(source, "minSdk", "24")).toBeUndefined();
+    expect(catalogValueOffsets(source, "min.*", "23")).toBeUndefined();
+    expect(catalogValueOffsets('minSdk = { strictly = "23" }\n', "minSdk", "23")).toBeUndefined();
   });
 
   test("matches generated accessors outside comments", () => {
