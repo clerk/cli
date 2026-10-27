@@ -935,18 +935,19 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
   // The flags every suggested command needs to reach this runs folder and instance.
   const carry = carryFlags(options);
 
-  // A Firebase export through a source you wrote is still Firebase's: its
-  // digests need the project's parameters, from the envelope or the flags.
-  const hashSource = options.envelopeSource ?? source;
+  // The platform the file came from. An export through a source you wrote is
+  // still that platform's: Firebase digests need the project's parameters, and
+  // Supabase's raw rows hold its users' providers.
+  const platform = options.envelopeSource ?? source;
   // A flag is typed for this run, so it wins over the export file. A variable
   // is ambient, and may be left over from another project, so it only fills in
   // for an export file without the parameters: with one, a partial flag set is
   // refused rather than completed from the variables.
-  const fromEnvelope = hashSource === "firebase" ? envelope?.firebase : undefined;
+  const fromEnvelope = platform === "firebase" ? envelope?.firebase : undefined;
   const fromFlagsAtAll = FIREBASE_FLAGS.some(([key]) => options[key] !== undefined);
   const fromFlags =
     fromFlagsAtAll || !fromEnvelope
-      ? resolveFirebaseHashConfig(options, hashSource, fromEnvelope ? {} : process.env)
+      ? resolveFirebaseHashConfig(options, platform, fromEnvelope ? {} : process.env)
       : undefined;
   let firebaseHashConfig = fromFlags ?? fromEnvelope;
   let configFrom = fromFlags
@@ -955,7 +956,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       : "the CLERK_FIREBASE_* variables"
     : "the export file";
   // `-y` is "import without prompting": it gets the usage error naming the flags.
-  if (hashSource === "firebase" && !firebaseHashConfig && !options.yes && canPrompt(options)) {
+  if (platform === "firebase" && !firebaseHashConfig && !options.yes && canPrompt(options)) {
     firebaseHashConfig = await promptForFirebaseHashConfig();
     configFrom = "the parameters entered";
     // A suggested command runs with --yes, which never asks: it names the flags.
@@ -1144,7 +1145,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
 
       let supabaseRows: Record<string, unknown>[] | undefined;
-      if (source === "supabase") {
+      if (platform === "supabase") {
         try {
           supabaseRows = await readSupabaseRows(file);
         } catch (error) {

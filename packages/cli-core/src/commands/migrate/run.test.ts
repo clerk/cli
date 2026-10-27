@@ -772,6 +772,43 @@ describe("run", () => {
       expect(imported?.firebaseHash).toMatch(/^[0-9a-f]{64}$/);
     });
 
+    // The provider rows come from the raw file, whatever maps it.
+    test("a source you wrote over a Supabase export still checks its providers", async () => {
+      stubClerk({
+        settings: {
+          attributes: { email_address: { enabled: true } },
+          social: { oauth_google: { enabled: true } },
+          enterprise_sso: { enabled: true },
+        },
+      });
+      const { record } = exportRun("supabase", [
+        {
+          id: "sb1",
+          email: "a@x.dev",
+          email_confirmed_at: "2024-01-01 00:00:00+00",
+          raw_app_meta_data: '{"providers":["discord"]}',
+        },
+      ]);
+      const own = `./own-supabase-${Date.now()}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, own),
+        `export default {
+          key: "mysupabase",
+          label: "My Supabase",
+          transformer: { id: "userId", email: "email" },
+          carries: {
+            passwords: { level: "no", note: "None." },
+            mfa: { level: "no", note: "None." },
+            metadata: { level: "no", note: "None." },
+          },
+        };`,
+      );
+
+      await run({ ...noSource, source: own, input: record.id, dryRun: true });
+
+      expect(captured.err).toContain("only signs in with Discord, which is not enabled in Clerk");
+    });
+
     test("the printed command keeps a source you wrote in place of the envelope's", async () => {
       const { record } = exportRun("auth0", auth0Rows);
       const own = ownAuth0Source();

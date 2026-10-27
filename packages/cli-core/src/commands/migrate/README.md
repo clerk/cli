@@ -298,6 +298,7 @@ link to the export run, and `run.json` records the source the envelope named
 as `envelopeSource`. A Firebase export keeps its hash parameters through it:
 the envelope's, the `--firebase-*` flags or the variables reach the source's
 `postTransform` as `context.firebaseHashConfig`, as they do the built-in's.
+The checks still read a Supabase export's sign-in providers from its raw rows.
 
 An earlier import of the same export into the same instance, through the
 built-in or another source, holds the same users. While it isn't undone, a
