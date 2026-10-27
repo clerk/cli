@@ -711,6 +711,18 @@ function RootDocument({ children }: { children: React.ReactNode }) {
   expect(rootAction.content).not.toContain("<SignInButton");
 });
 
+test("says manual wrapping is needed when the root has no <body>", async () => {
+  await mkdir(join(tempDir, "src/routes"), { recursive: true });
+  await Bun.write(join(tempDir, "src/routes/__root.tsx"), "export default function Root() {}");
+
+  const plan = await tanstackStart.scaffold(makeCtx());
+
+  expect(plan.actions.find((a) => a.path === "src/routes/__root.tsx")).toMatchObject({
+    type: "modify",
+    description: "Add ClerkProvider import (manual wrapping needed)",
+  });
+});
+
 test("does not use locale dir when none detected", async () => {
   await mkdir(join(tempDir, "src/routes"), { recursive: true });
   await Bun.write(join(tempDir, "src/routes/index.tsx"), "export default function() {}");
