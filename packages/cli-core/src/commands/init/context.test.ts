@@ -115,6 +115,37 @@ test("detects JavaScript projects (no tsconfig)", async () => {
   expect(ctx!.layoutPath).toBe("app/layout.jsx");
 });
 
+test("detects TypeScript from .tsx sources (no tsconfig yet)", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "16.0.0", react: "19.0.0" } }),
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.tsx"), "<html><body>{children}</body></html>");
+
+  const ctx = await gatherContext(tempDir);
+  await enrichProjectContext(ctx!);
+
+  expect(ctx!.typescript).toBe(true);
+  expect(ctx!.layoutPath).toBe("app/layout.tsx");
+});
+
+test("ignores .d.ts files when detecting TypeScript", async () => {
+  await Bun.write(
+    join(tempDir, "package.json"),
+    JSON.stringify({ dependencies: { next: "15.0.0", react: "19.0.0" } }),
+  );
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(join(tempDir, "app/layout.jsx"), "<html><body>{children}</body></html>");
+  await Bun.write(join(tempDir, "app/globals.d.ts"), "declare module '*.css';");
+
+  const ctx = await gatherContext(tempDir);
+  await enrichProjectContext(ctx!);
+
+  expect(ctx!.typescript).toBe(false);
+  expect(ctx!.layoutPath).toBe("app/layout.jsx");
+});
+
 test("detects existing Clerk SDK in dependencies", async () => {
   await Bun.write(
     join(tempDir, "package.json"),
