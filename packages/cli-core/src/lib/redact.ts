@@ -215,17 +215,28 @@ type HeaderInStringGroups = {
 };
 
 /**
+ * A literal `\n`, `\r` or `\t`, a JSON `\u` escape, a URL-encoded character,
+ * or an ANSI escape, raw or JSON-escaped (`\u001b[1m`). Each ends in a letter
+ * or digit, so a secret right after one is not at a word edge and every pass
+ * would skip it; {@link redactText} scrubs the text between them again.
+ */
+const ESCAPE = String.raw`(?:\x1b|\\u001[bB])\[[0-9;?]*[A-Za-z]|\\u[0-9A-Fa-f]{4}|\\[nrt]|%[0-9A-Fa-f]{2}`;
+
+/**
  * `Authorization: <anything to the end of the line>`, or a quoted value when
  * the header is a JSON field. Any scheme: `Authorization: token abc123` and
- * an all-letter Bearer token are credentials too. A value that already
- * starts with the marker (a header taken inside a quoted string) does not
- * match, so the scan resumes after it and a later header on the same line is
- * still read. The test sits right after the colon and reads past the blanks
- * itself, so the separator giving a blank back cannot defeat it. Groups:
- * 1 name and separator, 2 value.
+ * an all-letter Bearer token are credentials too. A header right after an
+ * {@link ESCAPE} is taken here, not left to the second scrub: pass 4 would
+ * take only its scheme, and the marker it leaves would stop this pattern. A
+ * value that already starts with the marker (a header taken inside a quoted
+ * string) does not match, so the scan resumes after it and a later header on
+ * the same line is still read. The test sits right after the colon and reads
+ * past the blanks itself, so the separator giving a blank back cannot defeat
+ * it. Groups: 1 name and separator, 2 value.
  */
+const HEADER_NAME = "(?:Authorization|Set-Cookie|Cookie)";
 const AUTHORIZATION_HEADER = new RegExp(
-  String.raw`(["']?\b(?:Authorization|Set-Cookie|Cookie)\b["']?[ \t]*[:=](?![ \t]*["']?\[REDACTED\])[ \t]*)(${QUOTED}|[^\r\n]+)`,
+  String.raw`(["']?${HEADER_NAME}(?<=(?:^|\W|${ESCAPE})${HEADER_NAME})\b["']?[ \t]*[:=](?![ \t]*["']?\[REDACTED\])[ \t]*)(${QUOTED}|[^\r\n]+)`,
   "gi",
 );
 
@@ -513,15 +524,7 @@ function stripQuotes(value: string): string {
 
 // ── Entry points ────────────────────────────────────────────────────────────
 
-/**
- * A literal `\n`, `\r` or `\t`, a JSON `\u` escape, a URL-encoded character,
- * or an ANSI escape, raw or JSON-escaped (`\u001b[1m`). Each ends in a letter
- * or digit, so a secret right after one is not at a word edge and every pass
- * would skip it; {@link redactText} scrubs the text between them again.
- */
-const ESCAPE_SEQUENCE = new RegExp(
-  String.raw`((?:\x1b|\\u001[bB])\[[0-9;?]*[A-Za-z]|\\u[0-9A-Fa-f]{4}|\\[nrt]|%[0-9A-Fa-f]{2})`,
-);
+const ESCAPE_SEQUENCE = new RegExp(`(${ESCAPE})`);
 
 /**
  * Scrub secrets, home-directory paths and email addresses from `text`, in

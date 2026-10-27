@@ -1215,6 +1215,12 @@ describe("secrets right after an escape sequence", () => {
     ],
     ["JWT after a literal \\n", `"x\\n${JWT}"`, JWT],
     ["Bearer token after a literal \\n", `"h\\nBearer ${BEARER_TOKEN}"`, BEARER_TOKEN],
+    [
+      "Authorization header after a literal \\n",
+      `"x\\nAuthorization: token abc123def456"`,
+      "abc123def456",
+    ],
+    ["Authorization header after %20", "q=x%20Authorization: token abc123def456", "abc123def456"],
     ["password after a literal \\t", `"x\\tpassword=hunter2xyz"`, "hunter2xyz"],
     ["curl -u after a literal \\n", `"x\\ncurl -u bob:s3cretpw https://x.io"`, "s3cretpw"],
     ["home path after a literal \\n", `"x\\n/Users/alice/app"`, "alice"],
@@ -1246,6 +1252,19 @@ describe("secrets right after an escape sequence", () => {
     const { text, redactions } = redact(input);
     expect(text).not.toContain(secret);
     expect(redactions).toBeGreaterThan(0);
+  });
+
+  test.each([
+    [
+      'curl -H "Authorization: token abc123" -d "a\\nb"',
+      `curl -H "Authorization: ${REDACTED}" -d "a\\nb"`,
+    ],
+    [
+      '{ Authorization: "Bearer abcdefghijklmnop" }, body: "a\\nb"',
+      `{ Authorization: ${REDACTED} }, body: "a\\nb"`,
+    ],
+  ])("a header value already taken is not taken again: %j", (input, expected) => {
+    expect(redact(input)).toEqual({ text: expected, redactions: 1 });
   });
 
   test("the escape sequences themselves survive", () => {
