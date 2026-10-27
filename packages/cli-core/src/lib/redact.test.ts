@@ -1033,6 +1033,7 @@ describe("large pastes stay linear", () => {
     ["email domain with no top-level domain", (n) => "a@" + fill("b.", n)],
     ["minified JSON log", (n) => fill('{"level":"info","user":"bob","n":1},', n)],
     ["literal \\n escapes between assignments", (n) => fill("a\\npassword=x%20", n)],
+    ["a JSON-escaped color code with no final letter", (n) => "\\u001b[" + fill("1;", n)],
   ];
 
   const timed = (input: string): number => {
@@ -1201,9 +1202,9 @@ describe("escaped JSON inside a string", () => {
   });
 });
 
-// A literal `\n` or `\t` (escaped text), a URL-encoded character or an ANSI
-// color code ends in a letter or digit, which would otherwise hide the next
-// word's start.
+// A literal `\n` or `\t` (escaped text), a JSON `\u` escape, a URL-encoded
+// character or an ANSI color code, raw or JSON-escaped, ends in a letter or
+// digit, which would otherwise hide the next word's start.
 describe("secrets right after an escape sequence", () => {
   const BEARER_TOKEN = "abcdefghijklmnopqrstuvwxyz123456";
   test.each([
@@ -1226,6 +1227,21 @@ describe("secrets right after an escape sequence", () => {
       `\x1b[31m${"sk_live_"}abc123def456\x1b[0m`,
       "abc123def456",
     ],
+    [
+      "Clerk key after a JSON \\u escape",
+      `{"q":"a=1\\u0026${"sk_live_"}abc123def456"}`,
+      "abc123def456",
+    ],
+    [
+      "Clerk key inside a JSON-escaped ANSI color code",
+      `{"m":"\\u001b[1m${"sk_live_"}abc123def456\\u001b[0m"}`,
+      "abc123def456",
+    ],
+    [
+      "Clerk key after an uppercase \\u001B color code",
+      `{"m":"\\u001B[31m${"sk_live_"}abc123def456"}`,
+      "abc123def456",
+    ],
   ])("%s", (_label, input, secret) => {
     const { text, redactions } = redact(input);
     expect(text).not.toContain(secret);
@@ -1233,7 +1249,9 @@ describe("secrets right after an escape sequence", () => {
   });
 
   test("the escape sequences themselves survive", () => {
-    expect(redact(`a\\nsk_live_abc123def456\\tb%20c%3Dd`).text).toBe(`a\\n${REDACTED}\\tb%20c%3Dd`);
+    expect(redact(`a\\nsk_live_abc123def456\\tb%20c%3Dd\\u0026e\\u001b[1mf`).text).toBe(
+      `a\\n${REDACTED}\\tb%20c%3Dd\\u0026e\\u001b[1mf`,
+    );
   });
 });
 

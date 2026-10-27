@@ -514,12 +514,14 @@ function stripQuotes(value: string): string {
 // ── Entry points ────────────────────────────────────────────────────────────
 
 /**
- * A literal `\n`, `\r` or `\t`, a URL-encoded character, or an ANSI escape.
- * Each ends in a letter or digit, so a secret right after one is not at a
- * word edge and every pass would skip it; {@link redactText} scrubs the text
- * between them again.
+ * A literal `\n`, `\r` or `\t`, a JSON `\u` escape, a URL-encoded character,
+ * or an ANSI escape, raw or JSON-escaped (`\u001b[1m`). Each ends in a letter
+ * or digit, so a secret right after one is not at a word edge and every pass
+ * would skip it; {@link redactText} scrubs the text between them again.
  */
-const ESCAPE_SEQUENCE = new RegExp(String.raw`(\\[nrt]|%[0-9A-Fa-f]{2}|\x1b\[[0-9;?]*[A-Za-z])`);
+const ESCAPE_SEQUENCE = new RegExp(
+  String.raw`((?:\x1b|\\u001[bB])\[[0-9;?]*[A-Za-z]|\\u[0-9A-Fa-f]{4}|\\[nrt]|%[0-9A-Fa-f]{2})`,
+);
 
 /**
  * Scrub secrets, home-directory paths and email addresses from `text`, in
