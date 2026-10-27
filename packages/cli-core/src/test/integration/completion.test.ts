@@ -239,12 +239,10 @@ describe("generateCompletions", () => {
       const saved = process.env.CLERK_EXPERIMENTAL;
       process.env.CLERK_EXPERIMENTAL = "migrate";
       try {
-        const names = generateCompletions(createProgram(), [
-          "migrate",
-          "import",
-          "--source",
-          "",
-        ]).completions.map((c) => c.name);
+        const result = generateCompletions(createProgram(), ["migrate", "import", "--source", ""]);
+        // A source you wrote is a path, so the shell's file completion stays on.
+        expect(result.directive).toBe(0);
+        const names = result.completions.map((c) => c.name);
         expect(names).toEqual([
           "clerk",
           "auth0",
@@ -338,11 +336,9 @@ describe("generateCompletions", () => {
       const saved = process.env.CLERK_EXPERIMENTAL;
       process.env.CLERK_EXPERIMENTAL = "migrate";
       try {
-        const names = generateCompletions(createProgram(), [
-          "migrate",
-          "sources",
-          "",
-        ]).completions.map((c) => c.name);
+        const result = generateCompletions(createProgram(), ["migrate", "sources", ""]);
+        expect(result.directive).toBe(0);
+        const names = result.completions.map((c) => c.name);
         expect(names).toContain("supabase");
         expect(names).toContain("workos");
       } finally {
