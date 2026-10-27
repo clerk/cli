@@ -46,7 +46,7 @@ export function registerFeedback(program: Program): void {
     .option("--outcome <outcome>", `How it ended: ${FEEDBACK_OUTCOMES.join(", ")} (required)`)
     .option(
       "--command <path>",
-      'The CLI command involved, as typed after `clerk` (e.g. "users list"); a pasted command line is fine: global flags are skipped wherever they come, and arguments and flags after the command are dropped',
+      'The CLI command involved, as typed after `clerk` (e.g. "users list"); arguments and flags after it are dropped',
     )
     .option("--error-text <text>", "The exact error you saw")
     .option(
@@ -56,7 +56,7 @@ export function registerFeedback(program: Program): void {
     .option("--suggestion <text>", "What would have helped")
     .option(
       "--dry-run",
-      "Print exactly what would be sent and whether a real run would send it now (the telemetry opt-out and the rate limit), and send no report. A real run can still fail to write the local config file. The report id is a placeholder; a real send assigns one. With telemetry on, it may create the config directory and the machine id. With telemetry off, a dry run writes no machine id, notice flag or rate-limit record. In agent mode, the sandbox check every command that reads the config runs may still create the config directory and write and delete a temporary file there. The run's usual end-of-run telemetry step still applies: on a first run it shows the disclosure notice and records that it was shown.",
+      "Show the report that would be sent and whether a real run would send it now, without sending it",
     )
     .option("--yes", "Skip the confirmation prompt")
     .setExamples(FEEDBACK_EXAMPLES)

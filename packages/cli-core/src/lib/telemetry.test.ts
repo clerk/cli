@@ -841,9 +841,8 @@ describe("finalizeAndSendTelemetry", () => {
   });
 });
 
-// The shared sender enforces the opt-out itself, so a caller that forgets the
-// check cannot send from an opted-out machine. The per-run flush keeps its own
-// earlier check (it must also skip the notice) and ignores this result.
+// The feedback sender enforces the opt-out itself. The per-run flush checks
+// the opt-out on its own and posts without this sender.
 describe("sendTelemetryEvent", () => {
   const originalFetch = globalThis.fetch;
   let calls = 0;

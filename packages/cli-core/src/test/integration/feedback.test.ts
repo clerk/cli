@@ -177,22 +177,18 @@ describe("agent mode through the real program", () => {
     expect(http.requests).toHaveLength(0);
   });
 
-  test("--command lands as the usage-event spelling: prefix dropped, default child, global flags skipped, trailing arguments dropped", async () => {
+  test("--command lands as the usage-event spelling: leading clerk dropped, default child, trailing arguments dropped", async () => {
     await readyToSend();
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "clerk users list");
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "apps list");
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "clerk deploy");
-    await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "deploy --verbose status");
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "users list --limit 5");
-    await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "--mode=agent env pull");
     const feedbackEvents = events().filter((e) => e.event === "CLI_FEEDBACK");
     expect(feedbackEvents.map((e) => e.payload.command)).toEqual([
       "users list",
       "apps list",
       "deploy run",
-      "deploy status",
       "users list",
-      "env pull",
     ]);
     // Nothing after the command name is ever sent.
     expect(JSON.stringify(feedbackEvents)).not.toContain("--limit");
@@ -359,9 +355,7 @@ describe("help", () => {
     expect(help).toContain("--dry-run");
     expect(help).toContain("telemetry opt-out");
     expect(help).toContain("scrubbed before it leaves your machine, on a best-effort basis");
-    expect(help).toContain(
-      "a pasted command line is fine: global flags are skipped wherever they come",
-    );
+    expect(help).toContain("as typed after `clerk`");
     expect(help).toContain(
       "It misses values that span lines, structured config files such as YAML and pretty-printed JSON, passwords with spaces, and Markdown formatting around a label, so never include secrets",
     );
@@ -385,26 +379,6 @@ describe("help", () => {
   ])("`clerk feedback --help` names the attached field: %s", async (phrase) => {
     const result = await clerk.raw("feedback", "--help");
     expect(result.stdout.replace(/\s+/g, " ")).toContain(phrase);
-  });
-
-  // What a dry run may write, said exactly, so nobody reads "dry run" as
-  // "touches nothing", and what it does not predict.
-  test("`clerk feedback --help` says exactly what a dry run writes", async () => {
-    const result = await clerk.raw("feedback", "--help");
-    const help = result.stdout.replace(/\s+/g, " ");
-    expect(help).toContain(
-      "With telemetry off, a dry run writes no machine id, notice flag or rate-limit record.",
-    );
-    expect(help).toContain(
-      "In agent mode, the sandbox check every command that reads the config runs may still create the config directory and write and delete a temporary file there.",
-    );
-    expect(help).toContain(
-      "whether a real run would send it now (the telemetry opt-out and the rate limit), and send no report. A real run can still fail to write the local config file.",
-    );
-    expect(help).toContain(
-      "With telemetry on, it may create the config directory and the machine id.",
-    );
-    expect(help).not.toContain("to check that a real run could record the notice");
   });
 
   test("`clerk feedback --help` states the per-field input ceiling", async () => {

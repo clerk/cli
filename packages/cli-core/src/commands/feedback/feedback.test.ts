@@ -1,8 +1,8 @@
 /**
  * Agent-mode behaviour of the handler, with the POST captured through
- * CLERK_TELEMETRY_URL. Tests have no TTY, so the mode resolves to agent.
- * Human-mode prompts and the exit codes of a real invocation are covered by
- * the integration test (`src/test/integration/feedback.test.ts`).
+ * CLERK_TELEMETRY_URL. Human-mode prompts and the exit codes of a real
+ * invocation are covered by the integration test
+ * (`src/test/integration/feedback.test.ts`).
  */
 
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
@@ -58,6 +58,7 @@ let posted: Posted[];
 let respondWith: () => Response | Promise<Response>;
 const originalFetch = globalThis.fetch;
 const originalCi = process.env.CI;
+const originalMode = process.env.CLERK_MODE;
 const captured = useCaptureLog();
 
 beforeEach(async () => {
@@ -68,6 +69,7 @@ beforeEach(async () => {
   delete process.env.CLERK_TELEMETRY_DISABLED;
   delete process.env.DO_NOT_TRACK;
   delete process.env.CI;
+  process.env.CLERK_MODE = "agent";
   posted = [];
   respondWith = () => new Response("{}");
   globalThis.fetch = (async (url: unknown, init?: { body?: string }) => {
@@ -85,6 +87,8 @@ afterEach(async () => {
   delete process.env.DO_NOT_TRACK;
   if (originalCi === undefined) delete process.env.CI;
   else process.env.CI = originalCi;
+  if (originalMode === undefined) delete process.env.CLERK_MODE;
+  else process.env.CLERK_MODE = originalMode;
   setLogLevel("info");
   await rm(configDir, { recursive: true, force: true });
 });
@@ -135,22 +139,6 @@ describe("resolveCommand", () => {
   test.each([
     ["users list", "users list"],
     ["clerk users list", "users list"],
-    // A package runner or a path to the binary before `clerk`.
-    ["npx clerk users list", "users list"],
-    ["bunx clerk users list", "users list"],
-    ["pnpm dlx clerk users list", "users list"],
-    ["/usr/local/bin/clerk users list", "users list"],
-    ["./node_modules/.bin/clerk users list", "users list"],
-    ["npx users list", null],
-    // The README's own spellings: a version or tag after the package name,
-    // and the runner's own flags before it.
-    ["npx -y clerk@latest init", "init"],
-    ["npx clerk@latest users list", "users list"],
-    ["bunx clerk@latest init", "init"],
-    ["pnpm dlx clerk@latest init", "init"],
-    ["npx --yes clerk users list", "users list"],
-    ["npx clerk@1.2.3 users list", "users list"],
-    ["npx -y users list", null],
     ["  clerk   users   list  ", "users list"],
     ["feedback", "feedback"],
     // A group with a default child is recorded as that child.
@@ -168,14 +156,16 @@ describe("resolveCommand", () => {
     ["impersonate user_123", "impersonate"],
     // A group that runs a menu when bare is a real command name.
     ["users", "users"],
-    // Arguments and flags after a leaf are dropped (they are never sent).
+    // Arguments and flags after the command are dropped; they are never sent.
     ["users list --limit 5", "users list"],
+    ["deploy status --verbose", "deploy status"],
     ["clerk users open user_123", "users open"],
     ["deploy status extra words", "deploy status"],
-    // A flag no command named so far takes stops the walk.
-    ["users --json list", "users"],
-    // ...since it may be the default child's own.
-    ["open --print", "open dashboard"],
+    // A flag before the command is complete may belong to any command named
+    // so far, or to a default child, so it is an error.
+    ["deploy --verbose status", null],
+    ["open --print", null],
+    ["users --json list", null],
     // A typo under a group is still an error.
     ["users lst", null],
     ["nope", null],
@@ -184,44 +174,13 @@ describe("resolveCommand", () => {
     ["auth", null],
     ["apps", null],
     ["clerk env", null],
-    // Global flags are skipped wherever they come, with the value of any that
-    // takes one, as Commander reads them from the root's own options. A
-    // group's own flags are skipped the same way after its name.
-    ["--mode agent users list", "users list"],
-    ["--mode=agent users list", "users list"],
-    ["--verbose users list", "users list"],
-    ["--input-json @f users list", "users list"],
-    ["clerk --mode agent users list", "users list"],
-    ["npx clerk@latest --verbose users list", "users list"],
-    ["users --mode agent list", "users list"],
-    ["users --mode=agent list", "users list"],
-    ["deploy --verbose status", "deploy status"],
-    ["apps --verbose list", "apps list"],
-    ["auth --input-json @f login", "auth login"],
-    ["--verbose users --mode agent list", "users list"],
-    ["users --app app_123 list", "users list"],
-    // A flag the root does not know fails in Commander before any command runs.
-    ["--nosuch users list", null],
-    // The version flag prints the version and runs no command, like help.
-    ["--version users list", null],
-    ["-v users list", null],
-    ["users -v list", null],
-    // A value attached to a flag that takes none fails option parsing.
-    ["--verbose=foo users list", null],
-    ["users --verbose=foo list", null],
-    // A value-taking flag with nothing after it leaves no command.
-    ["--mode", null],
-    ["users --mode", null],
+    // Only the path after `clerk` is read, not a whole pasted command line.
+    ["npx clerk users list", null],
+    ["clerk@latest users list", null],
+    ["--mode agent users list", null],
+    ["help users", null],
     ["", null],
     ["clerk", null],
-    // `clerk help <command>` is real, though Commander answers it before any
-    // usage event starts; it is recorded as typed, for any existing command.
-    ["help", "help"],
-    ["help users", "help users"],
-    ["clerk help users list", "help users list"],
-    ["help deploy", "help deploy"],
-    ["help nosuch", null],
-    ["help users nope", null],
   ])("%j → %j", (input, expected) => {
     expect(resolveCommand(program, input).path).toBe(expected);
   });
@@ -569,10 +528,10 @@ describe("sending", () => {
     expect(posted).toHaveLength(0);
   });
 
-  // Ctrl-C is work interrupted, not a delivery outcome: the command follows
-  // the CLI's interrupt path (exit 130 from the signal handler) and prints no
-  // result of its own.
-  test("an interrupt during the POST is rethrown, not reported as send_failed", async () => {
+  // Ctrl-C follows the CLI's interrupt path (exit 130 from the signal
+  // handler). A request that was already out may have landed, so the id, the
+  // handle for a later removal, is printed on the way out.
+  test("an interrupt during the POST prints the report id, then is rethrown", async () => {
     await readyToSend();
     respondWith = () => {
       beginInterrupt();
@@ -580,8 +539,28 @@ describe("sending", () => {
     };
     try {
       await expect(feedback(COMPLETE, program)).rejects.toThrow();
+    } finally {
+      _resetInterruptState();
+    }
+    expect(JSON.parse(captured.out.trim())).toEqual({
+      sent: false,
+      reason: "send_failed",
+      fallback: GITHUB_ISSUES_URL,
+      report_id: feedbackEvents()[0]!.payload.report_id,
+    });
+  });
+
+  test("an interrupt before the POST prints nothing and is rethrown", async () => {
+    await readyToSend();
+    const sender = spyOn(telemetry, "sendTelemetryEvent").mockImplementation(async () => {
+      beginInterrupt();
+      throw new DOMException("The operation was aborted.", "AbortError");
+    });
+    try {
+      await expect(feedback(COMPLETE, program)).rejects.toThrow();
       expect(captured.out).toBe("");
     } finally {
+      sender.mockRestore();
       _resetInterruptState();
     }
   });
@@ -1074,13 +1053,8 @@ describe("a config write failure", () => {
 });
 
 describe("the human-mode rate-limit message says which limit applied", () => {
-  const originalMode = process.env.CLERK_MODE;
   beforeEach(() => {
     process.env.CLERK_MODE = "human";
-  });
-  afterEach(() => {
-    if (originalMode === undefined) delete process.env.CLERK_MODE;
-    else process.env.CLERK_MODE = originalMode;
   });
 
   test("the daily cap names the limit and the window", async () => {
@@ -1140,13 +1114,8 @@ describe("first-run notice", () => {
 // again after the prompts close, and once more at the moment of sending, so an
 // opt-out that lands while the editor is open never results in a POST.
 describe("an opt-out that lands during a human-mode prompt", () => {
-  const originalMode = process.env.CLERK_MODE;
   beforeEach(() => {
     process.env.CLERK_MODE = "human";
-  });
-  afterEach(() => {
-    if (originalMode === undefined) delete process.env.CLERK_MODE;
-    else process.env.CLERK_MODE = originalMode;
   });
 
   test("during the editor: told before any preview, no POST, no machine id created", async () => {
@@ -1225,13 +1194,8 @@ describe("an opt-out that lands during a human-mode prompt", () => {
 });
 
 describe("an empty editor in human mode", () => {
-  const originalMode = process.env.CLERK_MODE;
   beforeEach(() => {
     process.env.CLERK_MODE = "human";
-  });
-  afterEach(() => {
-    if (originalMode === undefined) delete process.env.CLERK_MODE;
-    else process.env.CLERK_MODE = originalMode;
   });
 
   test.each([

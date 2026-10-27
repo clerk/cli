@@ -1,32 +1,17 @@
 /**
  * `clerk feedback`: a structured report about a CLI problem, sent as one
- * `CLI_FEEDBACK` event over the same telemetry path as the per-run usage
- * event. Nothing here goes through `finalizeAndSendTelemetry`: that path's
- * latch keeps a run to one `CLI_COMMAND_EXECUTED`, and this run still sends
- * its own one of those, flag names only, like any other command.
+ * `CLI_FEEDBACK` event over the telemetry channel. It does not go through
+ * `finalizeAndSendTelemetry`, whose latch keeps a run to one
+ * `CLI_COMMAND_EXECUTED`; this run still sends its own one of those.
  *
- * Any telemetry opt-out blocks the send. `clerk telemetry disable` prints
- * "Nothing will be sent from this machine", and an explicit report is still
- * something sent from this machine; the fallback is the GitHub issues URL.
- * The opt-out is checked before the prompts (so nobody writes a report that
- * cannot go), again after they close (an opt-out can land while the editor
- * is open), again before the first-run notice, and once more inside the
- * shared sender at the moment of the POST.
- *
- * Every free-text field is scrubbed on the client (`lib/redact.ts`) before it
- * is capped and before anything leaves the machine. The report never attaches
- * files, environment variables, transcripts or argv: the payload is built
- * only from the fields named below plus the telemetry envelope, and it is
- * built once, so the preview a person confirms is the object that is sent.
- *
- * Telemetry must never affect the command: a config file that cannot be
- * written or read (no machine id yet, read-only directory) is a
- * `send_failed`, not a crash, matching how the per-run flush swallows the
- * same failure. The report id is printed exactly when the report may have
- * been stored, because it is the handle for a later removal and means
- * nothing otherwise. A dry run shows a placeholder in its place.
- * Ctrl-C is the one exception: it follows the CLI's interrupt path (exit 130
- * from the signal handler) and prints no result.
+ * Any telemetry opt-out blocks the send: `clerk telemetry disable` promises
+ * that nothing will be sent from this machine, and an explicit report is
+ * still something sent. Telemetry must never affect the command, so a failed
+ * send, or a config file that cannot be read or written, is `send_failed`
+ * and exit 0, not a crash. The payload is built once, so the preview a person
+ * confirms is the object that is sent. The report id is printed exactly when
+ * the report may have been stored, because it is the handle for a later
+ * removal.
  */
 
 import {
@@ -42,7 +27,7 @@ import { select } from "../../lib/listage.ts";
 import { log } from "../../lib/log.ts";
 import { confirm, editor, text } from "../../lib/prompts.ts";
 import { redactAndCap } from "../../lib/redact.ts";
-import { isCancelled } from "../../lib/signals.ts";
+import { interruptedExitCode, isCancelled } from "../../lib/signals.ts";
 import {
   asPostedTelemetryEvent,
   buildTelemetryEnvelope,
@@ -157,20 +142,17 @@ export interface FeedbackOptions {
  * the same way `__complete.ts` reads `_hidden`: which child runs when the
  * group is invoked bare, whether the group runs anything itself, and whether
  * a command is hidden from help (and so from the subcommands an error
- * suggests). `options` is Commander's public option list, read for the flags
- * each command takes and whether each takes a value.
+ * suggests).
  */
 export type CommandTree = {
   name(): string;
   aliases(): string[];
   commands: readonly CommandTree[];
   parent: CommandTree | null;
-  options?: readonly CommandOption[];
   registeredArguments?: readonly unknown[];
   _defaultCommandName?: string | null;
   _actionHandler?: unknown;
   _hidden?: boolean;
-  _versionOptionName?: string;
 };
 
 export const FEEDBACK_EXAMPLES: Example[] = [
@@ -234,17 +216,6 @@ type CompleteFields = ValidatedFields & {
   outcome: FeedbackOutcome;
 };
 
-/** The fields of a Commander `Option` that say how it is spelled and whether it takes a value. */
-type CommandOption = {
-  long?: string;
-  short?: string;
-  /** `<value>`: always takes the next word. */
-  required?: boolean;
-  /** `[value]`: takes the next word unless it is a flag. */
-  optional?: boolean;
-  attributeName?(): string;
-};
-
 type CommandResolution =
   | { path: string }
   | { path: null; reason: "unknown" }
@@ -263,116 +234,41 @@ function defaultChild(node: CommandTree): CommandTree | undefined {
   return name ? node.commands.find((c) => c.name() === name) : undefined;
 }
 
-/** `clerk`, a path to the binary, or the package with a version or tag (`clerk@latest`). */
-function isClerk(word: string | undefined): boolean {
-  return word !== undefined && /^(?:(?:.*[\\/])?clerk(?:\.exe)?|clerk@[^\s\\/]+)$/.test(word);
-}
-
-/** Package runners that may come before `clerk` on a pasted command line. */
-const PACKAGE_RUNNERS: readonly (readonly string[])[] = [["npx"], ["bunx"], ["pnpm", "dlx"]];
-
-/**
- * Drop a package runner and its own flags (`npx -y`, `pnpm dlx`), but only
- * when `clerk` follows them: `npx users list` is not a clerk command line.
- */
-function dropPackageRunner(words: string[]): void {
-  const runner = PACKAGE_RUNNERS.find((r) => r.every((word, i) => words[i] === word));
-  if (!runner) return;
-  let next = runner.length;
-  while (words[next]?.startsWith("-")) next += 1;
-  if (isClerk(words[next])) words.splice(0, next);
-}
-
-/**
- * How many words the flag at `words[i]` takes, with its value if it has one,
- * read from the options of `owners` (the commands named so far, root first)
- * as Commander parses them: `--mode agent`, `--mode=agent`, `--verbose`. 0
- * when none of them has the flag. Null when the line runs no command, so no
- * usage event carries one for it: the version flag (it prints the version and
- * exits; help does the same and is not in the option list at all), a value
- * attached to a flag that takes none (`--verbose=foo`), or a missing value.
- */
-function flagLength(
-  owners: readonly CommandTree[],
-  words: readonly string[],
-  i: number,
-): number | null {
-  const word = words[i]!;
-  const long = word.startsWith("--");
-  const name = long ? word.split("=", 1)[0] : word.slice(0, 2);
-  for (const owner of owners) {
-    const option = owner.options?.find((o) => (long ? o.long : o.short) === name);
-    if (!option) continue;
-    if (option.attributeName?.() === owner._versionOptionName) return null;
-    const takesValue = option.required || option.optional;
-    const attached = long ? word.includes("=") : word.length > 2;
-    if (attached) return takesValue ? 1 : null;
-    if (!takesValue) return 1;
-    const next = words[i + 1];
-    if (option.required) return next === undefined ? null : 2;
-    return next !== undefined && !next.startsWith("-") ? 2 : 1;
-  }
-  return 0;
-}
-
 /**
  * Resolve `--command` to the spelling usage events record: the command whose
  * action ran (`commandPathOf` in `lib/telemetry.ts`). The input is the path
- * as typed after `clerk`, a leading `clerk` tolerated (also as `clerk@latest`,
- * after `npx`, `bunx` or `pnpm dlx` and their own flags, or as a path to the
- * binary), and may be a whole pasted command line: flags are skipped, and
- * anything after the command is dropped (arguments and flags are never sent).
+ * as typed after `clerk` (a leading `clerk` is fine); arguments and flags
+ * after the command are dropped. A flag before the command is complete is an
+ * error, because only Commander's option parsing knows whose flag it is:
+ * `deploy --verbose status` runs `deploy status`, `open --print` runs
+ * `open dashboard`.
  *
- * Walk rules, in the order Commander dispatches (`_parseCommand`), verified
- * against the real tree: Commander reads the options of every command named
- * so far wherever they come, so such a flag is skipped with its value
- * (`users --mode agent list` → `users list`). Any other flag ends the walk:
- * it may be the default child's own (`open --print`), and before any command
- * it is an error. At a group, a word that names a child is that child.
- * Otherwise a group with a default child hands the word to that child, which
- * must take an argument (`open users` → `open dashboard`; `deploy run` takes
- * none, so `deploy statsu` is an error). Otherwise the word is the group's
- * own argument if it takes one (`impersonate user_123` → `impersonate`), and
- * an error if not (`users lst`). A group with a default child is recorded as
- * that child (`deploy` → `deploy run`), even when the group has an action of
- * its own. A bare group that runs nothing itself (`auth`) never appears in
- * usage events, so it is an error that names its subcommands.
- *
- * `clerk help [command]` is Commander's own help command: it prints help and
- * exits before any usage event starts, so no event carries a spelling for
- * it. It is accepted as typed (`help users`), for any command that exists,
- * groups included, because that is what the person ran.
+ * Walk rules, as Commander dispatches (`_parseCommand`): a word that names a
+ * child is that child. Otherwise a group with a default child hands the word
+ * to that child, which must take an argument (`open users` → `open
+ * dashboard`; `deploy run` takes none, so `deploy statsu` is an error);
+ * otherwise the word is the group's own argument if it takes one
+ * (`impersonate user_123` → `impersonate`), and an error if not (`users
+ * lst`). A group with a default child is recorded as that child (`deploy` →
+ * `deploy run`). A bare group that runs nothing itself (`auth`) never appears
+ * in usage events, so it is an error that names its subcommands.
  */
 export function resolveCommand(tree: CommandTree, input: string): CommandResolution {
   const words = input.trim().split(/\s+/).filter(Boolean);
-  dropPackageRunner(words);
-  if (isClerk(words[0])) words.shift();
+  if (words[0] === "clerk") words.shift();
   let node = tree;
-  const owners = [tree];
   const parts: string[] = [];
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i]!;
+  for (const word of words) {
     if (word.startsWith("-")) {
       if (node.commands.length === 0) break;
-      const length = flagLength(owners, words, i);
-      if (length === null) return { path: null, reason: "unknown" };
-      if (length === 0) break;
-      i += length - 1;
-      continue;
+      return { path: null, reason: "unknown" };
     }
-    if (node === tree && word === "help") return resolveHelp(tree, words.slice(i + 1));
     const child = findChild(node, word);
     if (child) {
       parts.push(child.name());
       node = child;
-      owners.push(child);
       continue;
     }
-    // Not a subcommand: an argument of something, or a typo. A leaf takes it
-    // as its own. Under a group with a default child it goes to that child
-    // first, which must take an argument (`open users`); `deploy run` takes
-    // none, so `deploy statsu` fails in Commander and must not be recorded
-    // as `deploy run`. Only then is it the group's own argument.
     if (node.commands.length === 0) break;
     const fallbackChild = defaultChild(node);
     if (fallbackChild) {
@@ -401,20 +297,6 @@ export function resolveCommand(tree: CommandTree, input: string): CommandResolut
   return { path: parts.join(" ") };
 }
 
-/** `help` followed by the path of an existing command, walked by name only (no default child, no arguments). */
-function resolveHelp(tree: CommandTree, words: string[]): CommandResolution {
-  let node = tree;
-  const parts = ["help"];
-  for (const word of words) {
-    if (word.startsWith("-")) break;
-    const child = findChild(node, word);
-    if (!child) return { path: null, reason: "unknown" };
-    parts.push(child.name());
-    node = child;
-  }
-  return { path: parts.join(" ") };
-}
-
 function rootOf(tree: CommandTree): CommandTree {
   let node = tree;
   while (node.parent) node = node.parent;
@@ -439,13 +321,11 @@ const TEXT_OPTIONS = (options: FeedbackOptions): Record<string, string | undefin
   suggestion: options.suggestion,
 });
 
-/** Prompt validation: under the ceiling. */
 const underCeiling = (value: string | undefined): string | undefined => {
   if (value === undefined || value.length <= FEEDBACK_FIELD_MAX_LENGTH) return undefined;
   return `This is ${value.length.toLocaleString("en-US")} characters; the limit is ${FIELD_MAX_LENGTH_TEXT}.`;
 };
 
-/** Prompt validation: required, and under the ceiling. */
 const nonEmptyUnderCeiling = (value: string | undefined): string | undefined =>
   value?.trim() ? underCeiling(value) : "This field is required.";
 
@@ -780,34 +660,22 @@ function provesNoConnection(error: unknown): boolean {
 }
 
 /**
- * POST the report exactly as built and say what became of it; the caller
- * prints the result. The opt-out is read once more before the first-run
- * notice, so an opt-out that landed during the confirmation neither posts nor
- * consumes the notice; the shared sender checks again at the POST.
+ * POST the report exactly as built and say what became of it. The opt-out is
+ * read once more before the first-run notice, so one that landed during the
+ * confirmation neither posts nor consumes the notice.
  *
- * `posted` is true once the report may have been stored, and it is what
- * earns the report id and the full count against the cap: a 2xx or 5xx
- * answer, a timeout, or a failure the CLI cannot place. The id is what a
- * later removal needs. A 4xx is the endpoint refusing the event, so nothing
- * was stored: `send_failed` with no id, recorded toward the daily total only,
- * so a corrected retry about the same command and code is not blocked while
- * a retry loop against a refusing endpoint stays bounded. A failure that
- * proves no connection was made ({@link provesNoConnection}: refused,
- * unresolvable host, no network, a socket that could not open, a permission
- * error on connect, a rejected certificate) sent nothing, so it is
- * `send_failed` with no id and no count, like a failure before the POST (the
- * config could not be read, the notice could not be recorded). An interrupt
- * is rethrown for the CLI's interrupt path; a send that may have reached the
- * server is counted first, usually, since the CLI's interrupt handler can
- * exit before the record is written.
+ * `posted` (the report may have been stored: a 2xx or 5xx, a timeout, or a
+ * failure the CLI cannot place) earns the report id and the full count
+ * against the cap. A 4xx stored nothing, so it counts toward the daily total
+ * only: a corrected retry is not blocked, and a retry loop stays bounded. A
+ * failure that {@link provesNoConnection} sent nothing: no id, no count.
  */
 async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   try {
     const refused = refusalFor(await getTelemetryStatus());
     if (refused) return { sent: false, refusal: refused, posted: false };
     // Immediately before the POST, so the notice never promises a report that
-    // an opt-out, the cap or a declined confirmation stopped. The run's own
-    // command event then sends too, which the changed last line discloses.
+    // an opt-out, the cap or a declined confirmation stopped.
     await showTelemetryNoticeOnce(FEEDBACK_NOTICE_LAST_LINE);
   } catch (error) {
     log.debug(`feedback: could not prepare the send: ${error}`);
@@ -839,9 +707,12 @@ async function send(payload: FeedbackPayload): Promise<FeedbackSendResult> {
   } catch (error) {
     // A connection that was never made sent nothing: no count, no id.
     const sent = posted && !provesNoConnection(error);
-    // Recorded first even on Ctrl-C, because a request that was out may have
-    // landed. Usually that record is written; the CLI's interrupt handler can
-    // exit the process before it is.
+    // A request that was out may have landed, so Ctrl-C still prints its id
+    // and records it; the id first, since the CLI's interrupt handler can
+    // exit the process before the record is written.
+    if (sent && interruptedExitCode() !== null) {
+      printRefusal({ reason: "send_failed" }, payload.report_id);
+    }
     if (sent) await record();
     if (isCancelled(error)) throw error;
     log.debug(`feedback: send failed: ${error}`);
@@ -931,25 +802,14 @@ async function dryRun(fields: CompleteFields): Promise<void> {
 }
 
 /**
- * Order of operations, per mode (the two differ only in where presence of
- * the required fields is checked: before gating for an agent, because the
- * contract says missing input is a usage error and nothing is typed; after
- * gating for a person, so someone opted out or capped is told before writing
- * a report):
- *
  * Agent: shape → presence → dry-run → opt-out → cap → notice → POST.
  * Human: shape → dry-run (prompting first) → opt-out → cap → prompts →
  * opt-out again → preview and confirmation → notice → POST.
  *
- * The second human-mode opt-out check runs after the prompts and before the
- * envelope is built: an opt-out that landed while the editor was open is
- * honoured without a preview and without creating a machine id.
- *
- * Only the telemetry steps (the gates, the envelope, the send) turn a failure
- * into `send_failed`; each catches its own. A failing prompt or editor is the
- * person's to see and surfaces as its own error. A failed or refused send is
- * exit 0 in both modes: telemetry never affects the command, and a script
- * wrapping this one gets the same guarantee.
+ * Presence is checked before gating for an agent, because missing input is a
+ * usage error, and after it for a person, so someone opted out or capped is
+ * told before writing a report. The second human opt-out read honours an
+ * opt-out that landed while the editor was open, before a machine id exists.
  */
 export async function feedback(options: FeedbackOptions, tree: CommandTree): Promise<void> {
   const root = rootOf(tree);
@@ -958,7 +818,6 @@ export async function feedback(options: FeedbackOptions, tree: CommandTree): Pro
   if (isAgent()) {
     const complete = requireFields(fields);
     if (options.dryRun) return dryRun(complete);
-    // Only a real send has an id; a dry run shows a placeholder.
     const reportId = crypto.randomUUID();
     const refused = await gate(complete);
     if (refused) return printRefusal(refused);

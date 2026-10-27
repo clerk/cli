@@ -552,27 +552,13 @@ export function asPostedTelemetryEvent<E extends TelemetryEvent>(
 export type SendOutcome = "accepted" | "refused" | "rejected" | "disabled";
 
 /**
- * Wrap one event in `{ sdk, sdkv }`, print it at debug level (this is what
- * `--verbose` shows, and the README promises it for every event), and POST it
- * to the telemetry endpoint. Resolves to a {@link SendOutcome}
- * (`loggedFetch` returns 4xx and 5xx without throwing). Rejects on a network
- * failure or an abort: the caller decides what that means, since the
- * command-event flush keeps its context for the shutdown flush while the
- * feedback command reports the failure to the user.
- *
- * The opt-out is enforced here, at the one place every outside caller passes,
- * so a caller that forgets to check it cannot send from an opted-out machine
- * (the README promises that nothing is), and nothing a caller passes can skip
- * the check. The one exception is inside this module: the per-run flush reads
- * the status itself (it must, to decide about the first-run notice) and then
- * calls {@link postTelemetryEvent} directly, so its one-second job pays no
- * second config read.
- *
- * Shared by the per-run `CLI_COMMAND_EXECUTED` flush and by `clerk feedback`,
- * whose `CLI_FEEDBACK` event is a second, differently named event sent by the
- * command's own action. It never goes through `finalizeAndSendTelemetry`: the
- * `finalized`/`context` latch there keeps a run to one command event, and the
- * feedback event must not consume or be consumed by it.
+ * Wrap one event in `{ sdk, sdkv }`, print it at debug level (what
+ * `--verbose` shows), and POST it, unless telemetry is off on this machine.
+ * This is `clerk feedback`'s sender; the per-run usage event reads the
+ * opt-out itself, since it also decides the first-run notice, and posts
+ * through {@link postTelemetryEvent}. Resolves to a {@link SendOutcome}
+ * (`loggedFetch` returns 4xx and 5xx without throwing); rejects on a network
+ * failure or an abort, for the caller to place.
  */
 export async function sendTelemetryEvent(
   event: TelemetryEvent,

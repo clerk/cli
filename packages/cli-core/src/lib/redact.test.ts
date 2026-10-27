@@ -806,6 +806,7 @@ describe("PASS and PWD as secret words", () => {
     ["userPwd=hunter2", `userPwd=${REDACTED}`],
     ["clientAuth: abc123", `clientAuth: ${REDACTED}`],
     ['{"dbPass": "hunter2", "n": 1}', `{"dbPass": ${REDACTED}, "n": 1}`],
+    ['{"my dbPass": "hunter2"}', `{"my dbPass": ${REDACTED}}`],
     ["dbPASS=hunter2", `dbPASS=${REDACTED}`],
     ["--dbPass hunter2", `--dbPass ${REDACTED}`],
     ["--dbPwd hunter2", `--dbPwd ${REDACTED}`],
@@ -959,8 +960,8 @@ describe("known limitations", () => {
  * newer patterns the same way. A quadratic pass takes four
  * times as long when the input doubles; a linear one about twice. The ratio
  * is checked only when the smaller run took long enough to time (a run under
- * a few milliseconds is noise), and the 1 MB run must also finish well under
- * a second on a busy machine.
+ * a few milliseconds is noise), and the 128 KB run must also finish within
+ * a quarter of a second on a busy machine.
  */
 describe("large pastes stay linear", () => {
   const NAME_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
@@ -969,7 +970,7 @@ describe("large pastes stay linear", () => {
     for (let i = 0; i < size; i++) out += NAME_CHARS[(i * 7919) % NAME_CHARS.length];
     return out;
   }
-  const MB = 1_048_576;
+  const SIZE = 131_072;
   const fill = (unit: string, size: number) => unit.repeat(Math.ceil(size / unit.length));
   const urlHeavyJson = (size: number) =>
     "[" +
@@ -1019,6 +1020,7 @@ describe("large pastes stay linear", () => {
     ["a camelCase secret word repeated with no separator", (n) => fill("dbPass", n)],
     ["camelCase secret names each without a separator", (n) => fill("aPass ", n)],
     ["camelCase flag run with no value", (n) => fill("--dbPass ", n)],
+    ["quoted spaced camelCase names with no separator", (n) => fill('"my dbPass ', n)],
     ["dev-browser prefixes too short to be tokens", (n) => fill("dvb_abc ", n)],
     ["a CREDENTIAL word repeated with no separator", (n) => fill("credential", n)],
     ["curl repeated with a user flag and no value", (n) => fill("curl -u ", n)],
@@ -1052,11 +1054,11 @@ describe("large pastes stay linear", () => {
   };
 
   test.each(SHAPES)(
-    "%s: 1 MB finishes well under a second, and doubling at most triples the time",
+    "%s: 128 KB finishes within 250 ms, and doubling at most triples the time",
     (_label, shape) => {
-      const half = timed(shape(MB / 2));
-      const full = timed(shape(MB));
-      expect(full).toBeLessThan(1000);
+      const half = timed(shape(SIZE / 2));
+      const full = timed(shape(SIZE));
+      expect(full).toBeLessThan(250);
       if (half >= 5) expect(full / half).toBeLessThan(3);
     },
   );

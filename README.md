@@ -105,16 +105,13 @@ environment signals (OS, install method, terminal), a random machine identifier 
 your workspace and app IDs when a project is linked. It never collects command
 arguments, option values, file paths, or personal data, except the text you choose to
 send with `clerk feedback`, which is scrubbed on a best-effort basis for common secret
-formats, home-directory paths and email addresses before it leaves your machine (`clerk feedback --dry-run` shows
-exactly what would be sent and whether a real run would send it, and sends no report,
-though the run's usual usage event still applies; with telemetry on it may create the
-config directory and the local machine id; with telemetry off it writes no machine id or record, though in
-agent mode the CLI's usual sandbox check may still create the config directory). The first run only shows a disclosure
-notice and sends nothing (CI environments send from the first run), except
+formats, home-directory paths and email addresses before it leaves your machine;
+`clerk feedback --dry-run` shows exactly what would be sent. The first run only shows a
+disclosure notice and sends nothing (CI environments send from the first run), except
 `clerk feedback`, which shows the notice and then sends the report you asked it to send
-and the run's usage event. `clerk --verbose` prints every event before it is sent. Shell completion (`clerk
-completion <shell>` and the `__complete` helper behind Tab) sends nothing at all.
-See https://clerk.com/docs/telemetry for details.
+and the run's usage event. `clerk --verbose` prints every event before it is sent. Shell
+completion (`clerk completion <shell>` and the `__complete` helper behind Tab) sends
+nothing at all. See https://clerk.com/docs/telemetry for details.
 
 Feedback reports are stored in Clerk's internal telemetry warehouse next to usage
 events, readable by Clerk staff with warehouse access. The CLI cannot delete one. To have

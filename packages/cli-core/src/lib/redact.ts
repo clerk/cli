@@ -1,135 +1,37 @@
 /**
  * Client-side scrubbing for the free text `clerk feedback` sends.
  *
- * Scrubbing is best-effort. It catches secrets by their shape: keys and
- * tokens with known prefixes, private key blocks, `Authorization` headers and
- * Bearer or Basic tokens, credentials in URLs, and a value assigned to a
- * secret-looking name on one line (`CLERK_SECRET_KEY=…`, `password: …`,
- * `--token …`), and curl's `-u user:password`. It also replaces email addresses and home-directory paths.
- * It does not understand structure, so it misses values that span lines,
- * values in structured config files (YAML blocks, pretty-printed JSON),
- * passwords with spaces in them, and labels wrapped in Markdown formatting
- * (`**Password**: …`). Never include secrets in a report.
+ * Scrubbing is best-effort and by shape: keys and tokens with known prefixes,
+ * private key blocks, `Authorization` headers and Bearer or Basic tokens,
+ * credentials in URLs, a value assigned to a secret-looking name on one line
+ * (`CLERK_SECRET_KEY=…`, `password: …`, `--token …`), curl's
+ * `-u user:password`, email addresses and home-directory paths. What it
+ * misses, and what it replaces that is not a secret, is listed in
+ * `commands/feedback/README.md`.
  *
- * Every free-text field passes through {@link redactAndCap}: the whole field
- * is scrubbed, then cut to its cap, so a secret is never split into a
- * fragment no pattern recognises. The command refuses a field over its
- * ceiling, and every pass is linear in the size of its input, so the cost of
- * a field is bounded by construction.
+ * Every pass is linear in the size of its input: a failed match attempt
+ * costs work bounded by a constant, or by text the next match consumes, and
+ * no position inside a run is tried as a start. Starts are pinned by a
+ * literal or a lookbehind, a run of name characters is taken atomically, a
+ * quoted value ends on its line, and a URL password is bounded. The timing
+ * tests in `redact.test.ts` run each adversarial shape at two sizes and fail
+ * on super-linear growth.
  *
- * ## The linearity rule
+ * The passes, in order:
+ * 1. Private key blocks: first, because they span lines.
+ * 2. `Authorization`, `Cookie` and `Set-Cookie` headers, and
+ * 3. Bearer and Basic tokens: before pass 4, which would take only `Bearer`.
+ * 4. Name and value, keeping the name.
+ * 5. Known key prefixes: after pass 4, so a value is not counted twice.
+ * 6. Credentials in URLs.
+ * 7. Home directories.
+ * 8. Email addresses: last, for the same reason as pass 5.
  *
- * A match attempt that fails costs work bounded by a constant, or by text
- * that the next successful match consumes, and no position inside a run is
- * tried as a start:
- *
- * - A start is pinned by a literal (`-----BEGIN`, `Authorization`, a key
- *   prefix) or by a lookbehind that refuses a start an earlier one in the
- *   same run has already scanned: inside a run of name characters, at a
- *   second `eyJ` in a run, or after the first of a token's trailing dots.
- * - A run of name characters is taken atomically: a lookahead captures the
- *   whole run and a backreference consumes it, so a later failure cannot make
- *   the engine retry every shorter prefix. The run is tested once for a
- *   secret-looking word.
- * - A quoted value ends on its line; a quote with no partner on its line takes
- *   the rest of the line, so the engine never scans ahead for a partner.
- * - A URL password is bounded ({@link URL_PASSWORD_MAX_LENGTH}), because it
- *   may contain `/`, `:` and `@` and so has no delimiter to stop at.
- * - A private key block with no END line runs to the end of the text in the
- *   same scan, and the words of a BEGIN or END header are bounded.
- *
- * The timing tests in `redact.test.ts` are the backstop: each adversarial
- * shape runs at half a megabyte and at one megabyte, and the larger run must
- * finish in under a second and take less than three times as long as the
- * smaller (linear time about doubles; quadratic time quadruples).
- *
- * ## The passes, in order
- *
- * 1. Private key blocks, to the matching END line or the end of the text, PGP
- *    included. First because they span lines.
- * 2. `Authorization`, `Cookie` and `Set-Cookie` headers, any scheme: the rest of the line, the quoted
- *    value when the header is a JSON field, or up to the closing quote when
- *    the header starts inside a quoted string (`curl -H "Authorization: …"`). Before the name pass, which would
- *    take only the first word (`Bearer`).
- * 3. `Bearer` and `Basic` tokens in prose, with guards that keep the ordinary
- *    words out. Before the name pass so `token: Bearer xyz` loses `xyz`.
- * 4. Name and value, keeping the name: `--flag value` and `--flag=value`
- *    (one shell word), `"name": value` (a JSON field: a quoted value, or an
- *    unquoted one up to `,`, `;` or `}`), and bare `NAME=value` or
- *    `name: value` (a quoted value, or an unquoted one up to the first
- *    whitespace or double quote, so the rest of a one-line log survives). A
- *    name is secret-looking when it contains a secret word (`SECRET`,
- *    `TOKEN`, `PASSWORD`, `PASSWD`, `CREDENTIAL`, `API_KEY`, `PRIVATE_KEY`,
- *    `ENCRYPTION_KEY`, `ACCESS_KEY`, `SIGNING_KEY`, `SESSION_KEY`,
- *    `AUTHORIZATION`, or `AUTH`, `PASS` or `PWD` as a whole
- *    segment, camelCase included (`dbPass`, `clientAuth`); the shell's
- *    `PWD=/path` is left alone) or is
- *    one of the MCP server's spaced names (`api key`, `access token`,
- *    `refresh token`, `auth token`, `client secret`, `secret key`,
- *    `secret access key`). The separator may also be `:=`, `=>`, `==` or
- *    `===`. A value that is a `Bearer` or `Basic` scheme takes
- *    the token after it too. No separator crosses a line break. Then, on a
- *    line that runs `curl`, the value of `-u` or `--user` when it holds a
- *    colon (`user:password`), whole; only on such a line, so
- *    `docker run -u 1000:1000` keeps its ids.
- * 5. Known key prefixes: the MCP server's list, then the CLI's `ak_`
- *    Platform API keys, Clerk M2M (`mt_`) and OAuth access (`oat_`) tokens,
- *    Clerk dev-browser tokens (`dvb_`), and `sk-` keys (OpenAI, Anthropic). After the name
- *    pass so a value already replaced is not counted twice.
- * 6. Credentials in URLs (`scheme://user:password@host`): the credential
- *    goes, scheme and host stay.
- * 7. Home directories: the current user's own home first (ending at any
- *    character that cannot continue a user name), then the generic
- *    `/Users/<name>`, `/home/<name>` and `C:\Users\<name>` forms (also
- *    `C:/Users`, Git Bash's `/c/Users` and WSL's `/mnt/c/Users`, and after
- *    `file://`), whose user name likewise stops at punctuation.
- * 8. Email addresses, last, so an address inside a secret already replaced is
- *    not counted twice.
- *
- * ## Relation to the MCP server's redactor
- *
- * Passes 1, 3 and 5 (its prefix list) are a port of the redactor in Clerk's
- * MCP server, pattern for pattern and in its order, and secrets become the
- * same `[REDACTED]` marker so reports from both read the same. Where this
- * module differs, on purpose:
- *
- * - Its `name: value` pattern replaces the name with the value and stops an
- *   unquoted value at a comma. Pass 4 matches every name on its list (each
- *   contains one of the secret words, or is one of its spaced names), keeps
- *   the name, and stops an unquoted bare value at whitespace, so a `.env`
- *   password containing a comma is not half sent.
- * - Its `Authorization: Bearer|Basic <token>` pattern is replaced by pass 2,
- *   which takes any scheme and the whole value.
- * - Pass 3 puts back a closing quote that belongs to the string around the
- *   credential, so the next JSON field still parses.
- * - Pass 1 also matches PGP headers and a block with no END line, and bounds
- *   the header words.
- * - Its JWT pattern tries every `eyJ` of a run like `-eyJ-eyJ…`, each to the
- *   end of the run, which takes quadratic time; pass 5's tries only the
- *   first, which finds the same JWTs.
- *
- * ## Known limits, each pinned by a test
- *
- * - What the scrubber does not understand: a value that spans lines, a value
- *   in a YAML block or nested JSON under a secret-looking key, a password
- *   with spaces (`password: correct horse` keeps `horse`), a password with a
- *   double quote in it, a label wrapped in Markdown formatting, and a
- *   password attached to a short flag (`mysql -pS3cret`).
- * - Two truncated quoted values on one line: the second's opening quote
- *   closes the first, and the second value survives.
- * - A URL password longer than {@link URL_PASSWORD_MAX_LENGTH} characters
- *   keeps its username; the email pass still removes the password.
- * - A home directory whose user name contains a space keeps the second word.
- * - Over-matches in the safe direction: any name containing `TOKEN`
- *   (`max_tokens=4096`) or `CREDENTIAL` (fetch's `credentials: "include"`,
- *   git's `credential.helper=store`), a `-u x:y` later on a line that runs
- *   curl even when another command owns it (`curl … | docker run -u 1:1`),
- *   a user segment in a URL with no password
- *   (`https://git@github.com/x`), a URL with a port and an email in its query
- *   string, and prose naming the `Authorization` header, which loses the rest
- *   of its line.
- * - `redactions` counts replacements, one per secret for the common shapes; it
- *   is a "read this report carefully" signal, not a tally.
+ * Passes 1, 3 and 5 port the MCP server's redactor, with its `[REDACTED]`
+ * marker, so reports from both read the same. Pass 2 replaces its
+ * Authorization pattern (any scheme, the whole value), and pass 4 keeps the
+ * name and stops an unquoted value at whitespace rather than a comma, so a
+ * `.env` password with a comma is not half sent.
  */
 
 import { homedir } from "node:os";
@@ -147,7 +49,7 @@ export const URL_PASSWORD_MAX_LENGTH = 256;
 export type Redaction = {
   /** The scrubbed text. */
   text: string;
-  /** How many replacements were made, across every kind of pattern. Approximate; see the module comment. */
+  /** How many replacements were made. Approximate: one per secret for the common shapes; a signal to read the report carefully, not a tally. */
   redactions: number;
 };
 
@@ -292,11 +194,11 @@ const secretWord = (joiner: string): string =>
 /**
  * A run of name characters, taken atomically: the lookahead captures the
  * whole run into `group`, and the caller's backreference consumes it, so the
- * engine never retries shorter prefixes of the run. The run must contain a
- * secret-looking word, tested once by the first lookahead.
+ * engine never retries shorter prefixes of the run. The run must contain
+ * `word`, tested once by the first lookahead.
  */
-const secretName = (chars: string, joiner: string, group: string): string =>
-  String.raw`(?=${chars}*?${secretWord(joiner)})(?=(?<${group}>${chars}+))`;
+const secretName = (chars: string, word: string, group: string): string =>
+  String.raw`(?=${chars}*?${word})(?=(?<${group}>${chars}+))`;
 
 /** The MCP server's names that may be written with a space, as fixed phrases. */
 const SPACED_SECRET_NAME = String.raw`(?:api key|access token|refresh token|auth token|client secret|secret (?:access )?key)(?![A-Za-z0-9_.-])`;
@@ -331,24 +233,33 @@ const ASSIGN = String.raw`[ \t]*(?:===|==|=>|:=|[:=])[ \t]*`;
 /**
  * The three name shapes, in one left-to-right pass so none can take part of
  * another's value. The leading lookbehind lets a match start only at the
- * beginning of a run of name characters.
+ * beginning of a run of name characters. `word` is the secret-word test for
+ * a name, given what may join the halves of `API KEY`.
  *
  * - `--flag value` and `--flag=value`: the value is the next shell word, and
  *   cannot itself be a flag (`--token --other` is left alone). A flag name
  *   may contain `_` as well as `-` (`--api_key`).
  * - `"name": value`, a JSON field whose quotes may be escaped.
  * - A bare name, `NAME=value` or `name: value`, with or without `export`
- *   before it.
+ *   before it, or one of the `spaced` names.
  */
-const NAME_VALUE = new RegExp(
-  String.raw`(?<![A-Za-z0-9_.-])(?:` +
-    String.raw`(?=--)${secretName("[A-Za-z0-9_-]", "[_-]", "flag")}\k<flag>(?<flagSep>=|[ \t]+)(?!-)(?<flagValue>${SCHEME_VALUE}|${SHELL_WORD})` +
-    "|" +
-    String.raw`(?<quote>\\?["'])${secretName("[A-Za-z0-9_. -]", "[_ -]", "jsonName")}\k<jsonName>\k<quote>(?<jsonSep>${ASSIGN})(?<jsonValue>${JSON_VALUE})` +
-    "|" +
-    String.raw`(?:(?<spaced>${SPACED_SECRET_NAME})|${secretName("[A-Za-z0-9_.-]", "[_-]", "bare")}\k<bare>)(?<bareSep>${ASSIGN})(?<bareValue>${BARE_VALUE})` +
-    ")",
+function nameValuePattern(word: (joiner: string) => string, flags: string, spaced = ""): RegExp {
+  return new RegExp(
+    String.raw`(?<![A-Za-z0-9_.-])(?:` +
+      String.raw`(?=--)${secretName("[A-Za-z0-9_-]", word("[_-]"), "flag")}\k<flag>(?<flagSep>=|[ \t]+)(?!-)(?<flagValue>${SCHEME_VALUE}|${SHELL_WORD})` +
+      "|" +
+      String.raw`(?<quote>\\?["'])${secretName("[A-Za-z0-9_. -]", word("[_ -]"), "jsonName")}\k<jsonName>\k<quote>(?<jsonSep>${ASSIGN})(?<jsonValue>${JSON_VALUE})` +
+      "|" +
+      String.raw`(?:${spaced}${secretName("[A-Za-z0-9_.-]", word("[_-]"), "bare")}\k<bare>)(?<bareSep>${ASSIGN})(?<bareValue>${BARE_VALUE})` +
+      ")",
+    flags,
+  );
+}
+
+const NAME_VALUE = nameValuePattern(
+  secretWord,
   "gi",
+  String.raw`(?<spaced>${SPACED_SECRET_NAME})|`,
 );
 
 /**
@@ -362,8 +273,6 @@ const NAME_VALUE = new RegExp(
  * support them, and an unsupported one would fail at load.
  */
 const CAMEL_SECRET_WORD = String.raw`(?<=[a-z0-9])(?:(?:Pass|Pwd|Auth)(?![a-z])|(?:PASS|PWD|AUTH)(?![A-Za-z]))`;
-const camelSecretName = (chars: string, group: string): string =>
-  String.raw`(?=${chars}*?${CAMEL_SECRET_WORD})(?=(?<${group}>${chars}+))`;
 
 /**
  * A line that runs curl, from the word `curl` to the end of the line. The
@@ -384,20 +293,10 @@ const CURL_USER = new RegExp(
 );
 
 /**
- * Pass 4, second half: a camelCase secret name and its value, as a flag, a
- * JSON field or a bare name, with the same separators and value rules as
- * {@link NAME_VALUE}. A value already replaced by the first half is left alone.
+ * Pass 4, second half: the same shapes with a camelCase secret name. A value
+ * already replaced by the first half is left alone.
  */
-const CAMEL_NAME_VALUE = new RegExp(
-  String.raw`(?<![A-Za-z0-9_.-])(?:` +
-    String.raw`(?=--)${camelSecretName("[A-Za-z0-9_-]", "flag")}\k<flag>(?<flagSep>=|[ \t]+)(?!-)(?<flagValue>${SCHEME_VALUE}|${SHELL_WORD})` +
-    "|" +
-    String.raw`(?<quote>\\?["'])${camelSecretName("[A-Za-z0-9_.-]", "jsonName")}\k<jsonName>\k<quote>(?<jsonSep>${ASSIGN})(?<jsonValue>${JSON_VALUE})` +
-    "|" +
-    String.raw`${camelSecretName("[A-Za-z0-9_.-]", "bare")}\k<bare>(?<bareSep>${ASSIGN})(?<bareValue>${BARE_VALUE})` +
-    ")",
-  "g",
-);
+const CAMEL_NAME_VALUE = nameValuePattern(() => CAMEL_SECRET_WORD, "g");
 
 type NameValueGroups = {
   flag?: string;
@@ -415,7 +314,12 @@ type NameValueGroups = {
 
 // ── Pass 5: known key prefixes ──────────────────────────────────────────────
 
-/** Port of the MCP server's prefix patterns, in its order. */
+/**
+ * Port of the MCP server's prefix patterns, in its order. The JWT pattern's
+ * lookbehind is the one change: upstream tries every `eyJ` of a run like
+ * `-eyJ-eyJ…` to the end of the run, which is quadratic; this tries only the
+ * first, which finds the same JWTs.
+ */
 const UPSTREAM_PREFIX_PATTERNS = [
   /\b(?:sk|pk|rk)_(?:test|live)_[A-Za-z0-9_-]+\b/gi,
   /\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}\b/gi,

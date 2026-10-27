@@ -20,7 +20,7 @@ clerk feedback --input-json @report.json    # long text from a file; keys match 
 | `--attempted`  | yes      | What you ran and what you expected (4,000)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
 | `--issue`      | yes      | What went wrong or was confusing (4,000)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `--outcome`    | yes      | `blocked`, `worked_around` or `succeeded_with_friction`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| `--command`    | no       | The CLI command involved, as typed after `clerk` (`users list`). A leading `clerk` is fine (also `npx -y clerk@latest`, `bunx clerk@latest` or `pnpm dlx clerk@latest`), and so is a whole pasted command line: global flags are skipped wherever they come, and so are a group's own (`--mode agent users list`, `users --mode agent list` and `users --app app_123 list` are all `users list`; `--version`, which runs no command, is an error), and arguments and flags after the command are dropped and never sent. The result is the spelling usage events record, so `deploy` lands as `deploy run` and `open users` as `open dashboard`; a bare group that runs nothing itself (`auth`) is an error naming its subcommands. `help users` is accepted as typed, for any existing command, since `clerk help` records no usage event of its own                                                                       |
+| `--command`    | no       | The CLI command involved, as typed after `clerk` (`users list`); a leading `clerk` is fine. Arguments and flags after the command are dropped and never sent. The result is the spelling usage events record, so `deploy` lands as `deploy run` and `open users` as `open dashboard`. A bare group that runs nothing itself (`auth`) is an error naming its subcommands. A runner prefix (`npx clerk users list`), a flag before the command is complete (`--mode agent users list`, `deploy --verbose status`) or `help users` is an error too                                                                                                                                                                                                                                                                                                                                                                             |
 | `--error-text` | no       | The exact error you saw (4,000)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `--error-code` | no       | The code from the error output, e.g. `not_linked`: letters, digits and underscores. It is sent in lowercase, so `NOT_LINKED` and `not_linked` are the same code for the rate limit                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
 | `--suggestion` | no       | What would have helped (2,000)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
@@ -105,12 +105,19 @@ punctuation after the user name stays (`(/Users/bob)` becomes `(~)`).
 
 It does not understand structure, so it misses: values that span several lines; values in
 structured config files such as YAML blocks and pretty-printed or nested JSON; passwords
-with spaces in them (`password: correct horse` keeps `horse`); a password attached to a
-short flag (`mysql -pS3cret`); and Markdown formatting around a label (`**Password**: x`).
-It also replaces some values that are not secrets, the safe direction: any name containing
-TOKEN or CREDENTIAL loses its value (`max_tokens=4096`, fetch's `credentials: "include"`,
-git's `credential.helper=store`). **Never include secrets, API keys or personal data
-about end users.** The scrubber and its known limits are documented in `src/lib/redact.ts`.
+with spaces in them (`password: correct horse` keeps `horse`) or a double quote in them; a
+password attached to a short flag (`mysql -pS3cret`); and Markdown formatting around a
+label (`**Password**: x`). It also keeps the second of two truncated quoted values on one
+line, the username of a URL whose password is over 256 characters (the password still
+goes), and the second word of a home directory whose user name has a space. It replaces
+some values that are not secrets, the safe direction: any name containing TOKEN or
+CREDENTIAL loses its value (`max_tokens=4096`, fetch's `credentials: "include"`, git's
+`credential.helper=store`), and so do a `-u x:y` later on a line that runs curl
+(`curl … | docker run -u 1:1`), the user in a URL with no password
+(`https://git@github.com/x`), a URL with a port and an email address in its query string,
+and the rest of a line of prose that names the `Authorization` header. **Never include
+secrets, API keys or personal data about end users.** How the scrubber works is documented
+in `src/lib/redact.ts`.
 Because it sees the whole field, a secret that runs past the cap is still matched whole,
 and the cap is applied only afterwards.
 
@@ -145,9 +152,8 @@ then, no preview is shown, and no machine id is created. The opt-out is read onc
 just before the first-run notice, so an opt-out that landed during the confirmation
 neither posts nor uses up the notice.
 
-The opt-out is also enforced inside the shared telemetry sender, at the moment of the POST,
-so no telemetry event, including a feedback report, leaves an opted-out machine. The
-per-run usage event uses the same sender.
+The opt-out is read once more at the POST, so a report never leaves an opted-out machine.
+The per-run usage event checks the opt-out itself before it posts.
 
 ## Output
 
@@ -169,10 +175,10 @@ first-run notice could not be recorded), the connection was never made (refused,
 that does not resolve, no network, a sandbox blocking it, a server certificate the CLI
 rejected), or the endpoint refused the
 report with a 4xx answer. The CLI decides that a connection was never made only from the
-structured error code, never from the error message or the URL. Ctrl-C during the send is not a result: the command follows the CLI's
-interrupt path and exits 130 without printing one. A send interrupted after the request
-went out is usually counted against the rate limit first, but the CLI's interrupt handler
-can exit before that record is written.
+structured error code, never from the error message or the URL. Ctrl-C exits 130 through
+the CLI's interrupt path. If the request was already out, the command first prints the
+`send_failed` result with the report id, then records the send against the rate limit,
+which the interrupt handler can cut short.
 
 Agent-mode `--dry-run` prints the event a real run would post, with whether it would post it now:
 
@@ -239,5 +245,5 @@ saw an error attach its code to the report without the CLI keeping any per-run r
 None. The command POSTs one event to the telemetry endpoint
 (`CLERK_TELEMETRY_URL`, default `https://clerk-telemetry.com/v1/event`) with a 5-second
 deadline, reads and writes the local config file (machine id, notice flag), and reads and writes
-the rate-limit file in the cache directory. A dry run sends nothing and never writes the
+the rate-limit file in the cache directory. A dry run sends no report and never writes the
 rate-limit file; what it may write is listed under `--dry-run` above.
