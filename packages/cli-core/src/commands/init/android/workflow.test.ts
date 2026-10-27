@@ -3,12 +3,22 @@ import { chmod, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises
 import { join } from "node:path";
 import { CLERK_ANDROID_MINIMUM_VERSION } from "./sdk.ts";
 import { IdentityRequired } from "./identity.ts";
-import { applySetup, describePreview, prepareSetup, type SetupOptions } from "./workflow.ts";
+import {
+  applySetup,
+  describePreview,
+  GoogleCredentialsRequired,
+  prepareSetup,
+  type SetupOptions,
+} from "./workflow.ts";
 import {
   createAndroidFixture,
   DEBUG_FINGERPRINT,
+  DEBUG_SHA1,
+  FAKE_GOOGLE_CLIENT_ID,
+  FAKE_GOOGLE_CLIENT_SECRET,
   FIXTURE_KEY,
   RELEASE_FINGERPRINT,
+  fakeGoogleAPI,
   fakeNativeAPI,
   keystore,
 } from "./test-helpers.ts";
@@ -343,5 +353,166 @@ describe("Android setup workflow", () => {
       status: "requires-user-intent",
       requiresUserIntent: true,
     });
+  });
+});
+
+describe("native Sign in with Google", () => {
+  const googleCredentials = {
+    clientId: FAKE_GOOGLE_CLIENT_ID,
+    clientSecret: FAKE_GOOGLE_CLIENT_SECRET,
+  };
+
+  test("enables Google with the Web client after registration, and reports the Google Cloud steps", async () => {
+    const root = await fixture();
+    const { api, state } = fakeNativeAPI();
+    const google = fakeGoogleAPI({ enabled: false });
+    const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+    const preview = await prepareSetup(
+      setup(root, { signInWithGoogle: true, googleCredentials }),
+      deps,
+    );
+    expect(preview.google).toMatchObject({ status: "ready", credentials: "required" });
+    expect(preview.googleCloudSteps?.join(" ")).toContain(DEBUG_SHA1);
+    const described = JSON.stringify(describePreview(preview));
+    expect(described).not.toContain(FAKE_GOOGLE_CLIENT_SECRET);
+    expect(described).toContain("googleCloudSteps");
+    const result = await applySetup(preview, deps);
+    expect(result).toMatchObject({
+      status: "requires-build-and-verification",
+      remote: "verified",
+      google: "verified",
+    });
+    expect(google.state.connection).toMatchObject({
+      enabled: true,
+      authenticatable: true,
+      client_id: FAKE_GOOGLE_CLIENT_ID,
+    });
+    expect(state.events).toEqual(["register", "enable-native"]);
+    expect(google.state.events).toEqual(["google-dry-run", "google-apply"]);
+    expect(result.handoff.completed.map((item) => item.id)).toContain("native-google");
+    expect(
+      result.handoff.tasks.find((task) => task.id === "google-cloud-oauth-clients"),
+    ).toMatchObject({ status: "requires-user-action" });
+    expect(JSON.stringify(result)).not.toContain(FAKE_GOOGLE_CLIENT_SECRET);
+  });
+
+  test("asks for the Web client when the connection has none and nothing was passed", async () => {
+    const root = await fixture();
+    const { api } = fakeNativeAPI();
+    const google = fakeGoogleAPI({ enabled: true, client_id: "" });
+    const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+    const error = await prepareSetup(setup(root, { signInWithGoogle: true }), deps).catch(
+      (e: unknown) => e,
+    );
+    expect(error).toBeInstanceOf(GoogleCredentialsRequired);
+    expect((error as GoogleCredentialsRequired).steps.join(" ")).toContain("com.example.myapp");
+    expect((error as GoogleCredentialsRequired).frontendHost).toBe("fixture.clerk.accounts.dev");
+  });
+
+  test("keeps an existing Web client and only enables the connection", async () => {
+    const root = await fixture();
+    const { api } = fakeNativeAPI();
+    const google = fakeGoogleAPI({
+      enabled: false,
+      client_id: FAKE_GOOGLE_CLIENT_ID,
+      client_secret: "KEEP",
+    });
+    const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+    const preview = await prepareSetup(setup(root, { signInWithGoogle: true }), deps);
+    expect(preview.google?.credentials).toBe("satisfied");
+    expect((await applySetup(preview, deps)).google).toBe("verified");
+    expect(google.state.patches).toEqual([{ enabled: true, authenticatable: true }]);
+  });
+
+  test("a satisfied connection is reported and left alone", async () => {
+    const root = await fixture();
+    const { api } = fakeNativeAPI();
+    const google = fakeGoogleAPI({ enabled: true, client_id: FAKE_GOOGLE_CLIENT_ID });
+    const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+    const result = await applySetup(
+      await prepareSetup(setup(root, { signInWithGoogle: true }), deps),
+      deps,
+    );
+    expect(result.google).toBe("verified");
+    expect(google.state.events).toEqual([]);
+  });
+
+  test("warns when Google is on without a Web client and wasn't requested", async () => {
+    const root = await fixture();
+    const { api } = fakeNativeAPI();
+    const google = fakeGoogleAPI({ enabled: true });
+    const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+    const preview = await prepareSetup(
+      setup(root, { checkGoogleConnection: true, signInWithGoogle: false }),
+      deps,
+    );
+    expect(preview.google).toBeUndefined();
+    expect(preview.googleWarning).toContain("declined");
+    const result = await applySetup(preview, deps);
+    expect(result.status).toBe("manual-steps-required");
+    expect(result.handoff.remaining.map((item) => item.id)).toContain("google-provider-review");
+    expect(google.state.events).toEqual([]);
+    const silent = await prepareSetup(setup(root, { checkGoogleConnection: true }), {
+      api,
+      googleAPI: fakeGoogleAPI({ enabled: false }).api,
+      debugKeystore: keystore(),
+    });
+    expect(silent.googleWarning).toBeUndefined();
+  });
+
+  test("a blocked connection stops before any write", async () => {
+    const root = await fixture();
+    const { api, state } = fakeNativeAPI();
+    const google = fakeGoogleAPI({ enabled: true, authenticatable: false });
+    await expect(
+      prepareSetup(setup(root, { signInWithGoogle: true, googleCredentials }), {
+        api,
+        googleAPI: google.api,
+        debugKeystore: keystore(),
+      }),
+    ).rejects.toThrow("needs review in Clerk");
+    expect(state.events).toEqual([]);
+    expect(await Bun.file(join(root, "app/src/main/res/values/clerk.xml")).exists()).toBe(false);
+  });
+
+  test("a failed Google write leaves registration verified and reports the Google step", async () => {
+    const root = await fixture();
+    const { api } = fakeNativeAPI();
+    const google = fakeGoogleAPI({ enabled: false });
+    google.state.failPatch = true;
+    const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+    const result = await applySetup(
+      await prepareSetup(setup(root, { signInWithGoogle: true, googleCredentials }), deps),
+      deps,
+    );
+    expect(result).toMatchObject({
+      status: "incomplete",
+      remote: "verified",
+      google: "incomplete",
+    });
+    expect(result.message).toContain("Sign in with Google was not configured");
+  });
+
+  test("a connection changed after the preview is not written", async () => {
+    const root = await fixture();
+    const { api } = fakeNativeAPI();
+    const google = fakeGoogleAPI({ enabled: false });
+    const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+    const preview = await prepareSetup(
+      setup(root, { signInWithGoogle: true, googleCredentials }),
+      deps,
+    );
+    google.state.connection = { enabled: false, authenticatable: false };
+    const result = await applySetup(preview, deps);
+    expect(result.google).toBe("incomplete");
+    expect(result.message).toContain("changed after the preview");
+    expect(google.state.events).toEqual([]);
+  });
+
+  test("Sign in with Google needs a chosen application", async () => {
+    const root = await fixture();
+    await expect(
+      prepareSetup(setup(root, { remote: undefined, signInWithGoogle: true }), {}),
+    ).rejects.toThrow("explicitly selected Clerk application");
   });
 });
