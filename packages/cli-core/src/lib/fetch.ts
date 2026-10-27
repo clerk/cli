@@ -29,7 +29,7 @@ function resolveUserAgent(): Promise<string> {
   // The AIAgent segment exists purely for analytics classification, so it
   // honors the telemetry opt-outs (env vars and `clerk telemetry disable`)
   // and, like the events, stays absent until the disclosure notice has been
-  // shown — CI exempt, matching maybeShowTelemetryNotice.
+  // shown — CI exempt, matching showTelemetryNoticeOnce.
   userAgentPromise ??= (async () => {
     const beforeDisclosure =
       !process.env.CI && !(await getTelemetryNoticeShown().catch(() => false));

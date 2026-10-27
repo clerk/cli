@@ -17,6 +17,7 @@ import {
   ensureMachineUuid,
   getTelemetryDisabled,
   markTelemetryNoticeShown,
+  peekMachineUuid,
   resolveProfile,
 } from "./config.ts";
 import {
@@ -33,7 +34,7 @@ import { getCurrentEnvName } from "./environment.ts";
 import { ApiError, CliError, EXIT_CODE, UserAbortError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
-import { getMode } from "../mode.ts";
+import { getMode, type Mode } from "../mode.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 /**
@@ -420,72 +421,209 @@ async function buildAndSend(
 ): Promise<void> {
   // Re-checked here (not just at start) so `clerk telemetry disable` itself
   // sees the freshly persisted opt-out and sends nothing.
-  if (!(await getTelemetryStatus()).enabled) return;
+  const telemetryStatus = await getTelemetryStatus();
+  if (!telemetryStatus.enabled) return;
 
   // The notice tells the user "Nothing has been sent during this run" — honor it.
-  if (await maybeShowTelemetryNotice()) return;
+  if (await showTelemetryNoticeOnce()) return;
 
-  const machineUuid = await ensureMachineUuid();
-  const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
+  const envelope = await buildTelemetryEnvelope();
 
-  const event = {
-    sdk: "clerk-cli",
-    sdkv: CURRENT_VERSION,
-    event: "CLI_COMMAND_EXECUTED",
-    payload: {
-      command: current.command,
-      flags: current.flags,
-      outcome: result.outcome,
-      exit_code: result.exitCode,
-      error_code: result.errorCode ?? null,
-      // `pause_step` and `components` are deploy's; null on other commands.
-      stage: current.stage,
-      pause_step: current.pauseStep,
-      components: current.components,
-      duration_ms: Date.now() - current.startedAt,
-      machine_uuid: machineUuid,
-      install_method: detectInstallMethod(process.env, process.execPath),
-      ai_agent: detectAiAgent(process.env),
-      terminal_program: detectTerminalProgram(process.env),
-      mode: getMode(),
-      os: process.platform,
-      arch: process.arch,
-      ci: Boolean(process.env.CI),
-      in_tmux: detectInTmux(process.env),
-      in_screen: detectInScreen(process.env),
-      env: getCurrentEnvName(),
-      workspace_id: resolved?.profile.workspaceId ?? null,
-      app_id: resolved?.profile.appId ?? null,
+  // The internal post step, not the exported sender: the opt-out was read
+  // just above, and this whole job runs under a one-second deadline.
+  await postTelemetryEvent(
+    {
+      event: "CLI_COMMAND_EXECUTED",
+      payload: {
+        command: current.command,
+        flags: current.flags,
+        outcome: result.outcome,
+        exit_code: result.exitCode,
+        error_code: result.errorCode ?? null,
+        // `pause_step` and `components` are deploy's; null on other commands.
+        stage: current.stage,
+        pause_step: current.pauseStep,
+        components: current.components,
+        duration_ms: Date.now() - current.startedAt,
+        ...envelope,
+      },
     },
-  };
-
-  log.debug(`telemetry: event ${JSON.stringify(event)}`);
-
-  const url = process.env.CLERK_TELEMETRY_URL ?? DEFAULT_TELEMETRY_ENDPOINT;
-  await loggedFetch(url, {
-    tag: "telemetry",
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ events: [event] }),
-    signal,
-    bestEffort: true,
-    // Only the shutdown flush reports the interrupt, so only it may outlive
-    // one. A normal end-of-command flush must stay interruptible: bypassing
-    // the signal there would let a Ctrl-C mid-POST record the run's success
-    // event. Being aborted is how it hands the run to the shutdown flush,
-    // which finds the context still in place and re-sends it as an abort.
-    ignoreInterrupt: outlivesInterrupt,
-  });
+    {
+      signal,
+      // Only the shutdown flush reports the interrupt, so only it may outlive
+      // one. A normal end-of-command flush must stay interruptible: bypassing
+      // the signal there would let a Ctrl-C mid-POST record the run's success
+      // event. Being aborted is how it hands the run to the shutdown flush,
+      // which finds the context still in place and re-sends it as an abort.
+      ignoreInterrupt: outlivesInterrupt,
+    },
+  );
 }
 
 /**
- * One-time stderr disclosure for humans and agents alike. Returns true when
- * the notice was just shown — that run sends nothing, so disclosure always
- * precedes a machine's first event. CI is exempt from both the notice and
- * the grace run: ephemeral CI machines are always on their "first run", so
- * a grace there would mean CI never sends at all.
+ * The fields that describe the machine and the session, carried by every
+ * event the CLI sends. Keys are warehouse contracts (see `env-signals.ts`).
  */
-async function maybeShowTelemetryNotice(): Promise<boolean> {
+export type TelemetryEnvelope = {
+  machine_uuid: string;
+  install_method: string;
+  ai_agent: string;
+  terminal_program: string;
+  mode: Mode;
+  os: string;
+  arch: string;
+  ci: boolean;
+  in_tmux: boolean;
+  in_screen: boolean;
+  env: string;
+  workspace_id: string | null;
+  app_id: string | null;
+};
+
+/** {@link TelemetryEnvelope} for a preview on a machine that may have no id yet. */
+export type TelemetryEnvelopePreview = Omit<TelemetryEnvelope, "machine_uuid"> & {
+  machine_uuid: string | null;
+};
+
+/**
+ * Read the envelope fields. Creates the machine id on a machine that has
+ * none, so a caller that only previews an event still writes the config file;
+ * a preview that must not do that uses {@link peekTelemetryEnvelope}.
+ */
+export async function buildTelemetryEnvelope(): Promise<TelemetryEnvelope> {
+  return envelopeWith(await ensureMachineUuid());
+}
+
+/**
+ * The envelope with the machine id this machine already has; never creates
+ * one. The id is null when the machine has none, or when the config file
+ * cannot be read: this is for a preview, which must always be able to show
+ * something.
+ */
+export async function peekTelemetryEnvelope(): Promise<TelemetryEnvelopePreview> {
+  return envelopeWith(await peekMachineUuid().catch(() => null));
+}
+
+async function envelopeWith<Id extends string | null>(
+  machineUuid: Id,
+): Promise<Omit<TelemetryEnvelope, "machine_uuid"> & { machine_uuid: Id }> {
+  const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
+  return {
+    machine_uuid: machineUuid,
+    install_method: detectInstallMethod(process.env, process.execPath),
+    ai_agent: detectAiAgent(process.env),
+    terminal_program: detectTerminalProgram(process.env),
+    mode: getMode(),
+    os: process.platform,
+    arch: process.arch,
+    ci: Boolean(process.env.CI),
+    in_tmux: detectInTmux(process.env),
+    in_screen: detectInScreen(process.env),
+    env: getCurrentEnvName(),
+    workspace_id: resolved?.profile.workspaceId ?? null,
+    app_id: resolved?.profile.appId ?? null,
+  };
+}
+
+export type TelemetryEvent = {
+  event: string;
+  payload: Record<string, unknown>;
+};
+
+/** An event as it is posted: wrapped with the sender name and the CLI version. */
+export type PostedTelemetryEvent<E extends TelemetryEvent = TelemetryEvent> = {
+  sdk: "clerk-cli";
+  sdkv: string;
+} & E;
+
+/** Wrap an event exactly as {@link sendTelemetryEvent} posts it, so a preview can show the same object. */
+export function asPostedTelemetryEvent<E extends TelemetryEvent>(
+  event: E,
+): PostedTelemetryEvent<E> {
+  return { sdk: "clerk-cli", sdkv: CURRENT_VERSION, ...event };
+}
+
+/**
+ * `accepted`: the endpoint answered 2xx. `refused`: it answered 4xx, refusing
+ * the event itself, so the event was not stored. `rejected`: it answered
+ * anything else (a 5xx), which may have come after the event was stored.
+ * `disabled`: telemetry is off on this machine, so nothing was sent.
+ */
+export type SendOutcome = "accepted" | "refused" | "rejected" | "disabled";
+
+/**
+ * Wrap one event in `{ sdk, sdkv }`, print it at debug level (this is what
+ * `--verbose` shows, and the README promises it for every event), and POST it
+ * to the telemetry endpoint. Resolves to a {@link SendOutcome}
+ * (`loggedFetch` returns 4xx and 5xx without throwing). Rejects on a network
+ * failure or an abort: the caller decides what that means, since the
+ * command-event flush keeps its context for the shutdown flush while the
+ * feedback command reports the failure to the user.
+ *
+ * The opt-out is enforced here, at the one place every outside caller passes,
+ * so a caller that forgets to check it cannot send from an opted-out machine
+ * (the README promises that nothing is), and nothing a caller passes can skip
+ * the check. The one exception is inside this module: the per-run flush reads
+ * the status itself (it must, to decide about the first-run notice) and then
+ * calls {@link postTelemetryEvent} directly, so its one-second job pays no
+ * second config read.
+ *
+ * Shared by the per-run `CLI_COMMAND_EXECUTED` flush and by `clerk feedback`,
+ * whose `CLI_FEEDBACK` event is a second, differently named event sent by the
+ * command's own action. It never goes through `finalizeAndSendTelemetry`: the
+ * `finalized`/`context` latch there keeps a run to one command event, and the
+ * feedback event must not consume or be consumed by it.
+ */
+export async function sendTelemetryEvent(
+  event: TelemetryEvent,
+  options: { signal: AbortSignal; ignoreInterrupt?: boolean; onPost?: () => void },
+): Promise<SendOutcome> {
+  if (!(await getTelemetryStatus()).enabled) return "disabled";
+  // Tells the caller the opt-out check passed and the request is being made,
+  // which a rejection alone cannot: `clerk feedback` prints the report id
+  // only when a POST was attempted.
+  options.onPost?.();
+  return postTelemetryEvent(event, options);
+}
+
+/** The POST itself, with no opt-out check: only for a caller in this module that has just made one. */
+async function postTelemetryEvent(
+  event: TelemetryEvent,
+  options: { signal: AbortSignal; ignoreInterrupt?: boolean },
+): Promise<Exclude<SendOutcome, "disabled">> {
+  const wrapped = asPostedTelemetryEvent(event);
+  log.debug(`telemetry: event ${JSON.stringify(wrapped)}`);
+
+  const url = process.env.CLERK_TELEMETRY_URL ?? DEFAULT_TELEMETRY_ENDPOINT;
+  const response = await loggedFetch(url, {
+    tag: "telemetry",
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ events: [wrapped] }),
+    signal: options.signal,
+    bestEffort: true,
+    ignoreInterrupt: options.ignoreInterrupt ?? false,
+  });
+  if (response.ok) return "accepted";
+  return response.status >= 400 && response.status < 500 ? "refused" : "rejected";
+}
+
+const TELEMETRY_NOTICE_LAST_LINE = "Nothing has been sent during this run.";
+
+/**
+ * One-time stderr disclosure for humans and agents alike. Returns true when
+ * the notice was just shown — on the command-event path that run sends
+ * nothing, so disclosure always precedes a machine's first event. CI is exempt
+ * from both the notice and the grace run: ephemeral CI machines are always on
+ * their "first run", so a grace there would mean CI never sends at all.
+ *
+ * `clerk feedback` is the one caller that sends on the run that shows the
+ * notice, because that send is explicit; it passes its own `lastLine` saying
+ * what the run sends, so the notice never claims a silence that is not true.
+ */
+export async function showTelemetryNoticeOnce(
+  lastLine: string = TELEMETRY_NOTICE_LAST_LINE,
+): Promise<boolean> {
   if (process.env.CI) return false;
   if (!(await markTelemetryNoticeShown())) return false;
   log.blank();
@@ -496,7 +634,7 @@ async function maybeShowTelemetryNotice(): Promise<boolean> {
     "duration, outcome, the step a multi-step command reached, a random machine identifier —",
   );
   log.info("and your workspace and app IDs when a project is linked.");
-  log.info("Nothing has been sent during this run.");
+  log.info(lastLine);
   log.info("Opt out: `clerk telemetry disable` — details: https://clerk.com/docs/telemetry");
   log.blank();
   return true;
