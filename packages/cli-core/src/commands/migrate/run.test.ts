@@ -1421,7 +1421,7 @@ describe("run", () => {
       await run({ ...baseOptions, dryRun: true });
 
       expect(captured.err).toContain(
-        "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though never verified)",
+        "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)",
       );
       expect(captured.err).toContain(
         `clerk config patch --app APP_ID --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
