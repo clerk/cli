@@ -167,7 +167,7 @@ describe("clerk init for Android", () => {
     expect(JSON.parse(captured.out).handoff.context.module).toBe("tv");
   });
 
-  test("a registration without this machine's fingerprint stops with the Dashboard remedy", async () => {
+  test("a registration without this machine's fingerprint gets local setup and a manual remote side", async () => {
     const f = await fixture();
     f.state.registrations.push({
       object: "android_application",
@@ -176,10 +176,22 @@ describe("clerk init for Android", () => {
       package_name: "com.example.myapp",
       fingerprints: [RELEASE_FINGERPRINT],
     });
-    await expect(
-      runAndroidInit({ root: f.root, agent: true, json: true }, "app_test", f.dependencies),
-    ).rejects.toThrow("Native Applications page");
-    expect(captured.out).toBe("");
+    await runAndroidInit({ root: f.root, agent: true, json: true }, "app_test", f.dependencies);
+    const result = JSON.parse(captured.out);
+    expect(result).toMatchObject({
+      status: "manual-steps-required",
+      local: "updated",
+      remote: "manual",
+    });
+    expect(result.message).toContain("Native Applications page");
+    expect(result.handoff.remaining.map((item: { id: string }) => item.id)).toContain(
+      "native-registration",
+    );
+    captured.clear();
+    spies.push(spyOn(spinner, "outro").mockResolvedValue(undefined));
+    await runAndroidInit({ root: f.root, agent: false, yes: true }, "app_test", f.dependencies);
+    expect(captured.err).toContain("Native Applications page");
+    expect(captured.err).toContain(DEBUG_FINGERPRINT);
   });
 
   test("an incomplete registration fails the command after writing local setup", async () => {

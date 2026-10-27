@@ -222,3 +222,64 @@ export function insertIntoBlock(source: string, block: Block, lines: string[]): 
   const insertion = lines.map((line) => `\n${indent}${line}`).join("");
   return source.slice(0, block.open + 1) + insertion + source.slice(block.open + 1);
 }
+
+export interface SettingsScript {
+  /** Gradle project paths from `include(...)`, mapped to their directories relative to the root. */
+  projects: Map<string, string>;
+  /** Whether the build composes other builds (`includeBuild`), which can supply convention plugins. */
+  includesBuilds: boolean;
+}
+
+/**
+ * What a `settings.gradle(.kts)` says about the build's layout: every `include(":a", ":b:c")` or
+ * `include ':a', ':b'`, and `project(":a").projectDir = file("dir")` remaps. Anything computed is
+ * left out, so a project path may be missing, never wrong.
+ */
+export function parseSettings(source: string): SettingsScript {
+  const visible = maskCode(source, false);
+  const projects = new Map<string, string>();
+  for (const match of visible.matchAll(
+    /(?<![\w.])include\s*\(?\s*((?:["'][^"'\r\n]+["']\s*,?\s*)+)\)?/g,
+  ))
+    for (const path of match[1]!.matchAll(/["']([^"'\r\n]+)["']/g)) {
+      const name = path[1]!.startsWith(":") ? path[1]! : `:${path[1]!}`;
+      projects.set(name, name.slice(1).split(":").join("/"));
+    }
+  for (const match of visible.matchAll(
+    /(?<![\w.])project\s*\(\s*["']([^"'\r\n]+)["']\s*\)\s*\.\s*projectDir\s*=\s*(?:new\s+File|file)\s*\(\s*["']([^"'\r\n$]+)["']\s*\)/g,
+  )) {
+    const name = match[1]!.startsWith(":") ? match[1]! : `:${match[1]!}`;
+    if (projects.has(name)) projects.set(name, match[2]!.replace(/^\.\//, "").replace(/\/$/, ""));
+  }
+  return { projects, includesBuilds: /(?<![\w.])includeBuild\s*\(/.test(visible) };
+}
+
+/** The plugin ids a build script applies literally (`id("x")`, `kotlin("x")`, Groovy `id 'x'`). */
+export function literalPluginIds(source: string): string[] {
+  const visible = maskCode(source, false);
+  const ids: string[] = [];
+  for (const match of visible.matchAll(/(?<![\w.])id\s*\(?\s*["']([^"'\r\n]+)["']/g))
+    ids.push(match[1]!);
+  for (const match of visible.matchAll(/(?<![\w.])kotlin\s*\(\s*["']([^"'\r\n]+)["']\s*\)/g))
+    ids.push(`org.jetbrains.kotlin.${match[1]!}`);
+  return ids;
+}
+
+/** The catalog plugin aliases a build script applies (`alias(libs.plugins.x.y)`). */
+export function aliasedPluginIds(
+  source: string,
+  catalog?: Catalog,
+): { known: string[]; unresolved: number } {
+  const visible = maskCode(source, false);
+  const known: string[] = [];
+  let unresolved = 0;
+  for (const match of visible.matchAll(/(?<![\w.])alias\s*\(\s*libs\.plugins\.([\w.]+)\s*\)/g)) {
+    const accessor = `libs.plugins.${match[1]!}`;
+    const entry = Object.entries(catalog?.plugins ?? {}).find(
+      ([alias]) => catalogAccessor(alias, "plugins") === accessor,
+    );
+    if (entry?.[1].id) known.push(entry[1].id);
+    else unresolved++;
+  }
+  return { known, unresolved };
+}

@@ -119,17 +119,24 @@ export function sdkHealth(dependencies: ClerkDependency[], minimumVersion: strin
  * version, or the Kotlin Gradle plugin on a buildscript classpath.
  */
 export function kotlinHealth(
-  kotlin: { version?: string; source: string; applied: boolean },
+  kotlin: { version?: string; source: string; applied: "yes" | "no" | "unknown" },
   minimum: string,
 ): Check {
   const name = "Kotlin compiler";
-  if (!kotlin.applied)
+  if (kotlin.applied === "no")
     return {
       name,
       status: "fail",
       message:
         "The module compiles no Kotlin: it applies neither the Kotlin Android plugin nor AGP 9's built-in Kotlin.",
       remedy: "Apply org.jetbrains.kotlin.android, or update to AGP 9, then rerun clerk init.",
+    };
+  if (kotlin.applied === "unknown" && !kotlin.version)
+    return {
+      name,
+      status: "warn",
+      message: `The Kotlin toolchain is ${kotlin.source}; the Clerk SDK needs Kotlin ${semver.major(minimum)}.${semver.minor(minimum)} or newer.`,
+      remedy: `Check the Kotlin version your convention plugins apply; ${semver.major(minimum)}.${semver.minor(minimum)}+ is required.`,
     };
   if (!kotlin.version)
     return {

@@ -4,12 +4,15 @@ import { modulePath, selectModule, type ChooseModule } from "./discovery.ts";
 import { snapshotFile, type FileSnapshot } from "./files.ts";
 import {
   PACKAGE_NAME,
+  aliasedPluginIds,
   catalogAccessor,
   catalogVersion,
   childBlock,
   literal,
+  literalPluginIds,
   maskCode,
   parseCatalog,
+  parseSettings,
   topLevelBlocks,
   usesAccessor,
   type Catalog,
@@ -35,6 +38,8 @@ export interface InspectOptions {
 export interface Selection {
   root: string;
   module: string;
+  /** The Gradle project path (`:app`), from settings.gradle when it names the module. */
+  gradlePath: string;
   namespace: string;
   applicationId: string;
   applicationIdSource: "gradle" | "gradle-debug" | "explicit";
@@ -77,10 +82,13 @@ export interface Inspection {
   minSdk: {
     value?: number;
     source: "literal" | "catalog" | "unknown";
-    /** Offsets in the build script of the value expression, when it can be rewritten. */
+    /** Offsets in the build script of a literal value, when it can be rewritten. */
     edit?: { start: number; end: number };
+    /** The `[versions]` key a catalog reference reads, when it can be raised there. */
+    catalogKey?: string;
   };
-  kotlin: { version?: string; source: string; applied: boolean };
+  /** `applied` is unknown when convention plugins or composite builds may supply Kotlin. */
+  kotlin: { version?: string; source: string; applied: "yes" | "no" | "unknown" };
   agp: { version?: string };
   dependencies: ClerkDependency[];
 }
@@ -147,9 +155,12 @@ function discoverMinSdk(
   const start = defaultConfig.open + match.index + match[0].length - match[1]!.length;
   const edit = { start, end: start + match[1]!.length };
   if (match[2]) {
-    const value = catalog?.versions[match[2].replaceAll(".", "-")];
+    const catalogKey = Object.keys(catalog?.versions ?? {}).find(
+      (key) => key.replace(/[-_]/g, ".") === match[2],
+    );
+    const value = catalogKey ? catalog!.versions[catalogKey] : undefined;
     return value && /^\d+$/.test(value)
-      ? { value: Number(value), source: "catalog", edit }
+      ? { value: Number(value), source: "catalog", catalogKey }
       : { source: "unknown" };
   }
   return { value: Number(match[1]), source: "literal", edit };
@@ -162,10 +173,16 @@ const KOTLIN_PLUGIN_VERSION =
 const AGP_PLUGIN_VERSION =
   /id\s*\(\s*["']com\.android\.application["']\s*\)\s+version\s+["'](\d+\.\d+(?:\.\d+)?)["']/g;
 
+/** Plugin ids whose effect on the Kotlin toolchain is known; anything else may be a convention plugin. */
+const RECOGNIZED_PLUGIN =
+  /^(?:com\.android\.|org\.jetbrains\.kotlin|org\.jetbrains\.compose|com\.google\.|androidx\.|kotlin-)/;
+
 function discoverToolchain(
   sources: { path: string; source: string }[],
   catalog: Catalog | undefined,
   moduleBuild: string,
+  /** The build has buildSrc, build-logic, or an included build: convention plugins may apply Kotlin. */
+  conventionPlugins: boolean,
 ): { kotlin: Inspection["kotlin"]; agp: Inspection["agp"] } {
   let agp: string | undefined;
   let kotlin: { version?: string; source: string } | undefined;
@@ -207,22 +224,32 @@ function discoverToolchain(
         usesAccessor(moduleBuild, catalogAccessor(alias, "plugins")),
     );
   const builtIn = agp !== undefined && (semver.coerce(agp)?.major ?? 0) >= 9;
+  const aliased = aliasedPluginIds(moduleBuild, catalog);
+  const unrecognized =
+    conventionPlugins ||
+    aliased.unresolved > 0 ||
+    [...literalPluginIds(moduleBuild), ...aliased.known].some((id) => !RECOGNIZED_PLUGIN.test(id));
   // Without a Kotlin Gradle plugin on the classpath, AGP 9's built-in Kotlin compiles with the
-  // version AGP itself depends on: 2.2.10 for every 9.x release so far.
-  if (!kotlin && builtIn)
+  // version AGP itself depends on: 2.2.10 for every 9.x release so far. A convention plugin can
+  // put another on the classpath, so then the version stays unknown rather than assumed.
+  if (!kotlin && builtIn && !unrecognized)
     kotlin = { version: AGP_BUNDLED_KOTLIN, source: `AGP ${agp}'s built-in Kotlin` };
   return {
     kotlin: {
       version: kotlin?.version,
-      source: kotlin?.source ?? "not declared",
-      applied: appliesKotlinPlugin || builtIn,
+      source:
+        kotlin?.source ??
+        (unrecognized
+          ? "not declared where clerk init reads it; a convention plugin or included build may set it"
+          : "not declared"),
+      applied: appliesKotlinPlugin || builtIn ? "yes" : unrecognized ? "unknown" : "no",
     },
     agp: { version: agp },
   };
 }
 
 /** Comments blanked, offsets kept. */
-function maskXml(source: string): string {
+export function maskXml(source: string): string {
   return source.replace(/<!--[\s\S]*?-->/g, (comment) => " ".repeat(comment.length));
 }
 
@@ -337,7 +364,7 @@ export async function inspectAndroidProject(options: InspectOptions): Promise<In
   const discovered = discoverApplicationId(source, android[0]!, defaultConfig);
   const applicationId = options.applicationId ?? discovered.applicationId;
   if (!applicationId)
-    throw setupError(
+    throw unsupported(
       `The installed applicationId can't be read from ${build.path}: ${discovered.reason} Pass --android-package with the final applicationId of the build you install.`,
     );
   const rootBuild =
@@ -345,14 +372,29 @@ export async function inspectAndroidProject(options: InspectOptions): Promise<In
       ? undefined
       : ((await optionalSnapshot(root, "build.gradle.kts")) ??
         (await optionalSnapshot(root, "build.gradle")));
+  // Plugin versions can live in settings' pluginManagement; includes name the Gradle project path.
+  const settingsScript =
+    (await optionalSnapshot(root, "settings.gradle.kts")) ??
+    (await optionalSnapshot(root, "settings.gradle"));
+  const settings = settingsScript ? parseSettings(settingsScript.source) : undefined;
+  const conventionPlugins =
+    settings?.includesBuilds === true ||
+    (await Bun.file(join(root, "buildSrc", "build.gradle.kts")).exists()) ||
+    (await Bun.file(join(root, "buildSrc", "build.gradle")).exists()) ||
+    (await Bun.file(join(root, "build-logic", "settings.gradle.kts")).exists()) ||
+    (await Bun.file(join(root, "build-logic", "settings.gradle")).exists());
   const toolchain = discoverToolchain(
-    [build, ...(rootBuild ? [rootBuild] : [])].map((item) => ({
-      path: item.path,
-      source: item.source,
-    })),
+    [build, ...(rootBuild ? [rootBuild] : []), ...(settingsScript ? [settingsScript] : [])].map(
+      (item) => ({ path: item.path, source: item.source }),
+    ),
     parsedCatalog,
     source,
+    conventionPlugins,
   );
+  const gradlePath =
+    [...(settings?.projects ?? [])].find(
+      ([, dir]) => dir === (module === "." ? "" : module),
+    )?.[0] ?? (module === "." ? ":" : `:${module.split("/").join(":")}`);
   const manifest = await snapshotFile(root, modulePath(module, "src/main/AndroidManifest.xml"));
   if (/<!DOCTYPE|<!ENTITY/i.test(manifest.source))
     throw unsupported("AndroidManifest.xml declares a DOCTYPE or entities.");
@@ -396,6 +438,7 @@ export async function inspectAndroidProject(options: InspectOptions): Promise<In
     selection: {
       root,
       module,
+      gradlePath,
       namespace,
       applicationId,
       applicationIdSource: options.applicationId !== undefined ? "explicit" : discovered.source,

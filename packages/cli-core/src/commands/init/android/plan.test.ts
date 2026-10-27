@@ -135,10 +135,94 @@ describe("Android setup plan", () => {
     );
   });
 
-  test("replaces a catalog minSdk reference with the literal floor", async () => {
+  test("raises a catalog minSdk in the catalog, saying other modules move too", async () => {
     const { plan: result } = await plan({ catalog: true, minSdk: "catalog" });
+    expect(content(result.actions, "app/build.gradle.kts")).toContain(
+      "minSdk = libs.versions.minSdk.get().toInt()",
+    );
+    expect(content(result.actions, "gradle/libs.versions.toml")).toContain('minSdk = "24"');
+    expect(result.actions[0]).toMatchObject({
+      path: "gradle/libs.versions.toml",
+      description:
+        "Raise minSdk from 23 to 24 (every module reading it moves too); add the Clerk SDK",
+    });
+  });
+
+  test("an unreadable minSdk is noted and everything else is still planned", async () => {
+    const root = await createAndroidFixture();
+    roots.push(root);
+    const path = join(root, "app/build.gradle.kts");
+    await writeFile(
+      path,
+      (await Bun.file(path).text()).replace(
+        "minSdk = 24",
+        "minSdk = libs.versions.minSdk.get().toInt()",
+      ),
+    );
+    const inspection = await inspectAndroidProject({
+      root,
+      sdk: "core",
+      minimumVersion: CLERK_ANDROID_MINIMUM_VERSION,
+    });
+    const result = planAndroidSetup(inspection, FIXTURE_KEY);
+    expect(content(result.actions, "app/build.gradle.kts")).toContain("clerk-android-api:1.3.0");
+    expect(result.postInstructions.some((line) => line.includes("minSdk could not be read"))).toBe(
+      true,
+    );
+  });
+
+  test("skipping the dependencies keeps the minSdk raise and adds no catalog entries", async () => {
+    const root = await createAndroidFixture({
+      catalog: true,
+      minSdk: 21,
+      clerk: { product: "core", version: "1.1.7" },
+    });
+    roots.push(root);
+    const inspection = await inspectAndroidProject({
+      root,
+      sdk: "core",
+      minimumVersion: CLERK_ANDROID_MINIMUM_VERSION,
+    });
+    const result = planAndroidSetup(inspection, FIXTURE_KEY, {
+      skipDependencies: "Clerk 1.1.7 is below the baseline.",
+    });
+    expect(
+      result.actions.find((action) => action.path === "gradle/libs.versions.toml"),
+    ).toBeUndefined();
     expect(content(result.actions, "app/build.gradle.kts")).toContain("minSdk = 24");
-    expect(content(result.actions, "gradle/libs.versions.toml")).toContain('minSdk = "23"');
+    expect(content(result.actions, "app/build.gradle.kts")).not.toContain(
+      "clerk-android-api:1.3.0",
+    );
+    expect(result.sdk).toMatchObject({ type: "modify", description: "Raise minSdk from 21 to 24" });
+    expect(result.postInstructions).toContain("Clerk 1.1.7 is below the baseline.");
+  });
+
+  test("skips a commented-out application or manifest element when editing the manifest", async () => {
+    const root = await createAndroidFixture();
+    roots.push(root);
+    const path = join(root, "app/src/main/AndroidManifest.xml");
+    const source = await Bun.file(path).text();
+    await writeFile(
+      path,
+      source.replace(
+        "<manifest ",
+        '<!-- <manifest xmlns:android="x"> <application android:name=".Old" /> -->\n<manifest ',
+      ),
+    );
+    const inspection = await inspectAndroidProject({
+      root,
+      sdk: "core",
+      minimumVersion: CLERK_ANDROID_MINIMUM_VERSION,
+    });
+    const manifest = content(
+      planAndroidSetup(inspection, FIXTURE_KEY).actions,
+      "app/src/main/AndroidManifest.xml",
+    )!;
+    expect(manifest.indexOf("android.permission.INTERNET")).toBeGreaterThan(
+      manifest.indexOf("-->"),
+    );
+    expect(manifest).toContain('<application android:name=".ClerkApplication"');
+    expect(manifest).toContain('<application android:name=".Old" /> -->');
   });
 
   test("supports Groovy scripts", async () => {

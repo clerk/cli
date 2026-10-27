@@ -36,6 +36,11 @@ export interface RemotePlan {
   actions: RemoteAction[];
   /** The existing registration, when there is one. */
   registration?: plapi.AndroidApplication;
+  /**
+   * Why the registration can't be completed from here: it exists without a known fingerprint, and
+   * the Platform API can't amend it yet. Local setup still proceeds; the remote side is manual.
+   */
+  blocker?: string;
 }
 
 export async function resolveInstance(
@@ -54,19 +59,20 @@ async function resolveRemote(input: RemoteInput, api: NativeAPI): Promise<Remote
 
 /**
  * The registration for this package, when there is one. Clerk matches package names exactly.
- * A registration without every known fingerprint is a stop: there is no update endpoint yet.
+ * A registration without every known fingerprint is returned with a `blocker`: there is no
+ * update endpoint yet, so the Dashboard has to add it.
  */
 export function matchingRegistration(
   context: RemoteInput,
   registrations: plapi.AndroidApplication[],
-): plapi.AndroidApplication | undefined {
+): { registration?: plapi.AndroidApplication; blocker?: string } {
   const matches = registrations.filter((app) => app.package_name === context.packageName);
   if (matches.length > 1)
     throw setupError(
       `Clerk has ${matches.length} registrations for ${context.packageName}; review them on the Native Applications page.`,
     );
   const match = matches[0];
-  if (!match) return undefined;
+  if (!match) return {};
   if (match.namespace !== "android_app")
     throw setupError(
       `Clerk registers ${context.packageName} with namespace "${match.namespace}" instead of "android_app"; review it on the Native Applications page.`,
@@ -74,8 +80,11 @@ export function matchingRegistration(
   const registered = normalizeFingerprints(match.fingerprints);
   const missing = context.fingerprints.filter((fingerprint) => !registered.includes(fingerprint));
   if (missing.length)
-    throw setupError(missingFingerprintsMessage(context.packageName, missing, registered));
-  return match;
+    return {
+      registration: match,
+      blocker: missingFingerprintsMessage(context.packageName, missing, registered),
+    };
+  return { registration: match };
 }
 
 /** What the instance still needs for this identity, from settings already read. Throws when registrations conflict. */
@@ -83,12 +92,12 @@ export function remoteActions(
   context: RemoteInput,
   nativeEnabled: boolean,
   registrations: plapi.AndroidApplication[],
-): { actions: RemoteAction[]; registration?: plapi.AndroidApplication } {
+): Pick<RemotePlan, "actions" | "registration" | "blocker"> {
   const actions: RemoteAction[] = [];
-  const registration = matchingRegistration(context, registrations);
+  const { registration, blocker } = matchingRegistration(context, registrations);
   if (!registration) actions.push("register-application");
   if (!nativeEnabled) actions.push("enable-native-api");
-  return { actions, registration };
+  return { actions, registration, ...(blocker ? { blocker } : {}) };
 }
 
 export async function auditRemote(context: RemoteContext, api: NativeAPI): Promise<RemotePlan> {
@@ -109,11 +118,15 @@ export async function revalidateRemote(plan: RemotePlan, api: NativeAPI): Promis
   return current;
 }
 
+/**
+ * Applies the plan. "manual" means Native API is on but the existing registration still lacks a
+ * known fingerprint, which only the Dashboard can add; `plan.blocker` says which.
+ */
 export async function applyRemote(
   plan: RemotePlan,
   api: NativeAPI,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<"verified" | "manual"> {
   signal?.throwIfAborted();
   const { context, actions } = await revalidateRemote(plan, api);
   if (actions.includes("register-application")) {
@@ -135,7 +148,11 @@ export async function applyRemote(
           idempotencyKey("android-init", [context.applicationId, context.instanceId, params]),
         ),
       list: async () => api.listAndroidApplications(context.applicationId, context.instanceId),
-      matching: (registrations) => matchingRegistration(context, registrations),
+      matching: (registrations) => {
+        const { registration, blocker } = matchingRegistration(context, registrations);
+        if (blocker) throw setupError(blocker);
+        return registration;
+      },
       mismatch: () =>
         new CliError("Clerk did not confirm the requested native identity; retry setup.", {
           code: ERROR_CODE.ANDROID_REMOTE_VERIFY_FAILED,
@@ -147,8 +164,10 @@ export async function applyRemote(
   if (actions.includes("enable-native-api"))
     await api.enableNativeApi(context.applicationId, context.instanceId);
   signal?.throwIfAborted();
-  if ((await auditRemote(context, api)).actions.length)
+  const current = await auditRemote(context, api);
+  if (current.actions.length)
     throw new CliError("Remote setup is not yet verified; retry setup to reconcile it.", {
       code: ERROR_CODE.ANDROID_REMOTE_VERIFY_FAILED,
     });
+  return current.blocker ? "manual" : "verified";
 }

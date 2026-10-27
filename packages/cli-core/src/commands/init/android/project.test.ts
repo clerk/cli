@@ -30,12 +30,13 @@ describe("Android project inspection", () => {
     expect(inspection.selection).toEqual({
       root,
       module: "app",
+      gradlePath: ":app",
       namespace: "com.example.myapp",
       applicationId: "com.example.myapp",
       applicationIdSource: "gradle",
     });
     expect(inspection.minSdk).toMatchObject({ value: 24, source: "literal" });
-    expect(inspection.kotlin).toMatchObject({ version: "2.3.21", applied: true });
+    expect(inspection.kotlin).toMatchObject({ version: "2.3.21", applied: "yes" });
     expect(inspection.agp.version).toBe("9.2.1");
     expect(inspection.internetPermission).toBe(false);
     expect(inspection.application).toMatchObject({
@@ -125,13 +126,137 @@ describe("Android project inspection", () => {
     expect((await inspect(root)).kotlin).toEqual({
       version: "2.2.10",
       source: "AGP 9.2.1's built-in Kotlin",
-      applied: true,
+      applied: "yes",
     });
   });
 
-  test("reads minSdk from the version catalog", async () => {
+  test("reads plugin versions from settings.gradle pluginManagement", async () => {
+    const root = await fixture({ kotlin: false, agp: "9.2.1" });
+    const path = join(root, "app/build.gradle.kts");
+    await writeFile(
+      path,
+      (await Bun.file(path).text()).replace(
+        'id("com.android.application")',
+        'id("com.android.application")\n    id("org.jetbrains.kotlin.android")',
+      ),
+    );
+    await writeFile(
+      join(root, "build.gradle.kts"),
+      'plugins {\n    id("com.android.application") apply false\n}\n',
+    );
+    await writeFile(
+      join(root, "settings.gradle.kts"),
+      'pluginManagement {\n    plugins {\n        id("com.android.application") version "9.2.1"\n        id("org.jetbrains.kotlin.android") version "2.3.21"\n    }\n}\ninclude(":app")\n',
+    );
+    const inspection = await inspect(root);
+    expect(inspection.kotlin).toEqual({
+      version: "2.3.21",
+      source: "plugin version in settings.gradle.kts",
+      applied: "yes",
+    });
+    expect(inspection.agp.version).toBe("9.2.1");
+  });
+
+  test("convention plugins leave Kotlin unknown instead of absent", async () => {
+    const root = await fixture({ kotlin: false });
+    await mkdir(join(root, "build-logic"), { recursive: true });
+    await writeFile(
+      join(root, "build-logic/settings.gradle.kts"),
+      'rootProject.name = "build-logic"\n',
+    );
+    await writeFile(
+      join(root, "settings.gradle.kts"),
+      'pluginManagement { includeBuild("build-logic") }\ninclude(":app")\n',
+    );
+    const path = join(root, "app/build.gradle.kts");
+    await writeFile(
+      path,
+      (await Bun.file(path).text()).replace(
+        'id("com.android.application")',
+        'id("com.android.application")\n    id("myapp.android.application")',
+      ),
+    );
+    // AGP 9's built-in Kotlin is applied, but a convention plugin may pick the version.
+    const inspection = await inspect(root);
+    expect(inspection.kotlin).toMatchObject({ version: undefined, applied: "yes" });
+    expect(inspection.kotlin.source).toContain("convention plugin");
+    // Below AGP 9 nothing known applies Kotlin, so whether it compiles at all is unknown.
+    const agp8 = await fixture({ kotlin: false, agp: "8.13.0" });
+    await writeFile(
+      join(agp8, "settings.gradle.kts"),
+      'pluginManagement { includeBuild("build-logic") }\ninclude(":app")\n',
+    );
+    expect((await inspect(agp8)).kotlin).toMatchObject({ version: undefined, applied: "unknown" });
+  });
+
+  test.each([
+    [
+      "buildSrc",
+      async (root: string) => {
+        await mkdir(join(root, "buildSrc"), { recursive: true });
+        await writeFile(join(root, "buildSrc/build.gradle.kts"), "plugins { `kotlin-dsl` }\n");
+      },
+    ],
+    [
+      "an unrecognized plugin id",
+      async (root: string) => {
+        const path = join(root, "app/build.gradle.kts");
+        await writeFile(
+          path,
+          (await Bun.file(path).text()).replace(
+            'id("com.android.application")',
+            'id("com.android.application")\n    id("com.example.conventions")',
+          ),
+        );
+      },
+    ],
+  ])("%s alone makes Kotlin unknown, unless a version is declared", async (_label, arrange) => {
+    const root = await fixture({ kotlin: false, agp: "8.13.0" });
+    await arrange(root);
+    expect((await inspect(root)).kotlin.applied).toBe("unknown");
+    const declared = await fixture({ catalog: true });
+    await arrange(declared);
+    expect((await inspect(declared)).kotlin).toMatchObject({ version: "2.3.21", applied: "yes" });
+  });
+
+  test.each([
+    [
+      "a projectDir remap",
+      'include(":mobile:phone")\nproject(":mobile:phone").projectDir = file("app")\n',
+      "settings.gradle.kts",
+      ":mobile:phone",
+    ],
+    ["a Groovy include list", "include ':app', ':lib'\n", "settings.gradle", ":app"],
+    ["an unreadable include", 'include(projectsFrom("modules"))\n', "settings.gradle.kts", ":app"],
+  ])(
+    "takes the Gradle project path from settings.gradle with %s",
+    async (_label, settings, file, expected) => {
+      const root = await fixture();
+      await writeFile(join(root, file), settings);
+      expect((await inspect(root)).selection.gradlePath).toBe(expected);
+    },
+  );
+
+  test("an unreadable minSdk is reported, not refused", async () => {
+    const root = await fixture();
+    const path = join(root, "app/build.gradle.kts");
+    await writeFile(
+      path,
+      (await Bun.file(path).text()).replace(
+        "minSdk = 24",
+        "minSdk = libs.versions.minSdk.get().toInt()",
+      ),
+    );
+    expect((await inspect(root)).minSdk).toEqual({ source: "unknown" });
+  });
+
+  test("reads minSdk from the version catalog, naming its key", async () => {
     const root = await fixture({ catalog: true, minSdk: "catalog" });
-    expect((await inspect(root)).minSdk).toMatchObject({ value: 23, source: "catalog" });
+    expect((await inspect(root)).minSdk).toEqual({
+      value: 23,
+      source: "catalog",
+      catalogKey: "minSdk",
+    });
   });
 
   test("finds modules by their application plugin and asks when there are several", async () => {

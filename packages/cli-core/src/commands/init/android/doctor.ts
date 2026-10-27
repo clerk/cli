@@ -80,9 +80,11 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
     {
       name: "minSdk",
       status:
-        inspection.minSdk.value !== undefined && inspection.minSdk.value >= CLERK_ANDROID_MIN_SDK
-          ? "pass"
-          : "fail",
+        inspection.minSdk.value === undefined
+          ? "warn"
+          : inspection.minSdk.value >= CLERK_ANDROID_MIN_SDK
+            ? "pass"
+            : "fail",
       message:
         inspection.minSdk.value === undefined
           ? `minSdk could not be read from ${inspection.build.path}; the Clerk SDK needs ${CLERK_ANDROID_MIN_SDK} or newer.`
@@ -157,16 +159,20 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       },
       {
         name: "Native registration",
-        status: registration ? "pass" : "fail",
-        message: registration
-          ? `${identity.applicationId} is registered with ${registration.fingerprints.length} fingerprint${registration.fingerprints.length === 1 ? "" : "s"}.`
-          : `${identity.applicationId} is not registered on the development instance.`,
-        remedy: registration
-          ? undefined
-          : "Run clerk init to register the app, or add it on the Native Applications page.",
+        status: preview.remote.blocker ? "fail" : registration ? "pass" : "fail",
+        message:
+          preview.remote.blocker ??
+          (registration
+            ? `${identity.applicationId} is registered with ${registration.fingerprints.length} fingerprint${registration.fingerprints.length === 1 ? "" : "s"}.`
+            : `${identity.applicationId} is not registered on the development instance.`),
+        remedy: preview.remote.blocker
+          ? "Add the fingerprint on the Native Applications page; the CLI can't update a registration yet."
+          : registration
+            ? undefined
+            : "Run clerk init to register the app, or add it on the Native Applications page.",
       },
     );
-    if (registration)
+    if (registration && !preview.remote.blocker)
       checks.push({
         name: "Debug signing fingerprint",
         status: identity.debug.status === "found" ? "pass" : "warn",

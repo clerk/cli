@@ -77,6 +77,8 @@ import { withNativeProgress } from "./native/progress.js";
 import { applicationRequired as nativeApplicationRequired } from "./native/status.js";
 import { StarterInputRequired, type AppleStarter } from "./ios/starter-bootstrap.js";
 import { runAndroidInit, type AndroidInitOptions } from "./android/coordinator.js";
+import { UnsupportedLayout } from "./android/types.js";
+import { androidManualSteps } from "./frameworks/android.js";
 
 type InitOptions = Omit<AppleInitOptions, "root" | "agent"> &
   Omit<AndroidInitOptions, "root" | "agent"> & {
@@ -324,11 +326,22 @@ export async function init(options: InitOptions = {}) {
       throw new CliError("Link a Clerk application before native setup.", {
         code: ERROR_CODE.NOT_LINKED,
       });
-    return withNativeProgress(async () =>
-      native === "android"
-        ? runAndroidInit(androidOptions, linked.profile.appId)
-        : runAppleInit(appleOptions, linked.profile.appId),
-    );
+    if (native === "ios")
+      return withNativeProgress(async () => runAppleInit(appleOptions, linked.profile.appId));
+    try {
+      return await withNativeProgress(async () =>
+        runAndroidInit(androidOptions, linked.profile.appId),
+      );
+    } catch (error) {
+      // A layout the engine won't edit gets what it got before native setup: the key in the env
+      // file and the manual steps, with the reason up front. Anything else is a real failure.
+      if (!(error instanceof UnsupportedLayout)) throw error;
+      ctx.nativeFallback = error.reason;
+      log.warn(error.message);
+      log.info(
+        "Pulling the publishable key into the env file and printing the manual steps instead.",
+      );
+    }
   }
   // An agent that asked for JSON gets the usual "choose an app" guidance as data.
   if (ctx.framework.dep === "ios" && strategy === "manual" && options.json) {
@@ -370,6 +383,21 @@ export async function init(options: InitOptions = {}) {
     fresh: options.fresh === true,
     skipConfirm: overrides.skipConfirm,
   });
+  // The fallback is a status of its own for agents, not a bare error: the key is in place.
+  if (options.json && ctx.nativeFallback)
+    log.data(
+      JSON.stringify(
+        {
+          status: "manual-setup-required",
+          appIntegrationComplete: false,
+          reason: ctx.nativeFallback,
+          envFile: ctx.envFile,
+          next: androidManualSteps(ctx.envFile),
+        },
+        null,
+        2,
+      ),
+    );
 
   // Native platforms (iOS/Android) have no npx/Node toolchain to run `skills add` with.
   if (options.skills !== false && isNpmFramework(ctx.framework)) {

@@ -11,8 +11,11 @@ import {
   heuristics,
   skillsMod,
   bootstrapMod,
+  scaffoldMod,
 } from "../../test/lib/init-harness.ts";
+import { android as androidScaffold } from "./frameworks/android.ts";
 import * as android from "./android/coordinator.ts";
+import { UnsupportedLayout } from "./android/types.ts";
 import * as apple from "./ios/coordinator.ts";
 import { init } from "./index.ts";
 
@@ -52,6 +55,52 @@ describe("clerk init for Android projects", () => {
     expect(pullMod.pull).not.toHaveBeenCalled();
     expect(heuristics.installSdk).not.toHaveBeenCalled();
     expect(skillsMod.installSkills).not.toHaveBeenCalled();
+  });
+
+  test("a layout native setup refuses falls back to the env file and the manual steps", async () => {
+    setup({ email: "user@example.com" });
+    spyOn(context, "gatherContext").mockResolvedValue({
+      ...FAKE_CTX,
+      deps: {},
+      framework: androidFramework,
+    });
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_test" } } as never);
+    const run = spyOn(android, "runAndroidInit").mockRejectedValue(
+      new UnsupportedLayout("the build declares product flavors."),
+    );
+    track(run);
+    const scaffold = spyOn(scaffoldMod, "scaffold").mockImplementation(async (ctx) =>
+      androidScaffold.scaffold(ctx),
+    );
+    track(scaffold);
+
+    await init({ json: true });
+
+    expect(run).toHaveBeenCalled();
+    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: "/tmp/test" });
+    expect(captured.err).toContain("the build declares product flavors.");
+    expect(captured.err).toContain("Pulling the publishable key into the env file");
+    expect(scaffold.mock.calls[0]![0].nativeFallback).toBe("the build declares product flavors.");
+    expect(JSON.parse(captured.out)).toMatchObject({
+      status: "manual-setup-required",
+      appIntegrationComplete: false,
+      reason: "the build declares product flavors.",
+      envFile: ".env",
+      next: expect.arrayContaining([expect.stringContaining("clerk env pull")]),
+    });
+  });
+
+  test("other native setup failures are not swallowed", async () => {
+    setup({ email: "user@example.com" });
+    spyOn(context, "gatherContext").mockResolvedValue({
+      ...FAKE_CTX,
+      deps: {},
+      framework: androidFramework,
+    });
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_test" } } as never);
+    track(spyOn(android, "runAndroidInit").mockRejectedValue(new Error("Clerk is down")));
+    await expect(init({})).rejects.toThrow("Clerk is down");
+    expect(pullMod.pull).not.toHaveBeenCalled();
   });
 
   test("links through the usual flow before native setup", async () => {

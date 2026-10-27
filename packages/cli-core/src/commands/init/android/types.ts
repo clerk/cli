@@ -12,9 +12,20 @@ export function setupError(message: string, stale = false): CliError {
   });
 }
 
+/**
+ * A project layout this setup doesn't edit. `clerk init` falls back to the manual path on it
+ * (the key in the env file plus the quickstart steps), so it is its own class.
+ */
+export class UnsupportedLayout extends CliError {
+  constructor(public reason: string) {
+    super(
+      `${reason} No Android project files were changed. See ${ANDROID_QUICKSTART} for manual setup.`,
+      { code: ERROR_CODE.ANDROID_SETUP_BLOCKED },
+    );
+  }
+}
+
 /** A project layout this setup doesn't edit: says why, and where the manual steps are. */
 export function unsupported(reason: string): CliError {
-  return setupError(
-    `${reason} No Android project files were changed. See ${ANDROID_QUICKSTART} for manual setup.`,
-  );
+  return new UnsupportedLayout(reason);
 }

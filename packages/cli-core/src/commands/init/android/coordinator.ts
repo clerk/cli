@@ -60,6 +60,7 @@ export function printSetupPreview(preview: SetupPreview): void {
     );
     if (preview.remote.actions.includes("register-application"))
       log.info("  Register the native app in Clerk");
+    else if (preview.remote.blocker) log.warn(preview.remote.blocker);
     else log.info("  Native registration already present");
     if (preview.remote.actions.includes("enable-native-api")) log.info("  Enable Native API");
   }

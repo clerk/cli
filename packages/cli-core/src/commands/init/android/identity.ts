@@ -40,20 +40,41 @@ export function debugKeystorePath(env: NodeJS.ProcessEnv = process.env): string 
   return join(home, "debug.keystore");
 }
 
+/** Where `keytool` can be, in order: PATH, JAVA_HOME, then the JDK Android Studio bundles. */
+export function keytoolCandidates(
+  env: NodeJS.ProcessEnv = process.env,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  const windows = platform === "win32";
+  const exe = windows ? "keytool.exe" : "keytool";
+  const candidates = [
+    Bun.which("keytool") ?? undefined,
+    env.JAVA_HOME && join(env.JAVA_HOME, "bin", exe),
+    ...(windows
+      ? [
+          env.ProgramFiles &&
+            join(env.ProgramFiles, "Android", "Android Studio", "jbr", "bin", exe),
+          env["ProgramFiles(x86)"] &&
+            join(env["ProgramFiles(x86)"], "Android", "Android Studio", "jbr", "bin", exe),
+          env.LOCALAPPDATA &&
+            join(env.LOCALAPPDATA, "Programs", "Android Studio", "jbr", "bin", exe),
+        ]
+      : [
+          "/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool",
+          join(homedir(), "Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool"),
+          "/opt/android-studio/jbr/bin/keytool",
+          join(homedir(), "android-studio/jbr/bin/keytool"),
+        ]),
+  ];
+  return candidates.filter((candidate): candidate is string => !!candidate);
+}
+
 /** `keytool` from PATH, JAVA_HOME, or the JDK Android Studio bundles. */
 export async function findKeytool(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string | undefined> {
-  const candidates = [
-    Bun.which("keytool") ?? undefined,
-    env.JAVA_HOME && join(env.JAVA_HOME, "bin", "keytool"),
-    "/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool",
-    join(homedir(), "Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool"),
-    "/opt/android-studio/jbr/bin/keytool",
-    join(homedir(), "android-studio/jbr/bin/keytool"),
-  ];
-  for (const candidate of candidates)
-    if (candidate && (await Bun.file(candidate).exists())) return candidate;
+  for (const candidate of keytoolCandidates(env))
+    if (await Bun.file(candidate).exists()) return candidate;
   return undefined;
 }
 

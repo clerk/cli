@@ -147,20 +147,35 @@ describe("health checks", () => {
 
   test("Kotlin compiler", () => {
     expect(
-      kotlinHealth({ version: "2.3.21", source: "catalog", applied: true }, "2.3.0").status,
+      kotlinHealth({ version: "2.3.21", source: "catalog", applied: "yes" }, "2.3.0").status,
     ).toBe("pass");
     expect(
-      kotlinHealth({ version: "2.2.21", source: "catalog", applied: true }, "2.3.0"),
+      kotlinHealth({ version: "2.2.21", source: "catalog", applied: "yes" }, "2.3.0"),
     ).toMatchObject({ status: "fail", message: expect.stringContaining("2.4 metadata") });
     expect(
-      kotlinHealth({ source: "AGP 9.2.1's built-in Kotlin", applied: true }, "2.3.0").status,
+      kotlinHealth({ source: "AGP 9.2.1's built-in Kotlin", applied: "yes" }, "2.3.0").status,
     ).toBe("warn");
     expect(
       kotlinHealth(
-        { version: "2.2.10", source: "AGP 9.2.1's built-in Kotlin", applied: true },
+        { version: "2.2.10", source: "AGP 9.2.1's built-in Kotlin", applied: "yes" },
         "2.3.0",
       ),
     ).toMatchObject({ status: "fail", remedy: expect.stringContaining("kotlin.plugin.compose") });
-    expect(kotlinHealth({ source: "not declared", applied: false }, "2.3.0").status).toBe("fail");
+    expect(kotlinHealth({ source: "not declared", applied: "no" }, "2.3.0").status).toBe("fail");
+    expect(
+      kotlinHealth(
+        {
+          source: "not declared where clerk init reads it; a convention plugin may set it",
+          applied: "unknown",
+        },
+        "2.3.0",
+      ),
+    ).toMatchObject({ status: "warn", remedy: expect.stringContaining("convention plugins") });
+    expect(
+      kotlinHealth(
+        { version: "2.3.21", source: "settings.gradle.kts", applied: "unknown" },
+        "2.3.0",
+      ).status,
+    ).toBe("pass");
   });
 });

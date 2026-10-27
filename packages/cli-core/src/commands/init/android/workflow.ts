@@ -129,13 +129,13 @@ export async function prepareSetup(
   // Registering needs a fingerprint: assetlinks.json, which passkeys need, is served from them.
   if (remote?.actions.includes("register-application") && !identity!.fingerprints.length)
     throw new IdentityRequired(identity!);
-  const local = planAndroidSetup(inspection, instance?.publishableKey);
-  if (sdkCheck.status === "fail")
-    local.actions[local.actions.indexOf(local.sdk)] = local.sdk = {
-      type: "skip",
-      path: inspection.build.path,
-      skipReason: sdkCheck.message,
-    };
+  // An SDK below the baseline is reported, not replaced: the dependency lines and their catalog
+  // entries stay out, while the rest of the build-script plan (the minSdk raise) still applies.
+  const local = planAndroidSetup(
+    inspection,
+    instance?.publishableKey,
+    sdkCheck.status === "fail" ? { skipDependencies: sdkCheck.message } : {},
+  );
   const { root } = inspection.selection;
   for (const snapshot of planSnapshots(inspection)) await assertUnchanged(root, snapshot);
   const dirtyFiles = (
@@ -149,6 +149,7 @@ export async function prepareSetup(
     local.postInstructions.push(
       "Native registration was not selected. Enable Native API and register the applicationId and signing fingerprints on the Native Applications page.",
     );
+  if (remote?.blocker) local.postInstructions.push(remote.blocker);
   if (identity?.debug.status !== "found" && identity?.issues.length)
     local.postInstructions.push(...identity.issues);
   if (kotlinCheck.status !== "pass") local.postInstructions.push(kotlinCheck.message);
@@ -208,6 +209,7 @@ export function describePreview(preview: SetupPreview) {
           packageName: preview.remote.context.packageName,
           fingerprints: preview.remote.context.fingerprints,
           actions: preview.remote.actions,
+          ...(preview.remote.blocker ? { blocker: preview.remote.blocker } : {}),
         }
       : "Manual Dashboard setup",
     remaining:
@@ -303,7 +305,7 @@ export async function applySetup(
       result.remote === "verified",
       result.remote === "verified"
         ? "The applicationId and signing fingerprints are registered and Native API is enabled."
-        : "Complete or reconcile native registration in Clerk.",
+        : (preview.remote?.blocker ?? "Complete or reconcile native registration in Clerk."),
     );
     if (preview.identity?.debug.status !== "found" && preview.identity?.issues.length)
       remaining.push({ id: "debug-fingerprint", detail: preview.identity.issues.join(" ") });
@@ -387,8 +389,8 @@ export async function applySetup(
         else if ((await snapshotFile(root, snapshot.path)).source !== action.content)
           throw setupError("Local setup changed before remote registration.", true);
       }
-      await applyRemote(preview.remote, api, signal);
-      result.remote = "verified";
+      result.remote = await applyRemote(preview.remote, api, signal);
+      if (result.remote === "manual") result.message = preview.remote.blocker;
     } catch (error) {
       if (signal?.aborted) throw error;
       result.remote = "incomplete";

@@ -38,18 +38,34 @@ describe("registrations", () => {
   test("matches the package exactly and accepts extra fingerprints", () => {
     expect(
       matchingRegistration(context, [registration([DEBUG_FINGERPRINT, RELEASE_FINGERPRINT])]),
-    ).toBeDefined();
+    ).toEqual({ registration: expect.objectContaining({ id: "androidapp_1" }) });
     expect(
       matchingRegistration(context, [registration([DEBUG_FINGERPRINT], "com.example.App")]),
-    ).toBeUndefined();
-    expect(matchingRegistration(context, [registration(["ab".repeat(32)])])).toBeDefined();
+    ).toEqual({});
+    expect(
+      matchingRegistration(context, [registration(["ab".repeat(32)])]).registration,
+    ).toBeDefined();
   });
 
-  test("stops when the registration lacks a known fingerprint, with the Dashboard remedy", () => {
-    expect(() => matchingRegistration(context, [registration([RELEASE_FINGERPRINT])])).toThrow(
-      "Native Applications page",
-    );
-    expect(() => matchingRegistration(context, [registration([])])).toThrow("no fingerprints");
+  test("a registration that lacks a known fingerprint is kept, with the Dashboard remedy as a blocker", () => {
+    expect(matchingRegistration(context, [registration([RELEASE_FINGERPRINT])])).toMatchObject({
+      registration: { id: "androidapp_1" },
+      blocker: expect.stringContaining("Native Applications page"),
+    });
+    expect(matchingRegistration(context, [registration([])]).blocker).toContain("no fingerprints");
+    const plan = remoteActions(context, false, [registration([RELEASE_FINGERPRINT])]);
+    expect(plan.actions).toEqual(["enable-native-api"]);
+    expect(plan.blocker).toBeDefined();
+  });
+
+  test("applying a blocked plan enables Native API and reports the registration as manual", async () => {
+    const { api, state } = fakeNativeAPI();
+    state.registrations.push(registration([RELEASE_FINGERPRINT]));
+    const plan = await auditRemote(context, api);
+    expect(await applyRemote(plan, api)).toBe("manual");
+    expect(state.enabled).toBe(true);
+    expect(state.registrations).toHaveLength(1);
+    expect(await applyRemote(await auditRemote(context, api), api)).toBe("manual");
   });
 
   test("refuses duplicate or foreign-namespace registrations", () => {
@@ -78,7 +94,7 @@ describe("applying remote setup", () => {
     const { api, state } = fakeNativeAPI();
     const plan = await auditRemote(context, api);
     expect(plan.actions).toEqual(["register-application", "enable-native-api"]);
-    await applyRemote(plan, api);
+    expect(await applyRemote(plan, api)).toBe("verified");
     expect(state.events).toEqual(["register", "enable-native"]);
     expect(state.registrations[0]).toMatchObject({
       namespace: "android_app",

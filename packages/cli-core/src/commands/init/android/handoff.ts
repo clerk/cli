@@ -28,7 +28,7 @@ export function integrationHandoff(
   },
 ) {
   const done = (id: string) => progress.completed.some((item) => item.id === id);
-  const gradleTask = `./gradlew ${selection.module === "." ? "" : `:${selection.module.replaceAll("/", ":")}:`}assembleDebug`;
+  const gradleTask = `./gradlew ${selection.gradlePath === ":" ? "" : `${selection.gradlePath}:`}assembleDebug`;
   return {
     schemaVersion: 1,
     kind: "clerk-android-integration",
@@ -44,6 +44,7 @@ export function integrationHandoff(
     ...progress,
     context: {
       module: selection.module,
+      gradlePath: selection.gradlePath,
       namespace: selection.namespace,
       applicationId: selection.applicationId,
       sdk,

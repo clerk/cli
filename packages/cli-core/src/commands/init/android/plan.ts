@@ -1,5 +1,6 @@
 import type { FileAction, ScaffoldPlan } from "../frameworks/types.ts";
 import { maskCode } from "./gradle.ts";
+import { maskXml } from "./project.ts";
 import { GENERATED, GENERATED_APPLICATION, KEY_RESOURCE, type Inspection } from "./project.ts";
 import {
   ALREADY_INSTALLED,
@@ -29,48 +30,85 @@ export function generatedApplication(namespace: string): string {
   return `package ${namespace}\n\nimport android.app.Application\nimport com.clerk.api.Clerk\n\n// ${GENERATED}\nclass ${GENERATED_APPLICATION} : Application() {\n    override fun onCreate() {\n        super.onCreate()\n        Clerk.initialize(this, publishableKey = getString(R.string.${KEY_RESOURCE}))\n    }\n}\n`;
 }
 
-/** Plans the local edits for the inspected module. Pure: nothing is read or written here. */
-export function planAndroidSetup(inspection: Inspection, publishableKey?: string): AndroidPlan {
+/**
+ * Plans the local edits for the inspected module. Pure: nothing is read or written here. With
+ * `skipDependencies`, the dependency lines (and their catalog entries) are left out for that
+ * reason; everything else, the minSdk raise included, is still planned.
+ */
+export function planAndroidSetup(
+  inspection: Inspection,
+  publishableKey?: string,
+  options: { skipDependencies?: string } = {},
+): AndroidPlan {
   const { selection, application } = inspection;
   if (publishableKey !== undefined && !/^pk_test_[A-Za-z0-9+/=_-]+$/.test(publishableKey))
     throw setupError("Android setup requires the development publishable key.");
   const actions: FileAction[] = [];
   const changes: string[] = [];
+  const catalogChanges: string[] = [];
+  const notes: string[] = [];
   // Build script: minSdk first (its offsets come from the inspected source), then dependencies.
   let build = inspection.build.source;
+  let catalogSource = inspection.catalog?.source;
   if (inspection.minSdk.value === undefined)
-    throw setupError(
-      `${inspection.build.path} must set a plain minSdk (or a version-catalog reference) in defaultConfig; ${CLERK_ANDROID_MIN_SDK} or newer is required.`,
+    notes.push(
+      `minSdk could not be read from ${inspection.build.path} (a convention plugin or a computed value may set it); the Clerk SDK needs ${CLERK_ANDROID_MIN_SDK} or newer, so check it where it's set.`,
     );
-  if (inspection.minSdk.value < CLERK_ANDROID_MIN_SDK && inspection.minSdk.edit) {
-    const { start, end } = inspection.minSdk.edit;
-    build = `${build.slice(0, start)}${CLERK_ANDROID_MIN_SDK}${build.slice(end)}`;
-    changes.push(`raise minSdk from ${inspection.minSdk.value} to ${CLERK_ANDROID_MIN_SDK}`);
+  else if (inspection.minSdk.value < CLERK_ANDROID_MIN_SDK) {
+    if (inspection.minSdk.source === "literal" && inspection.minSdk.edit) {
+      const { start, end } = inspection.minSdk.edit;
+      build = `${build.slice(0, start)}${CLERK_ANDROID_MIN_SDK}${build.slice(end)}`;
+      changes.push(`raise minSdk from ${inspection.minSdk.value} to ${CLERK_ANDROID_MIN_SDK}`);
+    } else if (
+      inspection.minSdk.source === "catalog" &&
+      inspection.minSdk.catalogKey &&
+      catalogSource
+    ) {
+      // The catalog value is shared, so raising it there moves every module that reads it.
+      const key = inspection.minSdk.catalogKey;
+      catalogSource = catalogSource.replace(
+        new RegExp(
+          `^([ \\t]*${key.replace(/[-.]/g, "\\$&")}[ \\t]*=[ \\t]*["'])${inspection.minSdk.value}(["'])`,
+          "m",
+        ),
+        `$1${CLERK_ANDROID_MIN_SDK}$2`,
+      );
+      catalogChanges.push(
+        `raise ${key} from ${inspection.minSdk.value} to ${CLERK_ANDROID_MIN_SDK} (every module reading it moves too)`,
+      );
+    }
   }
-  const sdk = planSdkDependencies({
-    build,
-    catalogSource: inspection.catalog?.source,
-    sdk: inspection.sdk,
-    minimumVersion: inspection.minimumVersion,
-    dependencies: inspection.dependencies,
-  });
+  const sdk = options.skipDependencies
+    ? { build, catalog: catalogSource, added: [] as string[] }
+    : planSdkDependencies({
+        build,
+        catalogSource,
+        sdk: inspection.sdk,
+        minimumVersion: inspection.minimumVersion,
+        dependencies: inspection.dependencies,
+      });
   build = sdk.build;
   for (const added of sdk.added) changes.push(`add ${added}`);
+  if (sdk.added.length) catalogChanges.push("add the Clerk SDK");
   if (inspection.catalog && sdk.catalog !== undefined && sdk.catalog !== inspection.catalog.source)
     actions.push({
       type: "modify",
       path: inspection.catalog.path,
       content: sdk.catalog,
-      description: "Add the Clerk SDK to the version catalog",
+      description: catalogChanges
+        .map((c, i) => (i ? c : c[0]!.toUpperCase() + c.slice(1)))
+        .join("; "),
     });
   const sdkAction: FileAction =
     build === inspection.build.source
       ? {
           type: "skip",
           path: inspection.build.path,
-          skipReason: sdkInstalled(inspection.dependencies, inspection.sdk)
-            ? ALREADY_INSTALLED
-            : "No build script changes are needed.",
+          skipReason:
+            options.skipDependencies ??
+            (sdkInstalled(inspection.dependencies, inspection.sdk)
+              ? ALREADY_INSTALLED
+              : "No build script changes are needed."),
         }
       : {
           type: "modify",
@@ -125,19 +163,19 @@ export function planAndroidSetup(inspection: Inspection, publishableKey?: string
     initializes = true;
     registerClass = !application.registered;
   }
-  // Manifest.
+  // Manifest: offsets come from the comment-masked source, so a commented-out element is skipped.
   let manifest = inspection.manifest.source;
   const manifestChanges: string[] = [];
   if (registerClass) {
-    const at = manifest.search(/<application\b/) + "<application".length;
+    const at = maskXml(manifest).search(/<application\b/) + "<application".length;
     manifest = `${manifest.slice(0, at)} android:name=".${GENERATED_APPLICATION}"${manifest.slice(at)}`;
     manifestChanges.push(`register ${application.className}`);
   }
   if (!inspection.internetPermission) {
-    manifest = manifest.replace(
-      /(<manifest\b[^>]*>)/,
-      '$1\n    <uses-permission android:name="android.permission.INTERNET" />',
-    );
+    const open = /<manifest\b[^>]*>/.exec(maskXml(manifest));
+    if (!open) throw setupError("AndroidManifest.xml has no manifest element.");
+    const at = open.index + open[0].length;
+    manifest = `${manifest.slice(0, at)}\n    <uses-permission android:name="android.permission.INTERNET" />${manifest.slice(at)}`;
     manifestChanges.push("add the INTERNET permission");
   }
   actions.push(
@@ -190,6 +228,8 @@ export function planAndroidSetup(inspection: Inspection, publishableKey?: string
     "Sync Gradle with a JDK 17 or newer and build the module. Existing dependency versions are preserved; SDK API compatibility has not been verified.",
   ];
   if (sdkAction.type === "skip") postInstructions.push(sdkAction.skipReason);
+  else if (options.skipDependencies) postInstructions.push(options.skipDependencies);
+  postInstructions.push(...notes);
   if (!initializes)
     postInstructions.push(
       `Initialize Clerk in ${application.className}: call Clerk.initialize(this, publishableKey = getString(R.string.${KEY_RESOURCE})) after super.onCreate(). Manual SDK guide: ${ANDROID_QUICKSTART}`,

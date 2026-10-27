@@ -89,7 +89,7 @@ describe("Android setup workflow", () => {
     expect(state.registrations).toHaveLength(1);
   });
 
-  test("stops before any write when the registration lacks this machine's fingerprint", async () => {
+  test("a registration that lacks this machine's fingerprint still gets local setup, with the remote side manual", async () => {
     const root = await fixture();
     const { api, state } = fakeNativeAPI();
     state.registrations.push({
@@ -99,10 +99,61 @@ describe("Android setup workflow", () => {
       package_name: "com.example.myapp",
       fingerprints: [RELEASE_FINGERPRINT],
     });
-    await expect(prepareSetup(setup(root), { api, debugKeystore: keystore() })).rejects.toThrow(
-      "Native Applications page",
+    const deps = { api, debugKeystore: keystore() };
+    const preview = await prepareSetup(setup(root), deps);
+    expect(preview.remote?.blocker).toContain(DEBUG_FINGERPRINT);
+    expect(preview.remote?.actions).toEqual(["enable-native-api"]);
+    expect(describePreview(preview).remote).toMatchObject({
+      blocker: expect.stringContaining("Native Applications page"),
+    });
+    const result = await applySetup(preview, deps);
+    expect(result).toMatchObject({
+      status: "manual-steps-required",
+      local: "updated",
+      remote: "manual",
+    });
+    expect(result.message).toContain("Native Applications page");
+    expect(state.enabled).toBe(true);
+    expect(state.registrations).toHaveLength(1);
+    expect(
+      result.handoff.remaining.find((item) => item.id === "native-registration")?.detail,
+    ).toContain(DEBUG_FINGERPRINT);
+    expect(await read(root, "app/src/main/res/values/clerk.xml")).toContain(FIXTURE_KEY);
+  });
+
+  test("the build task in the handoff follows settings.gradle", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "settings.gradle.kts"),
+      'include(":phone")\nproject(":phone").projectDir = file("app")\n',
     );
-    expect(await Bun.file(join(root, "app/src/main/res/values/clerk.xml")).exists()).toBe(false);
+    await Bun.$`git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm settings`
+      .cwd(root)
+      .quiet();
+    const { api } = fakeNativeAPI();
+    const deps = { api, debugKeystore: keystore() };
+    const result = await applySetup(await prepareSetup(setup(root), deps), deps);
+    expect(result.handoff.tasks.find((task) => task.id === "build-module")?.instructions).toContain(
+      "./gradlew :phone:assembleDebug",
+    );
+    expect(result.handoff.context).toMatchObject({ module: "app", gradlePath: ":phone" });
+  });
+
+  test("a registration conflict in the preview is dropped from the stale check", async () => {
+    const root = await fixture();
+    const { api, state } = fakeNativeAPI();
+    state.registrations.push({
+      object: "android_application",
+      id: "androidapp_1",
+      namespace: "android_app",
+      package_name: "com.example.myapp",
+      fingerprints: [RELEASE_FINGERPRINT],
+    });
+    const deps = { api, debugKeystore: keystore() };
+    const preview = await prepareSetup(setup(root), deps);
+    // The Dashboard added the fingerprint between preview and apply: registration is verified.
+    state.registrations[0]!.fingerprints.push(DEBUG_FINGERPRINT);
+    expect((await applySetup(preview, deps)).remote).toBe("verified");
   });
 
   test("asks for a fingerprint when none is known and nothing is registered", async () => {
@@ -256,6 +307,27 @@ describe("Android setup workflow", () => {
     expect(result.status).toBe("manual-steps-required");
     expect(result.handoff.remaining.map((item) => item.id)).toContain("sdk-version");
     expect(await read(root, "app/build.gradle.kts")).toContain("clerk-android-api:1.1.7");
+  });
+
+  test("an SDK below the baseline still gets its minSdk raised, and no orphan catalog entries", async () => {
+    const root = await fixture({
+      catalog: true,
+      minSdk: 21,
+      clerk: { product: "core", version: "1.1.7" },
+    });
+    const catalog = await read(root, "gradle/libs.versions.toml");
+    const { api } = fakeNativeAPI();
+    const deps = { api, debugKeystore: keystore() };
+    const preview = await prepareSetup(setup(root), deps);
+    expect(preview.sdk).toMatchObject({
+      type: "modify",
+      description: "Raise minSdk from 21 to 24",
+    });
+    const result = await applySetup(preview, deps);
+    expect(result.changedFiles).not.toContain("gradle/libs.versions.toml");
+    expect(await read(root, "gradle/libs.versions.toml")).toBe(catalog);
+    expect(await read(root, "app/build.gradle.kts")).toContain("minSdk = 24");
+    expect(result.handoff.remaining.map((item) => item.id)).toContain("sdk-version");
   });
 
   test("the UI artifact adds the sign-in UI task behind user intent", async () => {

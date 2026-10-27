@@ -85,6 +85,21 @@ describe("Android doctor", () => {
     expect(registration.remedy).toContain("Native Applications page");
   });
 
+  test("an unreadable minSdk is a warning, and the other checks still run", async () => {
+    const f = await fixture();
+    const path = join(f.root, "app/build.gradle.kts");
+    await writeFile(
+      path,
+      (await Bun.file(path).text()).replace(
+        "minSdk = 24",
+        "minSdk = libs.versions.minSdk.get().toInt()",
+      ),
+    );
+    const report = await doctor(options(f.root), f.dependencies);
+    expect(status(report).minSdk).toBe("warn");
+    expect(status(report)["Native registration"]).toBe("fail");
+  });
+
   test("a literal key is compared with the linked instance's", async () => {
     const f = await fixture({ application: "custom-initialized", internetPermission: true });
     const report = await doctor(options(f.root), f.dependencies);

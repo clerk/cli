@@ -3,6 +3,7 @@ import {
   debugKeystoreNote,
   debugKeystorePath,
   discoverIdentity,
+  keytoolCandidates,
   missingFingerprintsMessage,
   normalizeFingerprints,
 } from "./identity.ts";
@@ -56,6 +57,34 @@ describe("fingerprints", () => {
       false,
     );
     expect(skipped.issues).toEqual([]);
+  });
+
+  test("looks for keytool where each platform keeps it", () => {
+    const windows = keytoolCandidates(
+      {
+        JAVA_HOME: "C:\\jdk",
+        ProgramFiles: "C:\\Program Files",
+        LOCALAPPDATA: "C:\\Users\\me\\AppData\\Local",
+      },
+      "win32",
+    );
+    expect(windows).toEqual(
+      expect.arrayContaining([
+        expect.stringMatching(/C:\\jdk[\\/]bin[\\/]keytool\.exe$/),
+        expect.stringMatching(
+          /Program Files[\\/]Android[\\/]Android Studio[\\/]jbr[\\/]bin[\\/]keytool\.exe$/,
+        ),
+        expect.stringMatching(
+          /AppData[\\/]Local[\\/]Programs[\\/]Android Studio[\\/]jbr[\\/]bin[\\/]keytool\.exe$/,
+        ),
+      ]),
+    );
+    expect(windows.some((candidate) => candidate.includes("/Applications/"))).toBe(false);
+    const mac = keytoolCandidates({ JAVA_HOME: "/jdk" }, "darwin");
+    expect(mac).toContain("/jdk/bin/keytool");
+    expect(mac).toContain(
+      "/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool",
+    );
   });
 
   test("names the Dashboard page when a registration lacks a fingerprint", () => {
