@@ -140,6 +140,29 @@ describe("agent mode through the real program", () => {
     expect(events()[0]!.payload).toMatchObject({ attempted, issue });
   });
 
+  test.each(["--verbose", "--mode=agent", "-v"])(
+    "the root's own %s right after --issue is not sent as the issue",
+    async (flag) => {
+      await markNoticeAlreadyShown();
+      process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
+      http.mock(); // any fetch would record and throw
+      await clerk.raw(
+        "--mode",
+        "agent",
+        "feedback",
+        "--goal",
+        "x",
+        "--attempted",
+        "y",
+        "--outcome",
+        "blocked",
+        "--issue",
+        flag,
+      );
+      expect(events().map((e) => e.event)).not.toContain("CLI_FEEDBACK");
+    },
+  );
+
   test("an opted-out run prints sent: false with the issues URL and exits 0", async () => {
     await markNoticeAlreadyShown();
     process.env.CLERK_TELEMETRY_URL = TELEMETRY_URL;
@@ -161,6 +184,7 @@ describe("agent mode through the real program", () => {
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "clerk deploy");
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "deploy --verbose status");
     await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "users list --limit 5");
+    await clerk("--mode", "agent", "feedback", ...COMPLETE, "--command", "--mode=agent env pull");
     const feedbackEvents = events().filter((e) => e.event === "CLI_FEEDBACK");
     expect(feedbackEvents.map((e) => e.payload.command)).toEqual([
       "users list",
@@ -168,6 +192,7 @@ describe("agent mode through the real program", () => {
       "deploy run",
       "deploy status",
       "users list",
+      "env pull",
     ]);
     // Nothing after the command name is ever sent.
     expect(JSON.stringify(feedbackEvents)).not.toContain("--limit");

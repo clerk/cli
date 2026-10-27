@@ -1038,6 +1038,7 @@ describe("large pastes stay linear", () => {
       "a \\x1B color code with colon parameters and no final letter",
       (n) => "\\x1B[" + fill("1:", n),
     ],
+    ["URL-encoded and JSON-escaped separators", (n) => fill("a%3Db%40c\\u003a", n)],
   ];
 
   const timed = (input: string): number => {
@@ -1271,6 +1272,31 @@ describe("secrets right after an escape sequence", () => {
     ["Clerk key after a \\033 color code", `"\\033[31m${"sk_live_"}abc123def456"`, "abc123def456"],
     ["Clerk key after a \\33 color code", `"\\33[31m${"sk_live_"}abc123def456"`, "abc123def456"],
     ["Clerk key after a \\e color code", `"\\e[1m${"sk_live_"}abc123def456"`, "abc123def456"],
+    ["query secret across %3D", "cb%3Faccess_token%3Dq9Zr7TmW2pLx8vN", "q9Zr7TmW2pLx8vN"],
+    [
+      "query secret across a lowercase %3d",
+      "cb%3faccess_token%3dq9Zr7TmW2pLx8vN",
+      "q9Zr7TmW2pLx8vN",
+    ],
+    ["password across a JSON-escaped =", `{"m":"password\\u003dhunter2xyz"}`, "hunter2xyz"],
+    [
+      "password across an uppercase JSON-escaped =",
+      `{"m":"password\\u003Dhunter2xyz"}`,
+      "hunter2xyz",
+    ],
+    ["password across a JSON-escaped :", `{"m":"password\\u003a hunter2xyz"}`, "hunter2xyz"],
+    [
+      "Authorization header across %3A",
+      "h=Authorization%3A%20Bearer%20abcdefghijklmnopqrstuv",
+      "abcdefghijklmnopqrstuv",
+    ],
+    ["email across %40", "GET /v1/users?email_address=jane.doe%40example.com", "jane.doe"],
+    ["email across a JSON-escaped @", `{"e":"jane.doe\\u0040example.com"}`, "jane.doe"],
+    [
+      "URL credentials across %3A and %40",
+      "https://deploy%3As3cr3tpw%40db.example.com/app",
+      "s3cr3tpw",
+    ],
   ])("%s", (_label, input, secret) => {
     const { text, redactions } = redact(input);
     expect(text).not.toContain(secret);
@@ -1292,9 +1318,16 @@ describe("secrets right after an escape sequence", () => {
 
   test("the escape sequences themselves survive", () => {
     const tail = `\\x1B[38:5:196mg\\033[0mh\\e[1mi\x1b[38:2::1:2:3mj`;
-    expect(redact(`a\\nsk_live_abc123def456\\tb%20c%3Dd\\u0026e\\u001b[1mf${tail}`).text).toBe(
-      `a\\n${REDACTED}\\tb%20c%3Dd\\u0026e\\u001b[1mf${tail}`,
+    expect(redact(`a\\nsk_live_abc123def456\\tb%20c%2Fd\\u0026e\\u001b[1mf${tail}`).text).toBe(
+      `a\\n${REDACTED}\\tb%20c%2Fd\\u0026e\\u001b[1mf${tail}`,
     );
+  });
+
+  test("a URL-encoded or JSON-escaped =, : or @ is sent decoded", () => {
+    expect(redact("a%3Db%3ac%40d\\u003De\\u003af\\u0040g")).toEqual({
+      text: "a=b:c@d=e:f@g",
+      redactions: 0,
+    });
   });
 });
 

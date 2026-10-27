@@ -81,6 +81,9 @@ leaves your machine. **Scrubbing is best-effort.** It catches secrets by their s
   runs curl (`docker run -u 1000:1000` keeps its ids, and `-u user` with no colon, where
   curl asks for the password, is left alone).
 
+A URL-encoded or JSON-escaped `=`, `:` or `@` (`%3D`, `%3A`, `%40`) is decoded before
+scrubbing, so `token%3Dabc` is sent as `token=[REDACTED]`.
+
 Secrets become `[REDACTED]`, home-directory paths become `~`, and email addresses become
 `[EMAIL]`. The variable or flag name stays and only the value goes (`export TOKEN=abc`
 becomes `export TOKEN=[REDACTED]`), so a reader learns which setting was involved. Where

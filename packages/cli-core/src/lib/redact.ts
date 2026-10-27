@@ -529,10 +529,17 @@ function stripQuotes(value: string): string {
 const ESCAPE_SEQUENCE = new RegExp(`(${ESCAPE})`);
 
 /**
- * Scrub secrets, home-directory paths and email addresses from `text`, in
- * the eight passes the module comment lists, then once more between
- * {@link ESCAPE_SEQUENCE}s. `homedir` is injectable for tests; production
- * callers omit it.
+ * `=`, `:` or `@`, URL-encoded (`%3D`) or JSON-escaped. A split at one would
+ * part a name from its value (`password%3Dhunter2`) or a local part from its
+ * domain, so {@link redactText} decodes them first.
+ */
+const ENCODED_SEPARATOR = /(?:%|\\u00)(?:3[aAdD]|40)/g;
+
+/**
+ * Decode each {@link ENCODED_SEPARATOR}, then scrub secrets, home-directory
+ * paths and email addresses from the text, in the eight passes the module
+ * comment lists, then once more between {@link ESCAPE_SEQUENCE}s. `homedir`
+ * is injectable for tests; production callers omit it.
  *
  * Counting: passes 2 and 4 leave a value alone, uncounted, when it already
  * starts with the marker (an earlier pass took the credential inside it);
@@ -540,7 +547,10 @@ const ESCAPE_SEQUENCE = new RegExp(`(${ESCAPE})`);
  */
 export function redactText(text: string, options: { homedir?: string } = {}): Redaction {
   const literalHome = literalHomeDirPattern(options.homedir ?? homedir());
-  const whole = scrub(text, literalHome);
+  const decoded = text.replace(ENCODED_SEPARATOR, (escape) =>
+    String.fromCharCode(Number.parseInt(escape.slice(-2), 16)),
+  );
+  const whole = scrub(decoded, literalHome);
   const pieces = whole.text.split(ESCAPE_SEQUENCE);
   if (pieces.length === 1) return whole;
   let redactions = whole.redactions;

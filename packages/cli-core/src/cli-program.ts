@@ -259,20 +259,32 @@ async function resolveArgv(
  * Rewrite `--opt value` as `--opt=value` for each option on the command path
  * that requires a value. The root parses its own flags anywhere in argv, so a
  * value that starts like one (`--issue "-v is ignored"`) would print the
- * version instead of reaching its option.
+ * version instead of reaching its option. A value that is one of those flags
+ * as typed (`--file --verbose`, `--file --mode=agent`) ends the rewrite, so
+ * the rest of argv parses as Commander reads it; a word with a space in it
+ * (`--command "--mode=agent env pull"`) is a value.
  */
 function attachOptionValues(program: Program, argv: string[], start: number): string[] {
   const out = argv.slice(0, start);
   const options: Option[] = [...program.options];
+  const isRootFlag = (word: string) =>
+    !/\s/.test(word) &&
+    program.options.some(
+      (o) =>
+        word === o.long ||
+        word === o.short ||
+        (!o.isBoolean() && o.long !== undefined && word.startsWith(`${o.long}=`)),
+    );
   let node: CommandUnknownOpts = program;
   for (let i = start; i < argv.length; i++) {
     const word = argv[i]!;
-    if (word === "--") {
+    const option = options.find((o) => o.long === word);
+    const takesValue = option?.required && !option.variadic && i + 1 < argv.length;
+    if (word === "--" || (takesValue && isRootFlag(argv[i + 1]!))) {
       out.push(...argv.slice(i));
       break;
     }
-    const option = options.find((o) => o.long === word);
-    if (option?.required && !option.variadic && i + 1 < argv.length) {
+    if (takesValue) {
       out.push(`${word}=${argv[++i]}`);
       continue;
     }
