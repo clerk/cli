@@ -252,11 +252,10 @@ describe("Android project inspection", () => {
 
   test("reads minSdk from the version catalog, naming its key", async () => {
     const root = await fixture({ catalog: true, minSdk: "catalog" });
-    expect((await inspect(root)).minSdk).toEqual({
-      value: 23,
-      source: "catalog",
-      catalogKey: "minSdk",
-    });
+    const catalog = await Bun.file(join(root, "gradle/libs.versions.toml")).text();
+    const minSdk = (await inspect(root)).minSdk;
+    expect(minSdk).toMatchObject({ value: 23, source: "catalog", catalogKey: "minSdk" });
+    expect(catalog.slice(minSdk.catalogEdit!.start, minSdk.catalogEdit!.end)).toBe("23");
   });
 
   test("finds modules by their application plugin and asks when there are several", async () => {

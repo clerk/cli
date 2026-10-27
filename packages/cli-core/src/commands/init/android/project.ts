@@ -6,6 +6,7 @@ import {
   PACKAGE_NAME,
   aliasedPluginIds,
   catalogAccessor,
+  catalogValueOffsets,
   catalogVersion,
   childBlock,
   literal,
@@ -84,8 +85,10 @@ export interface Inspection {
     source: "literal" | "catalog" | "unknown";
     /** Offsets in the build script of a literal value, when it can be rewritten. */
     edit?: { start: number; end: number };
-    /** The `[versions]` key a catalog reference reads, when it can be raised there. */
+    /** The `[versions]` key a catalog reference reads. */
     catalogKey?: string;
+    /** Offsets in the catalog source of that key's value, when it can be rewritten there. */
+    catalogEdit?: { start: number; end: number };
   };
   /** `applied` is unknown when convention plugins or composite builds may supply Kotlin. */
   kotlin: { version?: string; source: string; applied: "yes" | "no" | "unknown" };
@@ -143,6 +146,7 @@ function discoverMinSdk(
   build: string,
   defaultConfig: { open: number; close: number },
   catalog?: Catalog,
+  catalogSource?: string,
 ): Inspection["minSdk"] {
   const section = maskCode(build.slice(defaultConfig.open, defaultConfig.close));
   const matches = [
@@ -159,9 +163,16 @@ function discoverMinSdk(
       (key) => key.replace(/[-_]/g, ".") === match[2],
     );
     const value = catalogKey ? catalog!.versions[catalogKey] : undefined;
-    return value && /^\d+$/.test(value)
-      ? { value: Number(value), source: "catalog", catalogKey }
-      : { source: "unknown" };
+    if (!catalogKey || !value || !/^\d+$/.test(value)) return { source: "unknown" };
+    const catalogEdit = catalogSource
+      ? catalogValueOffsets(catalogSource, catalogKey, value)
+      : undefined;
+    return {
+      value: Number(value),
+      source: "catalog",
+      catalogKey,
+      ...(catalogEdit && { catalogEdit }),
+    };
   }
   return { value: Number(match[1]), source: "literal", edit };
 }
@@ -458,7 +469,7 @@ export async function inspectAndroidProject(options: InspectOptions): Promise<In
       managed,
       key: keyMatch?.[1],
     },
-    minSdk: discoverMinSdk(source, defaultConfig, parsedCatalog),
+    minSdk: discoverMinSdk(source, defaultConfig, parsedCatalog, catalog?.source),
     kotlin: toolchain.kotlin,
     agp: toolchain.agp,
     dependencies: findClerkDependencies(source, parsedCatalog),

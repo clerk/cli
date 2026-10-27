@@ -283,3 +283,29 @@ export function aliasedPluginIds(
   }
   return { known, unresolved };
 }
+
+/**
+ * Where a `[versions]` entry's quoted value sits in the catalog source, so it can be rewritten at
+ * a known offset the way a literal build-script value is. The key is matched as text, never as a
+ * pattern. Undefined when the entry isn't one plain `key = "value"` line holding `value`.
+ */
+export function catalogValueOffsets(
+  source: string,
+  key: string,
+  value: string,
+): { start: number; end: number } | undefined {
+  let offset = 0;
+  for (const line of source.split(/(?<=\n)/)) {
+    const trimmed = line.trimStart();
+    const rest = trimmed.startsWith(key) ? trimmed.slice(key.length) : undefined;
+    const assignment = rest === undefined ? null : /^[ \t]*=[ \t]*["']/.exec(rest);
+    if (assignment) {
+      const start = offset + (line.length - trimmed.length) + key.length + assignment[0].length;
+      const end = start + value.length;
+      if (source.slice(start, end) === value && (source[end] === '"' || source[end] === "'"))
+        return { start, end };
+    }
+    offset += line.length;
+  }
+  return undefined;
+}

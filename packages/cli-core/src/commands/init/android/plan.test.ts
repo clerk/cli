@@ -148,6 +148,18 @@ describe("Android setup plan", () => {
     });
   });
 
+  test("a catalog minSdk it can't rewrite is noted, not reported as raised", async () => {
+    const { inspection } = await plan({ catalog: true, minSdk: "catalog" });
+    const result = planAndroidSetup(
+      { ...inspection, minSdk: { value: 23, source: "catalog", catalogKey: "minSdk" } },
+      FIXTURE_KEY,
+    );
+    const catalog = result.actions.find((action) => action.path === "gradle/libs.versions.toml");
+    expect(catalog).toMatchObject({ type: "modify", description: "Add the Clerk SDK" });
+    expect((catalog as { content: string }).content).toContain('minSdk = "23"');
+    expect(result.postInstructions.some((line) => line.includes("set minSdk to 24"))).toBe(true);
+  });
+
   test("an unreadable minSdk is noted and everything else is still planned", async () => {
     const root = await createAndroidFixture();
     roots.push(root);
