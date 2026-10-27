@@ -221,7 +221,7 @@ function missingRequiredIdentifier(
     !reserved(identifiers.unverifiedEmails)
   ) {
     return identifiers.unverifiedEmails.length > 0
-      ? "only has an unverified email, and this instance requires an email"
+      ? "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though never verified)"
       : "no email, which this instance requires";
   }
   if (
@@ -230,7 +230,7 @@ function missingRequiredIdentifier(
     !reserved(identifiers.unverifiedPhones)
   ) {
     return identifiers.unverifiedPhones.length > 0
-      ? "only has an unverified phone number, and this instance requires one"
+      ? "only has an unverified phone number, and this instance requires one (--reserve-unverified imports it reserved: usable for sign-in, though never verified)"
       : "no phone number, which this instance requires";
   }
   if (required("username") && !hasValue(user.username)) {
