@@ -213,3 +213,47 @@ describe("clerk init for Android projects", () => {
     await expect(init({ appleSdk: "ui" })).rejects.toThrow("only to iOS (Swift) projects");
   });
 });
+
+describe("clerk init --sign-in-with-google flags", () => {
+  const { setup, track, captured } = useInitHarness();
+  let xcode: ReturnType<typeof spyOn>;
+  beforeEach(() => {
+    xcode = spyOn(apple, "canSetUpXcode").mockReturnValue(false);
+  });
+  afterEach(() => xcode.mockRestore());
+
+  test("the Google flags reach native setup and the agent continuation", async () => {
+    setup({ email: "user@example.com", isAgent: true });
+    spyOn(context, "gatherContext").mockResolvedValue({
+      ...FAKE_CTX,
+      deps: {},
+      framework: androidFramework,
+    });
+    const run = spyOn(android, "runAndroidInit").mockResolvedValue();
+    track(run);
+    await init({
+      json: true,
+      signInWithGoogle: true,
+      googleClientId: "1-a.apps.googleusercontent.com",
+      googleClientSecretFile: "-",
+    });
+    expect(JSON.parse(captured.out).next[1]).toContain(
+      "--sign-in-with-google --google-client-id 1-a.apps.googleusercontent.com --google-client-secret-file -",
+    );
+  });
+
+  test("the credential flags need --sign-in-with-google, and a dry run takes no secret", async () => {
+    setup({ email: "user@example.com" });
+    spyOn(context, "gatherContext").mockResolvedValue({
+      ...FAKE_CTX,
+      deps: {},
+      framework: androidFramework,
+    });
+    await expect(init({ googleClientId: "1-a.apps.googleusercontent.com" })).rejects.toThrow(
+      "apply with --sign-in-with-google",
+    );
+    await expect(
+      init({ dryRun: true, signInWithGoogle: true, googleClientSecretFile: "x" }),
+    ).rejects.toThrow("--dry-run never configures");
+  });
+});
