@@ -1034,6 +1034,10 @@ describe("large pastes stay linear", () => {
     ["minified JSON log", (n) => fill('{"level":"info","user":"bob","n":1},', n)],
     ["literal \\n escapes between assignments", (n) => fill("a\\npassword=x%20", n)],
     ["a JSON-escaped color code with no final letter", (n) => "\\u001b[" + fill("1;", n)],
+    [
+      "a \\x1B color code with colon parameters and no final letter",
+      (n) => "\\x1B[" + fill("1:", n),
+    ],
   ];
 
   const timed = (input: string): number => {
@@ -1203,7 +1207,7 @@ describe("escaped JSON inside a string", () => {
 });
 
 // A literal `\n` or `\t` (escaped text), a JSON `\u` escape, a URL-encoded
-// character or an ANSI color code, raw or JSON-escaped, ends in a letter or
+// character or an ANSI color code, raw or escaped, ends in a letter or
 // digit, which would otherwise hide the next word's start.
 describe("secrets right after an escape sequence", () => {
   const BEARER_TOKEN = "abcdefghijklmnopqrstuvwxyz123456";
@@ -1248,6 +1252,25 @@ describe("secrets right after an escape sequence", () => {
       `{"m":"\\u001B[31m${"sk_live_"}abc123def456"}`,
       "abc123def456",
     ],
+    [
+      "Clerk key after a colon-separated 256-color code",
+      `\x1b[38:5:196m${"sk_live_"}abc123def456\x1b[0m`,
+      "abc123def456",
+    ],
+    [
+      "Clerk key after a colon-separated RGB color code",
+      `\x1b[38:2::255:0:0m${"sk_live_"}abc123def456`,
+      "abc123def456",
+    ],
+    [
+      "Clerk key after a JSON-escaped colon-separated color code",
+      `{"m":"\\u001b[38:5:196m${"sk_live_"}abc123def456"}`,
+      "abc123def456",
+    ],
+    ["Clerk key after a \\x1B color code", `"\\x1B[1m${"sk_live_"}abc123def456"`, "abc123def456"],
+    ["Clerk key after a \\033 color code", `"\\033[31m${"sk_live_"}abc123def456"`, "abc123def456"],
+    ["Clerk key after a \\33 color code", `"\\33[31m${"sk_live_"}abc123def456"`, "abc123def456"],
+    ["Clerk key after a \\e color code", `"\\e[1m${"sk_live_"}abc123def456"`, "abc123def456"],
   ])("%s", (_label, input, secret) => {
     const { text, redactions } = redact(input);
     expect(text).not.toContain(secret);
@@ -1268,8 +1291,9 @@ describe("secrets right after an escape sequence", () => {
   });
 
   test("the escape sequences themselves survive", () => {
-    expect(redact(`a\\nsk_live_abc123def456\\tb%20c%3Dd\\u0026e\\u001b[1mf`).text).toBe(
-      `a\\n${REDACTED}\\tb%20c%3Dd\\u0026e\\u001b[1mf`,
+    const tail = `\\x1B[38:5:196mg\\033[0mh\\e[1mi\x1b[38:2::1:2:3mj`;
+    expect(redact(`a\\nsk_live_abc123def456\\tb%20c%3Dd\\u0026e\\u001b[1mf${tail}`).text).toBe(
+      `a\\n${REDACTED}\\tb%20c%3Dd\\u0026e\\u001b[1mf${tail}`,
     );
   });
 });

@@ -22,7 +22,7 @@ import {
   setTelemetryDisabled,
 } from "../../lib/config.ts";
 import { FEEDBACK_DAILY_LIMIT, GITHUB_ISSUES_URL } from "../../lib/constants.ts";
-import { CliError, EXIT_CODE } from "../../lib/errors.ts";
+import { CliError, EXIT_CODE, UserAbortError } from "../../lib/errors.ts";
 import { setLogLevel } from "../../lib/log.ts";
 import * as prompts from "../../lib/prompts.ts";
 import { EMAIL_MARKER, REDACTED } from "../../lib/redact.ts";
@@ -1222,4 +1222,39 @@ describe("an opt-out that lands during a human-mode prompt", () => {
     expect(posted).toHaveLength(0);
     expect((await readConfig()).telemetryNoticeShown).toBeUndefined();
   });
+});
+
+describe("an empty editor in human mode", () => {
+  const originalMode = process.env.CLERK_MODE;
+  beforeEach(() => {
+    process.env.CLERK_MODE = "human";
+  });
+  afterEach(() => {
+    if (originalMode === undefined) delete process.env.CLERK_MODE;
+    else process.env.CLERK_MODE = originalMode;
+  });
+
+  test.each([
+    ["--attempted", { attempted: undefined }, ""],
+    ["--issue", { issue: undefined }, " \n\t"],
+  ] as const)(
+    "an empty %s cancels after one launch and sends nothing",
+    async (flag, missing, saved) => {
+      await readyToSend();
+      const editor = spyOn(prompts, "editor").mockImplementation(async () => saved);
+      try {
+        await expect(feedback({ ...COMPLETE, ...missing, yes: true }, program)).rejects.toThrow(
+          UserAbortError,
+        );
+        expect(editor).toHaveBeenCalledTimes(1);
+        // `editor()` reopens while its check fails, so the check must let an empty save through.
+        expect(editor.mock.calls[0]![0].validate?.("")).toBeUndefined();
+      } finally {
+        editor.mockRestore();
+      }
+      expect(captured.err).toContain(`pass ${flag}`);
+      expect(captured.out).toBe("");
+      expect(posted).toHaveLength(0);
+    },
+  );
 });

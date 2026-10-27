@@ -439,14 +439,15 @@ const TEXT_OPTIONS = (options: FeedbackOptions): Record<string, string | undefin
   suggestion: options.suggestion,
 });
 
-/** Prompt validation: required, and under the ceiling. */
-const nonEmptyUnderCeiling = (value: string | undefined): string | undefined => {
-  if (!value?.trim()) return "This field is required.";
-  if (value.length > FEEDBACK_FIELD_MAX_LENGTH) {
-    return `This is ${value.length.toLocaleString("en-US")} characters; the limit is ${FIELD_MAX_LENGTH_TEXT}.`;
-  }
-  return undefined;
+/** Prompt validation: under the ceiling. */
+const underCeiling = (value: string | undefined): string | undefined => {
+  if (value === undefined || value.length <= FEEDBACK_FIELD_MAX_LENGTH) return undefined;
+  return `This is ${value.length.toLocaleString("en-US")} characters; the limit is ${FIELD_MAX_LENGTH_TEXT}.`;
 };
+
+/** Prompt validation: required, and under the ceiling. */
+const nonEmptyUnderCeiling = (value: string | undefined): string | undefined =>
+  value?.trim() ? underCeiling(value) : "This field is required.";
 
 /**
  * Step 1 in both modes: the shape of whatever was supplied. Presence of the
@@ -548,13 +549,10 @@ async function promptMissingFields(fields: ValidatedFields): Promise<CompleteFie
     (await text({ message: "What were you trying to do?", validate: nonEmptyUnderCeiling })).trim();
   const attempted =
     fields.attempted ??
-    (
-      await editor({
-        message: "What did you run, and what did you expect? (opens your editor)",
-        postfix: ".md",
-        validate: nonEmptyUnderCeiling,
-      })
-    ).trim();
+    (await requiredFromEditor(
+      "What did you run, and what did you expect? (opens your editor)",
+      "--attempted",
+    ));
   const outcome =
     fields.outcome ??
     (await select<FeedbackOutcome>({
@@ -566,14 +564,22 @@ async function promptMissingFields(fields: ValidatedFields): Promise<CompleteFie
     }));
   const issue =
     fields.issue ??
-    (
-      await editor({
-        message: "What went wrong or was confusing? (opens your editor)",
-        postfix: ".md",
-        validate: nonEmptyUnderCeiling,
-      })
-    ).trim();
+    (await requiredFromEditor("What went wrong or was confusing? (opens your editor)", "--issue"));
   return { ...fields, goal, attempted, outcome, issue };
+}
+
+/**
+ * An empty save cancels, as an empty message cancels `git commit`. Requiring
+ * a value instead would loop: `editor()` reopens at once when its check fails,
+ * so an editor that returns before anything is typed relaunches without end.
+ */
+async function requiredFromEditor(message: string, flag: string): Promise<string> {
+  const value = (await editor({ message, postfix: ".md", validate: underCeiling })).trim();
+  if (value) return value;
+  log.warn(
+    `Nothing was written in the editor, so the report was not sent. If it closed before you could type, point VISUAL or EDITOR at an editor that waits (for example "code --wait"), or pass ${flag}.`,
+  );
+  throwUserAbort();
 }
 
 /** The report as sent. `redactions` is the sum across the free-text fields. */

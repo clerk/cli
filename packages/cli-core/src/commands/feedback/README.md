@@ -34,7 +34,8 @@ The limit is far above every cap, so it only ever meets a script that pasted a w
 into one field.
 
 Human mode prompts for any missing required field, shows the exact report, and asks before
-sending. Agent mode never prompts.
+sending. An editor left empty cancels the report instead of reopening. Agent mode never
+prompts.
 
 ## What is sent
 

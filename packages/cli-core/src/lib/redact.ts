@@ -216,11 +216,13 @@ type HeaderInStringGroups = {
 
 /**
  * A literal `\n`, `\r` or `\t`, a JSON `\u` escape, a URL-encoded character,
- * or an ANSI escape, raw or JSON-escaped (`\u001b[1m`). Each ends in a letter
- * or digit, so a secret right after one is not at a word edge and every pass
- * would skip it; {@link redactText} scrubs the text between them again.
+ * or an ANSI escape: raw, JSON-escaped (`\u001b[1m`) or spelled as source
+ * text (`\x1B[1m`, `\033[1m`, `\e[1m`), with any parameters (`38:5:196`).
+ * Each ends in a letter or digit, so a secret right after one is not at a
+ * word edge and every pass would skip it; {@link redactText} scrubs the text
+ * between them again.
  */
-const ESCAPE = String.raw`(?:\x1b|\\u001[bB])\[[0-9;?]*[A-Za-z]|\\u[0-9A-Fa-f]{4}|\\[nrt]|%[0-9A-Fa-f]{2}`;
+const ESCAPE = String.raw`(?:\x1b|\\u001[bB]|\\x1[bB]|\\0?33|\\e)\[[0-9:;<=>?]*[A-Za-z]|\\u[0-9A-Fa-f]{4}|\\[nrt]|%[0-9A-Fa-f]{2}`;
 
 /**
  * `Authorization: <anything to the end of the line>`, or a quoted value when
