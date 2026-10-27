@@ -12,10 +12,10 @@ import path from "node:path";
 import csvParser from "csv-parser";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import { getSource } from "../sources/registry.ts";
-import { normalizeBooleanField } from "../sources/shared.ts";
+import { normalizeBooleanField, parseDate } from "../sources/shared.ts";
 import { type TransformContext, type SourceEntry, type User } from "../types.ts";
 import { userSchema } from "../validator.ts";
-import { readJsonFile } from "./export-file.ts";
+import { isEnvelope, readJsonFile } from "./export-file.ts";
 
 export type FileType = "application/json" | "text/csv";
 
@@ -195,7 +195,7 @@ function normalizeDateField(value: unknown): unknown {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
 
-  const date = new Date(trimmed);
+  const date = parseDate(trimmed);
   return Number.isNaN(date.getTime()) ? value : date.toISOString();
 }
 
@@ -441,8 +441,11 @@ async function readUsersFromFile(
   let preExtracted: Record<string, unknown>[] | undefined;
   let csvHeaders: string[] | undefined;
 
+  // An export's envelope already holds the users in the source's own shape,
+  // so there is nothing left for a pre-transform to unwrap.
   if (type === "application/json") {
     const parsed = readJsonFile(filePath);
+    if (isEnvelope(parsed)) return assertUserRows(parsed.users, file);
     if (!transformer.preTransform) return assertUserRows(parsed, file);
   }
 
@@ -454,7 +457,7 @@ async function readUsersFromFile(
   }
 
   // A pre-transform's rows win over the file, CSV or not.
-  if (preExtracted) return preExtracted;
+  if (preExtracted) return assertUserRows(preExtracted, file);
   if (type === "text/csv") return readCsv(filePath, csvHeaders);
 
   return assertUserRows(readJsonFile(filePath), file);

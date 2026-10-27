@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import { yellow, dim, cyan } from "../../lib/color.js";
-import { log } from "../../lib/log.js";
+import { log, plain } from "../../lib/log.js";
 
 type AuthLibraryScan = {
   packages: string[];
@@ -55,6 +55,19 @@ const AUTH_LIBRARY_SCANS: AuthLibraryScan[] = [
     docsUrl: "https://clerk.com/docs/migrations/overview",
   },
   {
+    // AuthKit only: `@workos-inc/node` also serves SSO, Directory Sync and
+    // Audit Logs for apps that authenticate with something else.
+    packages: [
+      "@workos-inc/authkit-nextjs",
+      "@workos-inc/authkit-react",
+      "@workos-inc/authkit-react-router",
+      "@workos-inc/authkit-remix",
+      "@workos-inc/authkit-js",
+    ],
+    name: "WorkOS",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
+  },
+  {
     packages: ["@kinde-oss/kinde-auth-nextjs"],
     name: "Kinde",
     docsUrl: "https://clerk.com/docs/migrations/overview",
@@ -66,8 +79,8 @@ export function detectAuthLibraries(deps: Record<string, string>): void {
     const found = scan.packages.some((pkg) => pkg in deps);
     if (!found) continue;
 
-    log.data(yellow(`\n⚠ Detected ${scan.name} in your project.`));
-    log.data(dim(`  Migration guide: ${scan.docsUrl}`));
+    log.data(plain(yellow(`\n⚠ Detected ${scan.name} in your project.`)));
+    log.data(plain(dim(`  Migration guide: ${scan.docsUrl}`)));
   }
 }
 
@@ -110,6 +123,13 @@ const CODE_SCANS: CodeScan[] = [
   {
     pattern: "import\\s.*from\\s+['\"]passport['\"]",
     message: "Passport import still in use",
+  },
+  {
+    // WorkOS users through the general Node SDK, which the package scan leaves
+    // out. The `sso` and `directorySync` modules alone hold no users.
+    pattern: "\\bworkos\\.userManagement\\b",
+    message: "WorkOS User Management still in use",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
   },
   {
     pattern: "getServerSession\\s*\\(",
@@ -171,10 +191,10 @@ export async function scanForIssues(cwd: string, frameworkDep: string): Promise<
 export function printFindings(findings: ScanFinding[]): void {
   if (findings.length === 0) return;
 
-  log.data(dim("\n  Recommendations:"));
+  log.data(plain(dim("\n  Recommendations:")));
   for (const f of findings) {
     const location = `${cyan(f.file)}:${f.line}`;
-    log.data(`  ${yellow("⚠")} ${location} ${dim("—")} ${f.message}`);
-    if (f.docsUrl) log.data(`    ${dim(f.docsUrl)}`);
+    log.data(plain(`  ${yellow("⚠")} ${location} ${dim("—")} ${f.message}`));
+    if (f.docsUrl) log.data(plain(`    ${dim(f.docsUrl)}`));
   }
 }

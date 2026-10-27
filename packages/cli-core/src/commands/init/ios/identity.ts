@@ -2,7 +2,12 @@ import { dirname, resolve } from "node:path";
 import { DOMParser } from "@xmldom/xmldom";
 import { bundleIdentifiersEqual } from "../../../lib/apple-native-identity.ts";
 import { snapshotFile } from "./files.ts";
-import { resolveInstance, type NativeAPI, type RemoteInput } from "./remote.ts";
+import {
+  resolveInstance,
+  type InstanceEnvironment,
+  type NativeAPI,
+  type RemoteInput,
+} from "./remote.ts";
 import type { Inspection } from "./xcode.ts";
 import { setupError } from "./types.ts";
 import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
@@ -14,7 +19,7 @@ export type IdentityPrompt = (
   message: string,
   suggestion?: string,
 ) => Promise<string>;
-const validBundle = (value: string | undefined): value is string =>
+export const validBundle = (value: string | undefined): value is string =>
   !!value && value.length <= 255 && /^[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+$/.test(value);
 
 export async function discoverBundleIdentifier(
@@ -85,8 +90,9 @@ export async function discoverRemote(
   inspection: Inspection,
   api: NativeAPI,
   prompt?: IdentityPrompt,
+  environment: InstanceEnvironment = "development",
 ) {
-  const instance = await resolveInstance(input, api);
+  const instance = await resolveInstance(input, api, environment);
   const [native, applications] = await Promise.all([
     api.getNativeSettings(instance.applicationId, instance.instanceId),
     api.listIOSApplications(instance.applicationId, instance.instanceId),

@@ -374,6 +374,7 @@ export default function Root() {
   expect(rootAction.content).toContain(
     'className="flex h-16 items-center justify-end gap-4 border-b px-4"',
   );
+  expect(rootAction.content).not.toContain("Suspense");
   expect(rootAction.description).toContain("auth header");
 });
 

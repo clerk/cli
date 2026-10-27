@@ -46,6 +46,13 @@ test("with Xcode, writes no files and explains how to choose an application", as
   expect(text).not.toContain("clerk env pull");
 });
 
+test("with Xcode, points at the continuation that carries this run's setup options", async () => {
+  xcode.mockReturnValue(true);
+  const command = "clerk init --app <app_id> --json --apple-sdk core --app-id-prefix LEGACY0001";
+  const plan = await ios.scaffold({ ...makeCtx(), nativeContinuation: command });
+  expect(plan.postInstructions.join("\n")).toContain(`Then run \`${command}\``);
+});
+
 test("without Xcode, prints the manual quickstart and points at the env file", async () => {
   xcode.mockReturnValue(false);
   const plan = await ios.scaffold({ ...makeCtx(), envFile: ".env.local" });

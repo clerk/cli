@@ -164,7 +164,9 @@ describe("rejects", () => {
     const checks = await checkImport(
       input({ failures: [{ userId: "bad", row: 0, error: "Invalid email", path: ["email"] }] }),
     );
-    expect(checks.rejects).toEqual([{ sourceId: "bad", reason: "invalid: Invalid email" }]);
+    expect(checks.rejects).toEqual([
+      { sourceId: "bad", reason: "invalid: Invalid email", inFile: true },
+    ]);
     expect(checks.total).toBe(1);
   });
 
@@ -247,6 +249,7 @@ describe("rejects", () => {
         sourceId: "auth0|1",
         reason: "email is also used by an earlier user in the file, which is kept",
         keptSourceId: "email|1",
+        inFile: true,
       },
     ]);
   });
@@ -307,11 +310,32 @@ describe("rejects", () => {
 
   // A repeated record (an export that paged past a sign-up) must not take the
   // kept copy down with it.
+  // Adopted means created by this run, but only for its own record: another
+  // user that shares its email would still clash at create.
+  test("an adopted user's identifiers still clash with other users", async () => {
+    existing = [
+      {
+        id: "user_mine",
+        external_id: "mine",
+        email_addresses: [{ email_address: "mine@x.dev" }, { email_address: "shared@x.dev" }],
+      },
+    ];
+    expect(
+      await reasonsOf({
+        users: [
+          user("mine", { emailAddresses: ["shared@x.dev"] }),
+          user("other", { email: "shared@x.dev" }),
+        ],
+        adoptedClerkIds: new Set(["user_mine"]),
+      }),
+    ).toEqual({ other: "email is already used by a user in the instance" });
+  });
+
   test("a repeated source ID rejects only the later copy", async () => {
     const checks = await checkImport(input({ users: [user("a"), user("a")] }));
     expect(checks.importable.map((u) => u.userId)).toEqual(["a"]);
     expect(checks.rejects).toEqual([
-      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a" },
+      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a", inFile: true },
     ]);
   });
 
@@ -325,6 +349,15 @@ describe("rejects", () => {
       }),
     );
     expect(checks.importable.map((u) => u.userId)).toEqual(["kept"]);
+  });
+
+  // A continued run found this user behind its own in-flight create.
+  test("not a user the continued run adopted", async () => {
+    existing = [{ id: "user_1", external_id: "mine" }];
+
+    expect(
+      await reasonsOf({ users: [user("mine")], adoptedClerkIds: new Set(["user_1"]) }),
+    ).toEqual({});
   });
 
   test("a supabase user whose only provider is disabled", async () => {
@@ -413,6 +446,24 @@ describe("rejects", () => {
   });
 
   // Each reject names that user's providers, not every disabled one in the file.
+  // Counts only: Auth0 users are never rejected for a provider, but the run
+  // still says which providers to enable before they import.
+  test("a source's own provider reading offers the fix, and rejects no one", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings(
+          { email_address: { enabled: true } },
+          { oauth_google: { enabled: true } },
+        ),
+        socialProviders: (u) => (u.userId.startsWith("github|") ? ["github"] : ["google"]),
+        users: [user("github|1"), user("google-oauth2|2")],
+      }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.fixes.map((fix) => fix.label)).toContain("Enable GitHub sign-in");
+    expect(checks.fixes.map((fix) => fix.label)).not.toContain("Enable Google sign-in");
+  });
+
   test("a supabase reject names only that user's own providers", async () => {
     const rows = [
       { id: "discord", raw_app_meta_data: { providers: ["discord"] } },
@@ -449,6 +500,97 @@ describe("rejects", () => {
     expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 2, over: 1 });
   });
 
+  // A continued run's adopted users exist already and are never created
+  // again: the live count has them, and only new users take headroom.
+  test("an adopted user takes no headroom, wherever it sits in the file", async () => {
+    const checks = await checkImport(
+      input({
+        instanceType: "dev",
+        existingUsers: 99,
+        adoptedClerkIds: new Set(["user_c"]),
+        adoptedSourceIds: new Set(["c"]),
+        users: [user("a"), user("b"), user("c")],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["a", "c"]);
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["b"]);
+    expect(checks.quota).toEqual({ existing: 99, limit: 100, headroom: 1, over: 1 });
+  });
+
+  // The checks stop creates; an adopted user needs none, so a reject would
+  // only leave it `creating` for good.
+  test("an adopted user is never rejected", async () => {
+    const checks = await checkImport(
+      input({
+        settings: {
+          ...settings({ email_address: { enabled: true } }),
+          sign_up: { legal_consent_enabled: true },
+        } as never,
+        adoptedSourceIds: new Set(["a"]),
+        users: [user("a"), user("b")],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["a"]);
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["b"]);
+  });
+
+  // Both would go to importUsers as the one adopted user.
+  // The adopted user is in Clerk with that email, so the earlier record's
+  // create would be the one Clerk refuses.
+  test("rejects an earlier record that shares an adopted user's email", async () => {
+    const checks = await checkImport(
+      input({
+        adoptedSourceIds: new Set(["late"]),
+        users: [user("early", { email: "same@x.dev" }), user("late", { email: "same@x.dev" })],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["late"]);
+    expect(checks.rejects).toEqual([
+      {
+        sourceId: "early",
+        reason: "shares an email, phone or username with a user an earlier attempt already created",
+        keptSourceId: "late",
+        inFile: true,
+      },
+    ]);
+  });
+
+  // A, rejected for B's email, no longer holds its phone against C.
+  test("a record rejected for an adopted user's email leaves its phone to a later one", async () => {
+    const checks = await checkImport(
+      input({
+        adoptedSourceIds: new Set(["b"]),
+        users: [
+          user("a", { email: "x@x.dev", phone: "+15555550100" }),
+          user("b", { email: "x@x.dev" }),
+          user("c", { email: "c@x.dev", phone: "+15555550100" }),
+        ],
+      }),
+    );
+    expect(checks.importable.map((entry) => entry.userId)).toEqual(["b", "c"]);
+    expect(checks.rejects).toEqual([
+      {
+        sourceId: "a",
+        reason: "shares an email, phone or username with a user an earlier attempt already created",
+        keptSourceId: "b",
+        inFile: true,
+      },
+    ]);
+  });
+
+  test("a second record with an adopted user's source ID is still rejected", async () => {
+    const checks = await checkImport(
+      input({
+        adoptedSourceIds: new Set(["a"]),
+        users: [user("a"), user("a", { email: "z@x.dev" })],
+      }),
+    );
+    expect(checks.importable).toHaveLength(1);
+    expect(checks.rejects).toEqual([
+      { sourceId: "a", reason: "duplicate source ID in the file", keptSourceId: "a", inFile: true },
+    ]);
+  });
+
   test("warns that an unreadable user count was checked as empty", async () => {
     const checks = await checkImport(
       input({ instanceType: "dev", existingUsers: null, users: [user("a")] }),
@@ -469,11 +611,17 @@ describe("rejects", () => {
     }
   });
 
-  test("a user its source asked to skip, with the source's reason", async () => {
+  // Skipped, not rejected: a reject stops the import without --allow-partial,
+  // and nobody is meant to bring these users across.
+  test("a user its source asked to skip is skipped, with the source's reason", async () => {
     const checks = await checkImport(
       input({ users: [user("a", { skipReason: "anonymous Better Auth user" }), user("b")] }),
     );
-    expect(checks.rejects).toEqual([{ sourceId: "a", reason: "anonymous Better Auth user" }]);
+    expect(checks.rejects).toEqual([]);
+    expect(checks.skipped).toEqual([
+      { sourceId: "a", reason: "anonymous Better Auth user", inFile: true },
+    ]);
+    expect(checks.skippedReasons).toEqual([{ reason: "anonymous Better Auth user", count: 1 }]);
     expect(checks.importable.map((entry) => entry.userId)).toEqual(["b"]);
   });
 
@@ -488,6 +636,7 @@ describe("rejects", () => {
         {
           sourceId: "a",
           reason: "only has emails Clerk refuses (malformed, or a domain that can't receive mail)",
+          inFile: true,
         },
       ]);
     });
@@ -677,7 +826,7 @@ describe("rejects", () => {
         expect(
           await reasonsOf({ settings: required, users: [user("a", { phone: "415 555 0100" })] }),
         ).toEqual({
-          a: "only has phones not in E.164 form, and this instance requires a phone number (numeric usernames are on)",
+          a: "its phones aren't in E.164 form, and this instance requires a phone number (numeric usernames are on)",
         });
       });
 
@@ -1050,7 +1199,10 @@ describe("hashShapeProblem", () => {
   test.each([
     [BCRYPT, "bcrypt"],
     ["hash$salt$signer$sep$8$14", "scrypt_firebase"],
+    // A project with no salt separator.
+    ["hash$salt$signer$$8$14", "scrypt_firebase"],
     ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2i$v=19$m=1048576,t=20,p=16$c2FsdA$aGFzaA", "argon2i"],
     [`scrypt:16384:16:1$${"a".repeat(32)}$${"b".repeat(128)}`, "scrypt_werkzeug"],
     // Not checked: a bad digest there fails only at sign-in.
     ["anything", "pbkdf2_sha256"],
@@ -1064,7 +1216,22 @@ describe("hashShapeProblem", () => {
     ["$2a$03$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy", "bcrypt"],
     ["hash$salt$signer$sep$eight$14", "scrypt_firebase"],
     ["hash$salt", "scrypt_firebase"],
+    ["hash$$signer$sep$8$14", "scrypt_firebase"],
+    // Clerk decodes every segment as base64.
+    ["not base64!$salt$signer$sep$8$14", "scrypt_firebase"],
+    ["hash$sa=lt$signer$sep$8$14", "scrypt_firebase"],
     ["argon2id$...", "argon2id"],
+    // Shapes clerk_go's argon2.DecodeHash refuses, or argon2 cannot run.
+    ["$argon2id$v=19$m=65536,t=3,p=4$notreal", "argon2id"],
+    ["$argon2id$v=16$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdA==$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdB$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=2097152,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=21,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=3,p=17$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=0,p=4$c2FsdA$aGFzaA", "argon2id"],
+    // The variant has to match the hasher.
+    ["$argon2i$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
     ["scrypt:16384:16:1$salt$not-hex!", "scrypt_werkzeug"],
   ])("rejects %s as %s", (password, hasher) => {
     expect(hashShapeProblem(password, hasher)).toBeDefined();

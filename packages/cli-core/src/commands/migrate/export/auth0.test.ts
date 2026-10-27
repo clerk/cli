@@ -1,0 +1,580 @@
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { CliError, EXIT_CODE } from "../../../lib/errors.ts";
+import type { UserLine } from "../lib/run-store.ts";
+import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { setAssumeYes } from "../lib/assume-yes.ts";
+import {
+  buildAuth0Export,
+  exportAuth0,
+  fetchAllAuth0Users,
+  fetchAuth0Token,
+  mapAuth0UserToExport,
+  isAuth0Domain,
+  normalizeAuth0Domain,
+  resolveAuth0Credentials,
+} from "./auth0.ts";
+
+const captured = useCaptureLog();
+
+const CREDENTIALS = { domain: "t.auth0.com", clientId: "cid", clientSecret: "csec" };
+
+let workDir: string;
+let originalCwd: string;
+let originalFetch: typeof globalThis.fetch;
+let requests: { url: string; body: unknown }[];
+
+let originalMode: string | undefined;
+
+beforeAll(() => {
+  originalMode = process.env.CLERK_MODE;
+  originalCwd = process.cwd();
+  originalFetch = globalThis.fetch;
+  workDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-expauth0-")));
+  process.chdir(workDir);
+});
+
+afterAll(() => {
+  if (originalMode === undefined) delete process.env.CLERK_MODE;
+  else process.env.CLERK_MODE = originalMode;
+  globalThis.fetch = originalFetch;
+  process.chdir(originalCwd);
+  fs.rmSync(workDir, { recursive: true, force: true });
+});
+
+beforeEach(() => {
+  // Tests that need a prompt set human mode themselves; without this a
+  // leaked "human" from an earlier test stops a later one on the destination prompt.
+  process.env.CLERK_MODE = "agent";
+  requests = [];
+  fs.rmSync(path.join(workDir, ".clerk"), { recursive: true, force: true });
+  fs.rmSync(path.join(workDir, "exports"), { recursive: true, force: true });
+});
+
+afterEach(() => {
+  globalThis.fetch = originalFetch;
+});
+
+const auth0User = (i: number, overrides: Record<string, unknown> = {}) => ({
+  user_id: `auth0|a${i}`,
+  email: `a${i}@x.dev`,
+  email_verified: true,
+  given_name: `Given${i}`,
+  family_name: `Family${i}`,
+  ...overrides,
+});
+
+/** Stubs the token exchange plus one page of users per entry in `pages`. */
+function stubAuth0(pages: Record<string, unknown>[][], token: Response | null = null) {
+  let page = 0;
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input.toString();
+    requests.push({ url, body: init?.body ? JSON.parse(init.body as string) : null });
+
+    if (url.includes("/oauth/token")) {
+      return token ?? Response.json({ access_token: "tok" });
+    }
+    return Response.json({
+      users: pages[page++] ?? [],
+      total: pages.reduce((sum, p) => sum + p.length, 0),
+    });
+  }) as unknown as typeof fetch;
+}
+
+describe("normalizeAuth0Domain", () => {
+  test.each([
+    ["t.auth0.com", "t.auth0.com"],
+    ["https://t.auth0.com", "t.auth0.com"],
+    ["http://t.auth0.com/", "t.auth0.com"],
+    ["  t.auth0.com  ", "t.auth0.com"],
+  ])("%s -> %s", (input, expected) => {
+    expect(normalizeAuth0Domain(input)).toBe(expected);
+  });
+});
+
+// The client secret goes to this host, so anything that could make URL parsing
+// pick a different one is refused.
+describe("isAuth0Domain", () => {
+  test.each(["t.auth0.com", "https://t.auth0.com/", "login.example.com"])(
+    "accepts %s",
+    (domain) => {
+      expect(isAuth0Domain(domain)).toBe(true);
+    },
+  );
+
+  test.each([
+    "t.auth0.com@attacker.example",
+    "t.auth0.com/path",
+    "t.auth0.com:8443",
+    "t.auth0.com?x=1",
+    "localhost",
+  ])("refuses %s", (domain) => {
+    expect(isAuth0Domain(domain)).toBe(false);
+  });
+});
+
+describe("resolveAuth0Credentials", () => {
+  test("refuses a domain that would send the secret to another host", async () => {
+    await expect(
+      resolveAuth0Credentials(
+        {},
+        {
+          AUTH0_DOMAIN: "t.auth0.com@attacker.example",
+          AUTH0_CLIENT_ID: "c",
+          AUTH0_CLIENT_SECRET: "s",
+        },
+      ),
+    ).rejects.toThrow(/is not an Auth0 domain/);
+  });
+
+  test("prefers flags", async () => {
+    const resolved = await resolveAuth0Credentials(
+      { domain: "flag.auth0.com", clientId: "f", clientSecret: "s" },
+      { AUTH0_DOMAIN: "env.auth0.com" },
+    );
+    expect(resolved.domain).toBe("flag.auth0.com");
+  });
+
+  test("a blank flag falls back to the environment, trimmed", async () => {
+    const resolved = await resolveAuth0Credentials(
+      { domain: " ", clientId: "  ", clientSecret: "" },
+      { AUTH0_DOMAIN: "env.auth0.com ", AUTH0_CLIENT_ID: "c", AUTH0_CLIENT_SECRET: " s" },
+    );
+    expect(resolved).toMatchObject({ domain: "env.auth0.com", clientId: "c", clientSecret: "s" });
+  });
+
+  test("falls back to the environment", async () => {
+    const resolved = await resolveAuth0Credentials(
+      {},
+      {
+        AUTH0_DOMAIN: "env.auth0.com",
+        AUTH0_CLIENT_ID: "e",
+        AUTH0_CLIENT_SECRET: "s",
+      },
+    );
+    expect(resolved).toEqual({ domain: "env.auth0.com", clientId: "e", clientSecret: "s" });
+  });
+
+  test("normalizes a domain that came with a scheme", async () => {
+    const resolved = await resolveAuth0Credentials(
+      { domain: "https://t.auth0.com/", clientId: "c", clientSecret: "s" },
+      {},
+    );
+    expect(resolved.domain).toBe("t.auth0.com");
+  });
+
+  // `-y` is "do not prompt", at a terminal too.
+  test("does not ask for missing credentials under -y", async () => {
+    process.env.CLERK_MODE = "human";
+    setAssumeYes(true);
+    try {
+      await expect(resolveAuth0Credentials({}, {})).rejects.toThrow(/cannot prompt here/);
+    } finally {
+      setAssumeYes(false);
+    }
+  });
+
+  // Tests run non-TTY, the same signal an agent gives.
+  test("names every missing credential at once rather than one at a time", async () => {
+    await expect(resolveAuth0Credentials({}, {})).rejects.toThrow(
+      /--domain \(or AUTH0_DOMAIN\), --client-id \(or AUTH0_CLIENT_ID\), --client-secret \(or AUTH0_CLIENT_SECRET\)/,
+    );
+  });
+
+  test("names only what is actually missing", async () => {
+    await expect(
+      resolveAuth0Credentials({ domain: "t.auth0.com", clientId: "c" }, {}),
+    ).rejects.toThrow(/Missing: --client-secret \(or AUTH0_CLIENT_SECRET\)\./);
+  });
+});
+
+describe("fetchAuth0Token", () => {
+  test("exchanges client credentials for the Management API audience", async () => {
+    stubAuth0([[]]);
+
+    expect(await fetchAuth0Token(CREDENTIALS)).toBe("tok");
+    expect(requests[0]?.url).toBe("https://t.auth0.com/oauth/token");
+    expect(requests[0]?.body).toEqual({
+      grant_type: "client_credentials",
+      client_id: "cid",
+      client_secret: "csec",
+      audience: "https://t.auth0.com/api/v2/",
+    });
+  });
+
+  test("explains a rejection instead of surfacing a raw status", async () => {
+    stubAuth0(
+      [[]],
+      new Response(JSON.stringify({ error_description: "Wrong client secret" }), { status: 401 }),
+    );
+
+    await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(
+      /Auth0 rejected the credentials \(401\): Wrong client secret/,
+    );
+  });
+
+  // An outage is not a bad credential: no re-prompt, and exit 1, not 2.
+  test("a 5xx is an outage, not a rejected credential", async () => {
+    stubAuth0([[]], new Response("{}", { status: 503 }));
+    const error = (await fetchAuth0Token(CREDENTIALS).catch((e: unknown) => e)) as CliError;
+    expect(error.message).toContain("Auth0 did not issue a token (503)");
+    expect(error.exitCode).not.toBe(EXIT_CODE.USAGE);
+  });
+
+  test("does not follow a redirect with the client secret", async () => {
+    let redirect: RequestInit["redirect"];
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      redirect = init?.redirect;
+      return new Response(null, {
+        status: 307,
+        headers: { location: "https://elsewhere.example/" },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(/did not issue a token \(307\)/);
+    expect(redirect).toBe("manual");
+  });
+
+  test("mentions the read:users scope, the usual cause", async () => {
+    stubAuth0([[]], new Response("{}", { status: 403 }));
+    await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(/read:users/);
+  });
+
+  test("refuses a token granted without read:users, so the credentials are asked for again", async () => {
+    stubAuth0([[]], Response.json({ access_token: "tok", scope: "read:clients" }));
+    const error = (await fetchAuth0Token(CREDENTIALS).catch((e: unknown) => e)) as CliError;
+    expect(error.message).toContain("without the `read:users` scope");
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+  });
+
+  test("takes a token whose scope includes read:users", async () => {
+    stubAuth0([[]], Response.json({ access_token: "tok", scope: "read:clients read:users" }));
+    expect(await fetchAuth0Token(CREDENTIALS)).toBe("tok");
+  });
+
+  test("names the tenant's own domain when the credentials are rejected", async () => {
+    stubAuth0([[]], new Response("{}", { status: 401 }));
+    await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(/not a custom domain/);
+  });
+
+  test("fails when a 200 carries no token", async () => {
+    stubAuth0([[]], Response.json({}));
+    await expect(fetchAuth0Token(CREDENTIALS)).rejects.toThrow(CliError);
+  });
+});
+
+describe("fetchAllAuth0Users", () => {
+  test("pages until a short page arrives", async () => {
+    stubAuth0([
+      Array.from({ length: 100 }, (_, i) => auth0User(i)),
+      Array.from({ length: 4 }, (_, i) => auth0User(100 + i)),
+    ]);
+
+    const { users: all, truncated } = await fetchAllAuth0Users({
+      credentials: CREDENTIALS,
+      token: "tok",
+    });
+
+    expect(all).toHaveLength(104);
+    expect(truncated).toBe(false);
+    expect(requests[0]?.url).toContain("page=0");
+    expect(requests[1]?.url).toContain("page=1");
+    expect(requests).toHaveLength(2);
+  });
+
+  // Offset pages: paging past a short one would skip the records after it.
+  // The export says it is short instead of passing for complete.
+  test("a short page before the total ends it, and says the export is short", async () => {
+    stubAuth0([
+      Array.from({ length: 100 }, (_, i) => auth0User(i)),
+      Array.from({ length: 50 }, (_, i) => auth0User(100 + i)),
+      Array.from({ length: 30 }, (_, i) => auth0User(150 + i)),
+    ]);
+
+    const { users: all, truncated } = await fetchAllAuth0Users({
+      credentials: CREDENTIALS,
+      token: "tok",
+    });
+
+    expect(all).toHaveLength(150);
+    expect(truncated).toBe(true);
+    expect(requests).toHaveLength(2);
+    expect(captured.err).toContain("Auth0 reported 180 users but returned 150");
+  });
+
+  test("backs off on a 429, honouring Retry-After, and carries on", async () => {
+    let calls = 0;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requests.push({ url: input.toString(), body: null });
+      calls++;
+      if (calls === 1) {
+        return new Response("Too Many Requests", { status: 429, headers: { "retry-after": "1" } });
+      }
+      return Response.json({ users: [auth0User(0)], total: 1 });
+    }) as unknown as typeof fetch;
+
+    const started = performance.now();
+    const { users: all } = await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+
+    expect(all).toHaveLength(1);
+    expect(requests).toHaveLength(2);
+    expect(performance.now() - started).toBeGreaterThanOrEqual(900);
+  });
+
+  // A sign-up mid-export can shift a page and repeat a user.
+  test("asks for a stable order, and exports a repeated user once", async () => {
+    stubAuth0([
+      Array.from({ length: 100 }, (_, i) => auth0User(i)),
+      [auth0User(99), auth0User(100)],
+    ]);
+
+    const { users: all } = await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+
+    expect(requests[0]?.url).toContain("sort=created_at%3A1");
+    expect(all.map((user) => user.user_id).filter((id) => id === "auth0|a99")).toHaveLength(1);
+    expect(all).toHaveLength(101);
+  });
+
+  // Offset 1000 is past what this endpoint serves.
+  test("never asks for a page past offset 1000", async () => {
+    stubAuth0(
+      Array.from({ length: 12 }, (_, page) =>
+        Array.from({ length: 100 }, (_, i) => auth0User(page * 100 + i)),
+      ),
+    );
+
+    await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+
+    expect(requests).toHaveLength(10);
+    expect(requests.at(-1)?.url).toContain("page=9");
+  });
+
+  test("ends on a short page when Auth0 sends no total", async () => {
+    const pages = [Array.from({ length: 100 }, (_, i) => auth0User(i)), [auth0User(100)]];
+    let page = 0;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      requests.push({ url: input.toString(), body: null });
+      return Response.json({ users: pages[page++] ?? [] });
+    }) as unknown as typeof fetch;
+
+    const { users: all } = await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+
+    expect(all).toHaveLength(101);
+    expect(requests).toHaveLength(2);
+  });
+
+  test("asks for totals and the documented page size", async () => {
+    stubAuth0([[]]);
+    await fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" });
+    expect(requests[0]?.url).toContain("per_page=100");
+    expect(requests[0]?.url).toContain("include_totals=true");
+  });
+
+  // Auth0 caps offset pagination at 1000. Returning the first thousand quietly
+  // would read as "that is everyone".
+  test("stops at Auth0's 1000-record ceiling and says so", async () => {
+    stubAuth0(
+      Array.from({ length: 12 }, (_, page) =>
+        Array.from({ length: 100 }, (_, i) => auth0User(page * 100 + i)),
+      ),
+    );
+
+    const { users: all, truncated } = await fetchAllAuth0Users({
+      credentials: CREDENTIALS,
+      token: "tok",
+    });
+
+    expect(all).toHaveLength(1000);
+    expect(truncated).toBe(true);
+    expect(captured.err).toContain("only pages through the first 1000 users");
+    expect(captured.err).toContain("bulk user export job");
+  });
+
+  // Auth0 reports a larger tenant's total as 1000, so 1000 of 1000 cannot be
+  // told apart from 1000 of 50,000.
+  test("a total of exactly 1000 may hide more, and says so", async () => {
+    stubAuth0(
+      Array.from({ length: 10 }, (_, page) =>
+        Array.from({ length: 100 }, (_, i) => auth0User(page * 100 + i)),
+      ),
+    );
+
+    const { users: all, truncated } = await fetchAllAuth0Users({
+      credentials: CREDENTIALS,
+      token: "tok",
+    });
+
+    expect(all).toHaveLength(1000);
+    expect(truncated).toBe(true);
+    expect(captured.err).toContain("so there may be more");
+  });
+
+  test("does not follow a redirect with the bearer token", async () => {
+    let redirect: RequestInit["redirect"];
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      redirect = init?.redirect;
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://elsewhere.example/" },
+      });
+    }) as unknown as typeof fetch;
+
+    await expect(fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" })).rejects.toThrow(
+      /Auth0 returned 302 listing users/,
+    );
+    expect(redirect).toBe("manual");
+  });
+
+  test("raises a clear error on a failed page request", async () => {
+    globalThis.fetch = (async () =>
+      new Response("nope", { status: 500 })) as unknown as typeof fetch;
+
+    await expect(fetchAllAuth0Users({ credentials: CREDENTIALS, token: "tok" })).rejects.toThrow(
+      /Auth0 returned 500 listing users/,
+    );
+  });
+});
+
+describe("mapAuth0UserToExport", () => {
+  test("keeps the fields the auth0 transformer maps from", () => {
+    expect(
+      mapAuth0UserToExport(auth0User(0, { phone_number: "+1555", created_at: "2025-01-01" })),
+    ).toEqual({
+      user_id: "auth0|a0",
+      email: "a0@x.dev",
+      given_name: "Given0",
+      family_name: "Family0",
+      phone_number: "+1555",
+      created_at: "2025-01-01",
+      email_verified: true,
+    });
+  });
+
+  // Dropping a false flag would import an unconfirmed address as verified.
+  test.each([
+    ["email_verified", false],
+    ["phone_verified", false],
+  ])("keeps %s when it is %p", (field, value) => {
+    const mapped = mapAuth0UserToExport(auth0User(0, { [field]: value }));
+    expect(mapped[field]).toBe(value);
+  });
+
+  test("drops tenant internals the import has no use for", () => {
+    const mapped = mapAuth0UserToExport(
+      auth0User(0, {
+        identities: [{ provider: "auth0" }],
+        logins_count: 42,
+        last_login: "2026-01-01",
+        multifactor: ["guardian"],
+      }),
+    );
+    for (const noise of ["identities", "logins_count", "last_login", "multifactor"]) {
+      expect(noise in mapped).toBe(false);
+    }
+  });
+
+  test("keeps blocked only when it is true", () => {
+    expect(mapAuth0UserToExport(auth0User(0, { blocked: true })).blocked).toBe(true);
+    expect("blocked" in mapAuth0UserToExport(auth0User(0, { blocked: false }))).toBe(false);
+  });
+
+  test("keeps name", () => {
+    expect(mapAuth0UserToExport(auth0User(0, { name: "Ada Lovelace" })).name).toBe("Ada Lovelace");
+  });
+
+  test("omits empty metadata", () => {
+    const mapped = mapAuth0UserToExport(
+      auth0User(0, { user_metadata: {}, app_metadata: { plan: "pro" } }),
+    );
+    expect("user_metadata" in mapped).toBe(false);
+    expect(mapped.app_metadata).toEqual({ plan: "pro" });
+  });
+});
+
+describe("buildAuth0Export", () => {
+  test("counts coverage and records each user", () => {
+    const lines: UserLine[] = [];
+    const { users, coverage } = buildAuth0Export(
+      [auth0User(0), auth0User(1, { given_name: undefined })],
+      (line) => lines.push(line),
+    );
+
+    expect(users).toHaveLength(2);
+    const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
+    expect(byLabel["have an email address"]).toBe(2);
+    expect(byLabel["have a first name"]).toBe(1);
+
+    expect(lines.map((line) => line.status)).toEqual(["exported", "exported"]);
+  });
+
+  // Import splits a plain `name`, so coverage counts it the same way, and
+  // drops the email Auth0 fills `name` with for database users.
+  test("counts the names import would split from `name`", () => {
+    const bare = { given_name: undefined, family_name: undefined };
+    const { coverage } = buildAuth0Export([
+      auth0User(0, { ...bare, name: "Ada Abbott" }),
+      auth0User(1, { ...bare, name: "Grace" }),
+      auth0User(2, { ...bare, name: "a2@x.dev" }),
+    ]);
+
+    const byLabel = Object.fromEntries(coverage.map((c) => [c.label, c.count]));
+    expect(byLabel["have a first name"]).toBe(2);
+    expect(byLabel["have a last name"]).toBe(1);
+  });
+});
+
+/** The envelope the one export run in this project wrote. */
+function onlyExportFile(): string {
+  const dir = path.join(workDir, ".clerk", "migrate");
+  const entries = fs.readdirSync(dir);
+  expect(entries).toHaveLength(1);
+  return path.join(dir, entries[0] as string, "export.json");
+}
+
+/** The users inside that envelope. */
+function exportedUsers(): Record<string, unknown>[] {
+  return (
+    JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8")) as { users: Record<string, unknown>[] }
+  ).users;
+}
+
+describe("exportAuth0", () => {
+  test("writes the default path and reports coverage", async () => {
+    stubAuth0([[auth0User(0)], []]);
+
+    await exportAuth0({ ...CREDENTIALS });
+    expect(JSON.parse(fs.readFileSync(onlyExportFile(), "utf-8"))).toMatchObject({
+      source: "auth0",
+    });
+    const written = exportedUsers();
+    expect(written[0]?.user_id).toBe("auth0|a0");
+    expect(captured.err).toContain("Field coverage");
+  });
+
+  test("names the command that consumes the file", async () => {
+    stubAuth0([[auth0User(0)], []]);
+    // The suggestion now rides the gutter's Next steps block, which only
+    // renders in human mode.
+    process.env.CLERK_MODE = "human";
+    await exportAuth0({ ...CREDENTIALS, output: "exports/mine.json" });
+    expect(captured.err).toMatch(/clerk migrate import \d{8}-\d{6}-[0-9a-f]{4}/);
+  });
+
+  test("--output controls the destination", async () => {
+    stubAuth0([[auth0User(0)], []]);
+
+    await exportAuth0({ ...CREDENTIALS, output: "tenant.json" });
+
+    expect(fs.existsSync(path.join(workDir, "tenant.json"))).toBe(true);
+  });
+
+  // Auth0 only releases hashes through a support request; finding that out
+  // after the import means nobody can sign in.
+  test("says plainly that password hashes are not in the file", async () => {
+    stubAuth0([[auth0User(0)], []]);
+    await exportAuth0({ ...CREDENTIALS });
+    expect(captured.err).toContain("does not return password hashes");
+  });
+});

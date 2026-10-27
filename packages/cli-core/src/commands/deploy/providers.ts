@@ -3,9 +3,9 @@ import { bundleIdentifiersEqual } from "../../lib/apple-native-identity.ts";
 import { bold, cyan, dim, yellow } from "../../lib/color.ts";
 import { clerkSubdomains } from "./copy.ts";
 import { log } from "../../lib/log.ts";
+import { OAUTH_KEY_PREFIX, isCredentialPlaceholder } from "../../lib/oauth-config.ts";
 import { wrap } from "../../lib/wrap.ts";
 import { openBrowser } from "../../lib/open.ts";
-import { OAUTH_KEY_PREFIX } from "../../lib/oauth-connections.ts";
 import type {
   ConfigSchemaProperty,
   IOSApplication,
@@ -109,7 +109,7 @@ const PROVIDER_OVERRIDES = {
     redirectLabel: "Authorized Redirect URI",
     setupCopy:
       "Production Google sign-in requires custom OAuth credentials from Google Cloud Console.",
-    gotcha: `${yellow("IMPORTANT")}  Set the OAuth consent screen's publishing status to "In production". Apps left in "Testing" are limited to 100 test users and may break for end users.`,
+    gotcha: `Set the OAuth consent screen's publishing status to "In production". Apps left in "Testing" are limited to 100 test users and may break for end users.`,
     credentialSources: ["manual", "google-json"],
   },
   apple: {
@@ -117,7 +117,7 @@ const PROVIDER_OVERRIDES = {
     redirectLabel: "Return URL",
     setupCopy:
       "Production Apple sign-in requires an Apple Services ID, Team ID, Key ID, and private key file.",
-    gotcha: `${yellow("IMPORTANT")}  Apple OAuth needs four artifacts: Apple Services ID, Apple Team ID, Apple Key ID, and Apple Private Key (.p8 file). The .p8 file cannot be re-downloaded - save it before leaving Apple's developer portal.`,
+    gotcha: `Apple OAuth needs four artifacts: Apple Services ID, Apple Team ID, Apple Key ID, and Apple Private Key (.p8 file). The .p8 file cannot be re-downloaded - save it before leaving Apple's developer portal.`,
     fieldOrder: ["client_id", "team_id", "key_id", "client_secret"],
     fieldLabels: {
       client_id: "Apple Services ID",
@@ -135,6 +135,8 @@ type ProviderWithOverride = keyof typeof PROVIDER_OVERRIDES;
 
 const SYSTEM_FIELD_KEYS = new Set(["enabled", "authenticatable", "block_email_subaddresses"]);
 const DEFAULT_FIELD_ORDER = ["client_id", "client_secret"];
+export { OAUTH_KEY_PREFIX };
+
 const SHARED_OAUTH_METADATA = new Map<string, (typeof OAUTH_PROVIDERS)[number]>(
   OAUTH_PROVIDERS.map((provider) => [provider.provider, provider]),
 );
@@ -232,9 +234,15 @@ export function hasProviderRequiredCredentials(
   if (!value || typeof value !== "object") return false;
   const providerConfig = value as Record<string, unknown>;
   if (providerConfig.enabled !== true) return false;
+  // A file saved from `oauth.setup` before the user filled it in holds the
+  // report's own placeholder, which is no credential.
   return descriptor.requiredCredentialKeys.every((key) => {
     const fieldValue = providerConfig[key];
-    return typeof fieldValue === "string" && fieldValue.length > 0;
+    return (
+      typeof fieldValue === "string" &&
+      fieldValue.length > 0 &&
+      !isCredentialPlaceholder(key, fieldValue)
+    );
   });
 }
 
@@ -519,7 +527,8 @@ export function providerSetupIntro(provider: OAuthProvider | OAuthProviderDescri
   return [bold(`Configure ${label} OAuth for production`), setupCopy, dim(`Reference: ${docsUrl}`)];
 }
 
-function oauthWalkthroughUrls(
+/** What a provider's OAuth app must allow for production sign-in on `domain`. */
+export function oauthWalkthroughUrls(
   domain: string,
   frontendApiUrl?: string,
 ): { authorizedOrigins: string[]; redirectUri: string } {
@@ -555,7 +564,7 @@ export async function showOAuthWalkthrough(
   const gotcha = descriptor?.gotcha ?? providerGotcha(slug);
   if (gotcha) {
     log.blank();
-    log.info(gotcha);
+    log.info(`${yellow("IMPORTANT")}  ${gotcha}`);
   }
   // Google makes you fill in the OAuth consent screen before it will create a
   // client, and the name entered there is what end users see. It is free-form

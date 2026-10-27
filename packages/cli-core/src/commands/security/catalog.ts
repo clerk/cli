@@ -3,10 +3,7 @@
 // intentionally absent: Clerk no longer recommends them (NIST 800-63B).
 
 import { isRecord } from "../../lib/objects.ts";
-import {
-  discoverEnabledOAuthProviderSlugs,
-  OAUTH_KEY_PREFIX,
-} from "../../lib/oauth-connections.ts";
+import { discoverEnabledOAuthProviderSlugs, OAUTH_KEY_PREFIX } from "../../lib/oauth-config.ts";
 import type { CheckDecision, CheckDef, ConfigPatch, InstanceConfig } from "./types.ts";
 
 const DOCS = "https://clerk.com/docs/guides";

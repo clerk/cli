@@ -11,8 +11,8 @@
  *   second writer; a dead one, or a run with no `finishedAt`, means the run
  *   was interrupted.
  *
- * Everything `clerk migrate` records lives here, so there is no second record
- * to drift out of step.
+ * `runs`, `undo` and re-runs all read or write it, so there is no second
+ * record to drift out of step.
  *
  * Appends are synchronous so a run interrupted with Ctrl-C still leaves a
  * complete record of everything already processed.
@@ -25,6 +25,7 @@ import { resolveProfile } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
 import { ensureGitignoreEntry, getGitRepoRoot } from "../../../lib/git.ts";
 import { log } from "../../../lib/log.ts";
+import { type ImportFlags, runsCommand, undoCommand } from "./carry-flags.ts";
 
 /** Overrides the runs directory, below `--runs-dir`. */
 export const RUNS_DIR_ENV = "CLERK_MIGRATE_DIR";
@@ -61,7 +62,12 @@ export type RunTarget = {
 export type RunFile = { path: string; sha256: string };
 
 /** `notSent`: users a stopped import never sent, so they have no line. */
-export type RunCounts = Partial<Record<UserStatus, number>> & { total: number; notSent?: number };
+export type RunCounts = Partial<Record<UserStatus, number>> & {
+  total: number;
+  notSent?: number;
+  /** Created users with extra identifiers left to attach. */
+  pending?: number;
+};
 
 export type RunRecord = {
   id: string;
@@ -76,6 +82,24 @@ export type RunRecord = {
   file?: RunFile;
   /** The export run an import read its file from. */
   fromExport?: string;
+  /**
+   * The flags an import's latest attempt ran with, as values: a record
+   * outlives the CLI that wrote it, and `importFlags` spells them for this one.
+   * An earlier build wrote a `string[]`, or none; `runs <id>` offers no
+   * continue for those.
+   */
+  flags?: ImportFlags;
+  /**
+   * A Firebase import's hash parameters, as a scrypt hash of the four (never the
+   * parameters themselves): every digest it builds carries them, so a continue
+   * with others is refused.
+   */
+  firebaseHash?: string;
+  /**
+   * An export the source cut short (Auth0's 1000-user ceiling): its file is
+   * not everyone, so it finishes `partial` and importing it says so.
+   */
+  truncated?: boolean;
   /** The import run an undo reverses. */
   undoes?: string;
   /** The undo run that reversed this one. */
@@ -98,12 +122,19 @@ export type UserLine = {
   /** Why a user was skipped. */
   reason?: string;
   error?: string;
+  /**
+   * Failed: the HTTP status, or "unknown". Skipped: a machine reason,
+   * NO_PASSWORD_CODE, IN_FILE_CODE or SOURCE_SKIP_CODE.
+   */
   code?: string;
   passwordDropped?: boolean;
 };
 
+/** What `runs` shows for a run: its stored status, or how it stopped. */
+export type RunState = RunStatus | "interrupted";
+
 const RUN_FILE = "run.json";
-const USERS_FILE = "users.ndjson";
+export const USERS_FILE = "users.ndjson";
 const LOCK_FILE = "lock";
 
 // --- Location --------------------------------------------------------------
@@ -208,6 +239,7 @@ export function lockFile(runsDir: string, id: string): string {
 }
 
 const isExists = (error: unknown) => (error as NodeJS.ErrnoException).code === "EEXIST";
+const isMissing = (error: unknown) => (error as NodeJS.ErrnoException).code === "ENOENT";
 
 /**
  * Takes the run's lock. Created exclusively (`wx`), so two processes can't
@@ -224,15 +256,18 @@ function acquireLock(runsDir: string, id: string): void {
 
   try {
     take();
+    log.debug(`migrate: locked run ${id} (${file})`);
     return;
   } catch (error) {
     if (!isExists(error)) throw error;
   }
   const holder = liveLockPid(runsDir, id);
   if (holder !== undefined) refuse(holder);
+  log.debug(`migrate: removing a stale lock on run ${id} (${file})`);
   fs.rmSync(file, { force: true });
   try {
     take();
+    log.debug(`migrate: locked run ${id} (${file})`);
   } catch (error) {
     // Another process took the stale lock between the remove and the write.
     if (isExists(error)) refuse(liveLockPid(runsDir, id));
@@ -240,18 +275,24 @@ function acquireLock(runsDir: string, id: string): void {
   }
 }
 
+function releaseLock(runsDir: string, id: string): void {
+  log.debug(`migrate: released run ${id}`);
+  fs.rmSync(lockFile(runsDir, id), { force: true });
+}
+
 // --- Reading ---------------------------------------------------------------
 
 /** One run's record, or `undefined` when the folder holds no readable run. */
 export function readRun(runsDir: string, id: string): RunRecord | undefined {
+  const file = path.join(runDir(runsDir, id), RUN_FILE);
   try {
-    const parsed = JSON.parse(
-      fs.readFileSync(path.join(runDir(runsDir, id), RUN_FILE), "utf-8"),
-    ) as RunRecord;
-    return parsed && typeof parsed === "object" && parsed.id === id ? parsed : undefined;
-  } catch {
-    return undefined;
+    const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as RunRecord;
+    if (parsed && typeof parsed === "object" && parsed.id === id) return parsed;
+    log.debug(`migrate: ${file} is not run ${id}'s record`);
+  } catch (error) {
+    if (!isMissing(error)) log.debug(`migrate: could not read ${file}: ${String(error)}`);
   }
+  return undefined;
 }
 
 /** Every line of a run's `users.ndjson`, in the order written. */
@@ -281,6 +322,137 @@ export function latestUserLines(runsDir: string, id: string): Map<string, UserLi
   return latest;
 }
 
+/**
+ * How a run stands now. A run that never finished and whose process is gone
+ * was interrupted, whatever its stored status says.
+ */
+export function runState(runsDir: string, record: RunRecord): RunState {
+  // An interrupted run that was then undone has no finish time of its own.
+  if (record.finishedAt || record.status === "undone") return record.status;
+  return liveLockPid(runsDir, record.id) === undefined ? "interrupted" : "running";
+}
+
+/**
+ * Counts are written when a run finishes, so an interrupted one still holds
+ * its start's zeros. Those are counted from its user lines instead.
+ */
+export function withLiveCounts(runsDir: string, record: RunRecord): RunRecord {
+  if (record.finishedAt) return record;
+  return { ...record, counts: countLines(latestUserLines(runsDir, record.id).values()) };
+}
+
+/**
+ * The `code` on a user `--require-password` left out. Matched rather than its
+ * `reason`, which is display text a later version may reword.
+ */
+export const NO_PASSWORD_CODE = "no_password";
+
+/**
+ * The `code` on a user the checks skipped for the file's own data: invalid,
+ * a duplicate within it, an email Clerk refuses, a malformed hash. A continue
+ * reads the same file, so it skips them again.
+ */
+export const IN_FILE_CODE = "in_file";
+
+/**
+ * The `code` on a user its source asked to skip (an anonymous guest, a
+ * soft-deleted account). Nobody means to bring them across, so they leave a
+ * run `complete`, and a continue has nothing to retry for them.
+ */
+export const SOURCE_SKIP_CODE = "source_skip";
+
+/**
+ * Whether a continue has users to retry: one never sent, or a latest line it
+ * retries. Not a `--require-password` skip, nor one for the file's own data:
+ * the continue carries the flag and reads the same file, so it leaves that
+ * user out again, and suggesting it would loop. A run that never
+ * finished counts as having some: the users it never sent have no lines to
+ * count.
+ */
+export function hasRetryableUsers(record: RunRecord, latest: Iterable<UserLine>): boolean {
+  if (!record.finishedAt || (record.counts.notSent ?? 0) > 0) return true;
+  return [...latest].some((line) =>
+    line.status === "skipped"
+      ? line.code !== NO_PASSWORD_CODE &&
+        line.code !== IN_FILE_CODE &&
+        line.code !== SOURCE_SKIP_CODE
+      : line.status !== "created" || (line.pending?.length ?? 0) > 0,
+  );
+}
+
+/**
+ * The imports of this file with this source, newest first: the runs a
+ * re-import of it chooses among, before it looks at the instance.
+ */
+export function importsOfFile(
+  runs: RunRecord[],
+  file: { sha256: string; source?: string },
+): RunRecord[] {
+  return runs.filter(
+    (record) =>
+      record.kind === "import" &&
+      record.file?.sha256 === file.sha256 &&
+      record.source === file.source,
+  );
+}
+
+/** Every undo of this import, finished or not, newest first. */
+export function undosOf(runs: RunRecord[], importId: string): RunRecord[] {
+  return runs.filter((record) => record.kind === "undo" && record.undoes === importId);
+}
+
+/**
+ * The undo of this import that has not finished, if any. `runs` is the
+ * caller's `listRuns`, when it has one already.
+ */
+export function openUndoOf(
+  runsDir: string,
+  importId: string,
+  runs = listRuns(runsDir),
+): RunRecord | undefined {
+  return undosOf(runs, importId).find((undo) => runState(runsDir, undo) !== "complete");
+}
+
+/**
+ * Why an import with an unfinished undo can't continue: some of its users are
+ * gone and some are not. `carry` reaches the same runs folder and instance.
+ */
+export function unfinishedUndoMessage(importId: string, undoId: string, carry: string[]): string {
+  return (
+    `Run ${importId} has an undo that did not finish (run ${undoId}). ` +
+    `Finish it with \`${undoCommand(importId, carry)}\`, or pass --new-run to import into a new run.`
+  );
+}
+
+/** Why a run ID matched nothing, and the listing of that same runs folder. */
+export function noRunMessage(runsDir: string, id: string, carry: string[]): string {
+  return `No run \`${id}\` in ${runsDir}. Run \`${runsCommand(carry)}\` to list them.`;
+}
+
+/** Why a run another live process holds is refused, and how to clear a stale lock. */
+export function inUseMessage(runsDir: string, id: string, doing: string, then: string): string {
+  return (
+    `Run ${id} is ${doing} right now in another process (PID ${liveLockPid(runsDir, id)}). ${then} ` +
+    `If that process is not a migrate run, delete ${lockFile(runsDir, id)}.`
+  );
+}
+
+/** Every readable run, newest first. */
+export function listRuns(runsDir: string): RunRecord[] {
+  let entries: fs.Dirent[];
+  try {
+    entries = fs.readdirSync(runsDir, { withFileTypes: true });
+  } catch (error) {
+    if (!isMissing(error)) log.debug(`migrate: could not read ${runsDir}: ${String(error)}`);
+    return [];
+  }
+  return entries
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => readRun(runsDir, entry.name))
+    .filter((record): record is RunRecord => record !== undefined)
+    .sort((a, b) => b.startedAt.localeCompare(a.startedAt) || b.id.localeCompare(a.id));
+}
+
 // --- Writing ---------------------------------------------------------------
 
 function writeRecord(runsDir: string, record: RunRecord): void {
@@ -291,12 +463,18 @@ function writeRecord(runsDir: string, record: RunRecord): void {
   fs.renameSync(temp, file);
 }
 
-/** Totals by each source ID's latest status. */
+/**
+ * Totals by each source ID's latest status, and `pending`: the created users
+ * whose extra identifiers never attached, left for a continue.
+ */
 export function countLines(latest: Iterable<UserLine>): RunCounts {
   const counts: RunCounts = { total: 0 };
   for (const line of latest) {
     counts.total++;
     counts[line.status] = (counts[line.status] ?? 0) + 1;
+    if (line.status === "created" && (line.pending?.length ?? 0) > 0) {
+      counts.pending = (counts.pending ?? 0) + 1;
+    }
   }
   return counts;
 }
@@ -344,29 +522,30 @@ function openRun(runsDir: string, record: RunRecord): Run {
       writeRecord(runsDir, run.record);
     },
     finish(options) {
-      const lines = [...latestUserLines(runsDir, run.record.id).values()];
-      const counts = countLines(lines);
+      const latest = [...latestUserLines(runsDir, run.record.id).values()];
+      const counts = countLines(latest);
       if (options?.notSent) counts.notSent = options.notSent;
-      // A created user whose extra identifiers never attached is left for a continue.
-      const pendingAttaches = lines.filter(
-        (line) => line.status === "created" && (line.pending?.length ?? 0) > 0,
+      // Counted as skipped, but no reason to call the run partial.
+      const sourceSkipped = latest.filter(
+        (line) => line.status === "skipped" && line.code === SOURCE_SKIP_CODE,
       ).length;
       const unfinished =
         (counts.failed ?? 0) +
-        (counts.skipped ?? 0) +
+        (counts.skipped ?? 0) -
+        sourceSkipped +
         (counts.creating ?? 0) +
         (counts.notSent ?? 0) +
-        pendingAttaches;
+        (counts.pending ?? 0);
       run.update({
         counts,
-        status: unfinished > 0 ? "partial" : "complete",
+        status: unfinished > 0 || run.record.truncated ? "partial" : "complete",
         finishedAt: new Date().toISOString(),
       });
       run.release();
       return run.record;
     },
     release() {
-      fs.rmSync(path.join(dir, LOCK_FILE), { force: true });
+      releaseLock(runsDir, record.id);
     },
   };
   return run;
@@ -402,4 +581,102 @@ export function startRun(runsDir: string, init: StartRunInit): Run {
   writeRecord(runsDir, record);
   log.debug(`migrate: started ${init.kind} run ${id} in ${runsDir}`);
   return openRun(runsDir, record);
+}
+
+/**
+ * A run's record with what this attempt ran with, which its later commands
+ * repeat: where its key came from (never the key), and an import's flags. The
+ * instance ID stays: `findResume` and `undo` key on it.
+ */
+export function withAttempt(record: RunRecord, live: RunTarget, flags?: ImportFlags): RunRecord {
+  const { keySource, appId, appLabel } = live;
+  return {
+    ...record,
+    target: { ...record.target, keySource, appId, appLabel },
+    ...(flags ? { flags } : {}),
+  };
+}
+
+/**
+ * Reopens a finished or interrupted run to keep working on it.
+ *
+ * @throws UsageError when another live process holds its lock.
+ */
+export function continueRun(
+  runsDir: string,
+  record: RunRecord,
+  /**
+   * How many user lines the caller planned against. The record and the lines
+   * were read before the lock was taken, while a prompt may have waited: an
+   * undo, or another continue, can change either in the meantime.
+   */
+  plannedLines?: number,
+  /** The caller's runs-folder and target flags, for the command a refusal suggests. */
+  carry: string[] = [],
+): Run {
+  acquireLock(runsDir, record.id);
+  if (plannedLines !== undefined) {
+    const fresh = readRun(runsDir, record.id);
+    const changed =
+      !fresh ||
+      fresh.status !== record.status ||
+      fresh.undoneBy !== record.undoneBy ||
+      readUserLines(runsDir, record.id).length !== plannedLines;
+    if (changed) {
+      releaseLock(runsDir, record.id);
+      throwUsageError(
+        `Run ${record.id} changed while this import was waiting, so its plan is out of date. ` +
+          "Nothing was imported. Run the command again.",
+      );
+    }
+  }
+  // Checked again under the lock, before the record says running: an undo
+  // can start, and stop part-way, after the caller's own check, leaving the
+  // import's status and lines as they were.
+  const undoRun = record.kind === "import" ? openUndoOf(runsDir, record.id) : undefined;
+  if (undoRun) {
+    releaseLock(runsDir, record.id);
+    throwUsageError(unfinishedUndoMessage(record.id, undoRun.id, carry));
+  }
+  // A crash mid-write leaves a torn last line; end it so the next append
+  // starts a line of its own instead of fusing with it.
+  const usersFile = path.join(runDir(runsDir, record.id), USERS_FILE);
+  const written = fs.existsSync(usersFile) ? fs.readFileSync(usersFile, "utf-8") : "";
+  if (written && !written.endsWith("\n")) fs.appendFileSync(usersFile, "\n");
+  const run = openRun(runsDir, record);
+  run.record = { ...record, status: "running" };
+  delete run.record.finishedAt;
+  writeRecord(runsDir, run.record);
+  log.debug(`migrate: continuing ${record.kind} run ${record.id} in ${runsDir}`);
+  return run;
+}
+
+/**
+ * Takes a run's lock without opening it, so no other process can continue it.
+ *
+ * @returns Releases the lock.
+ * @throws UsageError when another live process holds it.
+ */
+export function lockRun(runsDir: string, id: string): () => void {
+  acquireLock(runsDir, id);
+  return () => releaseLock(runsDir, id);
+}
+
+/**
+ * Merges fields into a run this process is not writing, such as `undoneBy`,
+ * and returns what was written.
+ */
+export function patchRun(
+  runsDir: string,
+  id: string,
+  patch: Partial<RunRecord>,
+): RunRecord | undefined {
+  const record = readRun(runsDir, id);
+  if (!record) return undefined;
+  const patched = { ...record, ...patch };
+  log.debug(
+    `migrate: patching run ${id} (${path.join(runDir(runsDir, id), RUN_FILE)}): ${Object.keys(patch).join(", ")}`,
+  );
+  writeRecord(runsDir, patched);
+  return patched;
 }

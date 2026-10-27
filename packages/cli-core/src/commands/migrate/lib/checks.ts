@@ -16,6 +16,8 @@
  * Each rejected user gets the first reason that applies to them, so the counts
  * add up to the file.
  */
+import { isClerkInstanceId } from "./target.ts";
+import { plural } from "./plural.ts";
 
 import type { UserSettingsJSON } from "../../../lib/fapi.ts";
 import type { SpinnerControls } from "../../../lib/spinner.ts";
@@ -23,6 +25,8 @@ import { isEnabled, isRequired, type AttributeName } from "../../users/interacti
 import { splitIdentifiers } from "../import-users.ts";
 import type { User } from "../types.ts";
 import { analyzeFields, hasValue } from "./analysis.ts";
+import { argon2Variant } from "../sources/shared.ts";
+import { decodesLikeClerk } from "./firebase-hash.ts";
 import {
   clerkOffersProvider,
   enabledSocialProviders,
@@ -48,6 +52,11 @@ export type Reject = {
   reason: string;
   /** For a duplicate: the earlier user in the file that is kept instead. */
   keptSourceId?: string;
+  /**
+   * Caused by the file's own data, so the same file rejects it again: no
+   * setting or instance change lets it in on a continue.
+   */
+  inFile?: true;
 };
 
 export type ReasonCount = { reason: string; count: number };
@@ -77,6 +86,13 @@ export type ImportChecks = {
   /** Users that do not, each with the first reason that applies to them. */
   rejects: Reject[];
   rejectReasons: ReasonCount[];
+  /**
+   * Users their source asked to skip (a soft-deleted or anonymous account),
+   * with its reason. Left out like a reject, but never a reason to stop the
+   * import: nobody is meant to bring them across.
+   */
+  skipped: Reject[];
+  skippedReasons: ReasonCount[];
   warnings: string[];
   fixes: Fix[];
   quota?: Quota;
@@ -91,6 +107,8 @@ export type CheckInput = {
   unknownFields?: Record<string, number>;
   /** The raw Supabase rows, for the provider checks. Absent for any other source. */
   supabaseRows?: Record<string, unknown>[];
+  /** Another source's reading of each user's social providers, for the readiness check. */
+  socialProviders?: (user: User) => string[];
   settings: UserSettingsJSON | null;
   /** Users already in the instance, for the quota. Development instances only. */
   existingUsers?: number | null;
@@ -103,10 +121,19 @@ export type CheckInput = {
    * sending `skip_legal_checks`. Without it they are rejected.
    */
   skipLegalChecks?: boolean;
+  /**
+   * Clerk IDs a continued run found behind its own in-flight creates: finding
+   * them in the instance is expected.
+   */
+  adoptedClerkIds?: Set<string>;
+  /**
+   * Source IDs of those adopted users. Each already exists in Clerk, so none
+   * is rejected: the checks stop creates, and these need none. They count
+   * toward no quota either; the instance's live count has them already.
+   */
+  adoptedSourceIds?: Set<string>;
   spinner?: SpinnerControls;
 };
-
-const plural = (count: number, word: string) => `${count} ${word}${count === 1 ? "" : "s"}`;
 
 // --- Hash shapes -----------------------------------------------------------
 
@@ -129,7 +156,10 @@ export function hashShapeProblem(password: string, hasher: string): string | und
       const parts = password.split("$");
       const numeric = (value: string | undefined) => /^\d+$/.test(value ?? "");
       return parts.length === 6 &&
-        parts.slice(0, 4).every(Boolean) &&
+        // The salt separator (parts[3]) may be empty.
+        parts.slice(0, 3).every(Boolean) &&
+        // Clerk decodes all four as base64 (`Validate` in pkg/hash/scrypt.go).
+        parts.slice(0, 4).every(decodesLikeClerk) &&
         numeric(parts[4]) &&
         numeric(parts[5])
         ? undefined
@@ -137,7 +167,9 @@ export function hashShapeProblem(password: string, hasher: string): string | und
     }
     case "argon2i":
     case "argon2id":
-      return password.startsWith("$argon2") ? undefined : "password is not an argon2 hash";
+      return argon2Variant(password) === hasher
+        ? undefined
+        : `password is not an ${hasher} hash Clerk can verify ($${hasher}$v=19$m=…,t=…,p=…$salt$hash)`;
     case "scrypt_werkzeug":
       return /^scrypt:\d+:\d+:\d+\$[^$]+\$[0-9a-f]+$/i.test(password)
         ? undefined
@@ -514,6 +546,8 @@ const hasAnyIdentifier = (user: User) =>
     hasValue(user[field as keyof User]),
   );
 
+const DUPLICATE_SOURCE_ID = "duplicate source ID in the file";
+
 /**
  * First user in the file to claim each email, phone and source ID.
  *
@@ -539,7 +573,7 @@ function findFileDuplicates(users: User[]): {
 
   for (const user of users) {
     if (seenIds.has(user.userId)) {
-      reasons.set(user, "duplicate source ID in the file");
+      reasons.set(user, DUPLICATE_SOURCE_ID);
       // The earlier record under the same ID is the one kept.
       keptBy.set(user, user.userId);
       continue;
@@ -632,13 +666,16 @@ async function findInstanceDuplicates(
   ).flat();
 
   const reasons = new Map<string, string>();
-  const claim = (sourceId: string | undefined, reason: string) => {
-    if (sourceId && !reasons.has(sourceId)) reasons.set(sourceId, reason);
-  };
 
   for (const existing of found) {
+    // An adopted user is its own record's create, so it clashes with nothing
+    // in that record; its identifiers still clash with every other user's.
+    const own = input.adoptedClerkIds?.has(existing.id) ? existing.external_id : undefined;
+    const claim = (sourceId: string | undefined, reason: string) => {
+      if (sourceId && sourceId !== own && !reasons.has(sourceId)) reasons.set(sourceId, reason);
+    };
     if (existing.external_id) {
-      claim(byExternalId.get(existing.external_id), "already in the instance, with this source ID");
+      claim(byExternalId.get(existing.external_id), ALREADY_IMPORTED);
     }
     for (const email of existing.email_addresses ?? []) {
       claim(
@@ -712,6 +749,18 @@ function rowsFor(input: CheckInput, users: User[]): Record<string, unknown>[] {
   return input.supabaseRows.filter((row) => ids.has(String(row.id)));
 }
 
+/** Users per social provider, from Supabase's rows or the source's own reading. */
+function socialCounts(input: CheckInput, users: User[]): Record<string, number> {
+  if (input.supabaseRows) return countSocialProviders(rowsFor(input, users));
+  const counts: Record<string, number> = {};
+  for (const user of users) {
+    for (const provider of input.socialProviders?.(user) ?? []) {
+      counts[provider] = (counts[provider] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
 /** Each readiness row's field, with its article: "an email", not "a email". */
 const FIELD_NOUNS: Record<string, string> = {
   email_address: "an email",
@@ -728,7 +777,7 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
     const report = buildReadinessReport({
       analysis: analyzeFields(importable),
       settings: input.settings,
-      providerCounts: countSocialProviders(rowsFor(input, importable)),
+      providerCounts: socialCounts(input, importable),
     });
     for (const item of report.blocking) {
       if (item.consequence === "stored") {
@@ -808,7 +857,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   const report = buildReadinessReport({
     analysis: analyzeFields(users),
     settings: input.settings,
-    providerCounts: countSocialProviders(rowsFor(input, users)),
+    providerCounts: socialCounts(input, users),
   });
 
   // An unverified email does not satisfy a required one, so a file of only
@@ -838,7 +887,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   // passes as is and Clerk answers "app not found", where `<app_id>` would
   // be read as a redirect.
   const { appId, instanceId } = input.target;
-  const named = instanceId.startsWith("ins_");
+  const named = isClerkInstanceId(instanceId);
   const flags = ` --app ${appId ?? "APP_ID"} --instance ${instanceId}`;
   const settings = input.settings;
   const mfa = MFA_SETTINGS.filter(
@@ -957,13 +1006,23 @@ function placeholderWarning(count: number): string[] {
   ];
 }
 
+/**
+ * The reason for a user an earlier import already created here. Exported so
+ * the import can name the run that created them.
+ */
+export const ALREADY_IMPORTED = "already in the instance, with this source ID";
+
 export async function checkImport(input: CheckInput): Promise<ImportChecks> {
+  const skipped: Reject[] = [];
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
     reason: `invalid: ${failure.error}`,
+    inFile: true,
   }));
 
   const disabledProviders = findDisabledProviderRejects(input);
+  // Users an earlier attempt already created, which this one only attaches.
+  const adopted = (user: User) => input.adoptedSourceIds?.has(user.userId) ?? false;
 
   // Users that pass every per-user check. Only these claim identifiers in
   // the file: a rejected record must not cost a later one its email. Each is
@@ -988,44 +1047,53 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     if (phoned.dropped) loosePhoneUsers.add(original.userId);
     const user = phoned.user;
     const sent = dropDisabledIdentifiers(user, input.settings);
-    const reason =
-      original.skipReason ??
-      (refused.length > 0 && phoned.dropped && !hasAnyIdentifier(user)
-        ? "only has emails Clerk refuses and phones not in E.164 form (numeric usernames are on)"
-        : undefined) ??
-      (refused.length > 0 && !hasAnyIdentifier(user)
+    // The file's own data, which the same file brings back on a continue.
+    const refusedOnly =
+      refused.length > 0 && !phoned.dropped && !hasAnyIdentifier(user)
         ? "only has emails Clerk refuses (malformed, or a domain that can't receive mail)"
-        : undefined) ??
-      (phoned.dropped && !hasAnyIdentifier(user)
-        ? "only has phones not in E.164 form, which this instance refuses (numeric usernames are on)"
-        : undefined) ??
-      // A required phone the file has, but only in a form Clerk refuses here.
-      (phoned.dropped &&
-      missingRequiredIdentifier(user, input.settings) &&
-      !missingRequiredIdentifier(emailed, input.settings)
-        ? "only has phones not in E.164 form, and this instance requires a phone number (numeric usernames are on)"
-        : undefined) ??
-      missingRequiredIdentifier(user, input.settings) ??
-      // Stripping the identifiers the instance has off can leave nothing to
-      // sign in with; Clerk would still create the user.
-      (!hasAnyIdentifier(sent)
-        ? "has no identifier this instance accepts (its email or phone is turned off, or its username is one Clerk refuses)"
-        : undefined) ??
-      missingRequiredName(user, input.settings) ??
-      mfaProblem(user, input.settings) ??
-      (!user.password && input.settings && passwordIsOnlySignIn(input.settings)
-        ? "no password, and password is this instance's only way to sign in"
-        : undefined) ??
-      (!input.skipLegalChecks && lacksLegalAcceptance(user, input.settings)
-        ? "no legal acceptance on record, which this instance requires (--skip-legal-checks imports them without it)"
-        : undefined) ??
-      usernameProblem(user, input.settings, loosePhones) ??
-      (user.password && user.passwordHasher
+        : undefined;
+    const hashProblem =
+      user.password && user.passwordHasher
         ? hashShapeProblem(user.password, user.passwordHasher)
-        : undefined) ??
-      disabledProviders.get(user.userId);
-    if (reason) {
-      rejects.push({ sourceId: user.userId, reason });
+        : undefined;
+    const reason = adopted(original)
+      ? undefined
+      : (original.skipReason ??
+        (refused.length > 0 && phoned.dropped && !hasAnyIdentifier(user)
+          ? "only has emails Clerk refuses and phones not in E.164 form (numeric usernames are on)"
+          : undefined) ??
+        refusedOnly ??
+        (phoned.dropped && !hasAnyIdentifier(user)
+          ? "only has phones not in E.164 form, which this instance refuses (numeric usernames are on)"
+          : undefined) ??
+        // A required phone the file has, but only in a form Clerk refuses here.
+        (phoned.dropped &&
+        missingRequiredIdentifier(user, input.settings) &&
+        !missingRequiredIdentifier(emailed, input.settings)
+          ? "its phones aren't in E.164 form, and this instance requires a phone number (numeric usernames are on)"
+          : undefined) ??
+        missingRequiredIdentifier(user, input.settings) ??
+        // Stripping the identifiers the instance has off can leave nothing to
+        // sign in with; Clerk would still create the user.
+        (!hasAnyIdentifier(sent)
+          ? "has no identifier this instance accepts (its email or phone is turned off, or its username is one Clerk refuses)"
+          : undefined) ??
+        missingRequiredName(user, input.settings) ??
+        mfaProblem(user, input.settings) ??
+        (!user.password && input.settings && passwordIsOnlySignIn(input.settings)
+          ? "no password, and password is this instance's only way to sign in"
+          : undefined) ??
+        (!input.skipLegalChecks && lacksLegalAcceptance(user, input.settings)
+          ? "no legal acceptance on record, which this instance requires (--skip-legal-checks imports them without it)"
+          : undefined) ??
+        usernameProblem(user, input.settings, loosePhones) ??
+        hashProblem ??
+        disabledProviders.get(user.userId));
+    if (reason && reason === original.skipReason) {
+      skipped.push({ sourceId: user.userId, reason, inFile: true });
+    } else if (reason) {
+      const inFile = reason === refusedOnly || reason === hashProblem;
+      rejects.push({ sourceId: user.userId, reason, ...(inFile ? { inFile: true as const } : {}) });
     } else {
       passed.push(sent);
       unstripped.set(sent, user);
@@ -1036,13 +1104,39 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
 
   // No setting would let a duplicate in, so none earns a fix.
   const duplicates = new Set<User>();
-  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(passed);
+  // An adopted user already holds its email, phone and username in Clerk, so
+  // it claims them first, wherever it sits in the file: a fresh record sharing
+  // one is the create Clerk would refuse, and is not kept in its place.
+  const { reasons: fileDuplicates, keptBy } = findFileDuplicates([
+    ...passed.filter(adopted),
+    ...passed.filter((user) => !adopted(user)),
+  ]);
   let candidates: User[] = [];
   for (const user of passed) {
-    const reason = fileDuplicates.get(user);
     const kept = keptBy.get(user);
+    const holder = kept && !adopted(user) && input.adoptedSourceIds?.has(kept) ? kept : undefined;
+    if (holder) {
+      rejects.push({
+        sourceId: user.userId,
+        reason: "shares an email, phone or username with a user an earlier attempt already created",
+        keptSourceId: holder,
+        inFile: true,
+      });
+      duplicates.add(originals.get(user) ?? user);
+      continue;
+    }
+    // An adopted user is in Clerk already, so an earlier record sharing its
+    // email costs it nothing. A second record with its source ID would be
+    // created as the same user, so that one is still rejected.
+    const duplicate = fileDuplicates.get(user);
+    const reason = adopted(user) && duplicate !== DUPLICATE_SOURCE_ID ? undefined : duplicate;
     if (reason) {
-      rejects.push({ sourceId: user.userId, reason, ...(kept ? { keptSourceId: kept } : {}) });
+      rejects.push({
+        sourceId: user.userId,
+        reason,
+        ...(kept ? { keptSourceId: kept } : {}),
+        inFile: true,
+      });
       duplicates.add(originals.get(user) ?? user);
     } else candidates.push(user);
   }
@@ -1053,7 +1147,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       : new Map<string, string>();
   const unique: User[] = [];
   for (const user of candidates) {
-    const reason = instanceDuplicates.get(user.userId);
+    const reason = adopted(user) ? undefined : instanceDuplicates.get(user.userId);
     if (reason) {
       rejects.push({ sourceId: user.userId, reason });
       duplicates.add(originals.get(user) ?? user);
@@ -1067,17 +1161,21 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   let quota: Quota | undefined;
   if (input.instanceType === "dev") {
     const limit = resolveDevUserLimit();
+    // An adopted user is in the instance's count already, and is never
+    // created: only the new users take headroom, in file order.
     const headroom = Math.max(0, limit - (input.existingUsers ?? 0));
-    const over = Math.max(0, candidates.length - headroom);
+    const fresh = candidates.filter((user) => !adopted(user));
+    const over = Math.max(0, fresh.length - headroom);
     quota = { existing: input.existingUsers ?? null, limit, headroom, over };
     if (over > 0) {
-      for (const user of candidates.slice(headroom)) {
+      const past = new Set(fresh.slice(headroom));
+      for (const user of past) {
         rejects.push({
           sourceId: user.userId,
           reason: `over the development instance's ${limit}-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)`,
         });
       }
-      candidates = candidates.slice(0, headroom);
+      candidates = candidates.filter((user) => !past.has(user));
     }
   }
 
@@ -1088,6 +1186,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     ),
     rejects,
     rejectReasons: countReasons(rejects),
+    skipped,
+    skippedReasons: countReasons(skipped),
     warnings: [
       ...buildWarnings(
         input,

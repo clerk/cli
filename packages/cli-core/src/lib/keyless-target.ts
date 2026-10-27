@@ -82,6 +82,9 @@ interface LocatedKey {
   source: string;
 }
 
+/** How an exported variable is named as a key's source: `NUXT_CLERK_SECRET_KEY env var`. */
+export const ENV_VAR_SOURCE_SUFFIX = " env var";
+
 /**
  * Looks for a key under any of `names`, in the order the app itself would
  * resolve one: the environment first, then env files with a later file
@@ -90,7 +93,7 @@ interface LocatedKey {
 async function findKeyInProject(cwd: string, names: string[]): Promise<LocatedKey | undefined> {
   for (const name of new Set(names)) {
     const value = process.env[name];
-    if (value) return { value, source: `${name} env var` };
+    if (value) return { value, source: `${name}${ENV_VAR_SOURCE_SUFFIX}` };
   }
 
   // Priority is by name, not by position: the framework-specific name beats

@@ -11,10 +11,14 @@ import {
   bootstrapMod,
   scaffoldMod,
 } from "../../test/lib/init-harness.ts";
+import * as gitMod from "../../lib/git.ts";
 import * as apple from "./ios/coordinator.ts";
+import { StarterInputRequired } from "./ios/starter-bootstrap.ts";
+import { ios } from "./frameworks/ios.ts";
 import { init } from "./index.ts";
 
 const iosFramework = frameworkMod.lookupFramework("ios")!;
+const reactFramework = frameworkMod.lookupFramework("react")!;
 
 describe("clerk init for native Apple projects", () => {
   const { setup, track, captured } = useInitHarness();
@@ -89,6 +93,16 @@ describe("clerk init for native Apple projects", () => {
     });
   });
 
+  test("an agent's JSON continuation keeps its Xcode selection and setup options", async () => {
+    iosProject({ isAgent: true });
+
+    await init({ json: true, xcodeProject: "My App.xcodeproj", appleSdk: "core" });
+
+    expect(JSON.parse(captured.out).next[1]).toContain(
+      "`clerk init --app <app_id> --json --xcode-project 'My App.xcodeproj' --apple-sdk core`",
+    );
+  });
+
   test("a dry run inspects without signing in", async () => {
     const run = iosProject({ email: null });
 
@@ -153,7 +167,9 @@ describe("clerk init for native Apple projects", () => {
   });
 
   test.each([
-    [{ starter: true, json: true }, "not with --starter"],
+    [{ starter: true, json: true }, "--json works with --starter only for a new iOS or macOS app"],
+    [{ starter: true, dryRun: true }, "--dry-run works on an existing project"],
+    [{ relink: true }, "--relink applies with --app"],
     [{ dryRun: true, app: "app_test" }, "--dry-run never signs in"],
     [{ appIdPrefix: "short" }, "--app-id-prefix must be"],
     [{ appleSdk: "core" as const, prebuiltAuthUi: true }, "--prebuilt-auth-ui needs ClerkKitUI"],
@@ -187,5 +203,598 @@ describe("clerk init for native Apple projects", () => {
       "--dry-run, --json need Xcode",
     );
     expect(run).not.toHaveBeenCalled();
+  });
+
+  describe("an agent's --app naming another application", () => {
+    const REPLACED = { appId: "app_A", appName: "Web", scope: "/repo" };
+
+    // Linked to app_A until init links app_B.
+    const linkedToA = () =>
+      spyOn(config, "resolveProfile")
+        .mockResolvedValueOnce({ profile: { appId: "app_A" } } as never)
+        .mockResolvedValue({ profile: { appId: "app_B" } } as never);
+
+    function linkedElsewhere(replaced: typeof REPLACED | null = REPLACED) {
+      const run = iosProject({ isAgent: true });
+      linkedToA();
+      const check = spyOn(linkMod, "replacedLink").mockResolvedValue(replaced ?? undefined);
+      track(check);
+      return { run, check };
+    }
+
+    test("stops before relinking the repository", async () => {
+      const { run } = linkedElsewhere();
+
+      await expect(init({ app: "app_B" })).rejects.toThrow(
+        "/repo is linked to Web (app_A). Linking it to app_B switches every Clerk CLI command in /repo to app_B. Rerun with --relink to switch it, or pass --app app_A to keep the current link.",
+      );
+      expect(linkMod.link).not.toHaveBeenCalled();
+      expect(run).not.toHaveBeenCalled();
+    });
+
+    test("with --json, asks to relink as an input-required status", async () => {
+      linkedElsewhere();
+
+      await expect(init({ app: "app_B", json: true })).rejects.toThrow("--relink");
+      expect(JSON.parse(captured.out)).toEqual({
+        status: "input-required",
+        appIntegrationComplete: false,
+        link: {
+          flag: "--relink",
+          question: "Switch the Clerk CLI link for /repo from Web (app_A) to app_B?",
+          issue: expect.stringContaining("switches every Clerk CLI command in /repo"),
+          current: { appId: "app_A", appName: "Web" },
+          requested: "app_B",
+          scope: "/repo",
+        },
+      });
+    });
+
+    test("--relink switches it", async () => {
+      const { run, check } = linkedElsewhere();
+
+      await init({ app: "app_B", relink: true });
+
+      expect(check).not.toHaveBeenCalled();
+      expect(linkMod.link).toHaveBeenCalledWith(expect.objectContaining({ app: "app_B" }));
+      expect(run).toHaveBeenCalledWith(expect.anything(), "app_B");
+    });
+
+    test("a link it wouldn't replace links as before", async () => {
+      const { run } = linkedElsewhere(null);
+
+      await init({ app: "app_B" });
+
+      expect(linkMod.link).toHaveBeenCalled();
+      expect(run).toHaveBeenCalledWith(expect.anything(), "app_B");
+    });
+
+    test("a project init generates in a blank directory is checked before linking", async () => {
+      setup({ isAgent: true });
+      spyOn(frameworkMod, "lookupFramework").mockReturnValue(reactFramework);
+      spyOn(context, "gatherContext").mockResolvedValue({
+        ...FAKE_CTX,
+        cwd: "/repo/new-react-app",
+        framework: reactFramework,
+      });
+      const check = spyOn(linkMod, "replacedLink").mockResolvedValue(REPLACED);
+      track(check);
+
+      await expect(init({ framework: "react", app: "app_B", skills: false })).rejects.toThrow(
+        "--relink",
+      );
+      expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+      expect(check).toHaveBeenCalledWith("/repo/new-react-app", "app_B", { newProject: false });
+      expect(linkMod.link).not.toHaveBeenCalled();
+    });
+
+    test("a person is asked by clerk link itself, as before", async () => {
+      iosProject();
+      linkedToA();
+      const check = spyOn(linkMod, "replacedLink").mockResolvedValue(REPLACED);
+      track(check);
+
+      await init({ app: "app_B" });
+
+      expect(check).not.toHaveBeenCalled();
+      expect(linkMod.link).toHaveBeenCalled();
+    });
+  });
+
+  describe("--starter", () => {
+    const STARTER = {
+      projectDir: "/tmp/test/MyApp",
+      projectName: "MyApp",
+      apple: {
+        platform: "ios" as "ios" | "macos",
+        bundleIdentifier: "com.example.MyApp",
+        teamId: "COMPANY001",
+        personalTeam: false,
+      },
+    };
+
+    let written = false;
+
+    function starter(
+      apple: Partial<typeof STARTER.apple> = {},
+      overrides: { isAgent?: boolean } = {},
+    ) {
+      const run = iosProject(overrides);
+      spyOn(frameworkMod, "lookupFramework").mockImplementation((name) =>
+        name === "ios" ? iosFramework : null,
+      );
+      written = false;
+      // Like the real starter: the link checks run once its answers are valid, then it writes.
+      spyOn(bootstrapMod, "promptAndBootstrap").mockImplementation(async (_cwd, _fw, options) => {
+        await options?.beforeWrite?.(STARTER.projectDir);
+        written = true;
+        return { ...STARTER, apple: { ...STARTER.apple, ...apple } };
+      });
+      spyOn(config, "resolveProfile").mockResolvedValue({
+        profile: { appId: "app_test" },
+      } as never);
+      track(spyOn(config, "getProfile").mockResolvedValue(undefined));
+      return run;
+    }
+
+    test("sets up the new app with its team, reading the Bundle ID back from Xcode", async () => {
+      const run = starter();
+
+      await init({ starter: true, framework: "ios" });
+
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          bundleId: undefined,
+          appIdPrefix: "COMPANY001",
+          starterProject: expect.objectContaining({ projectName: "MyApp", platform: "ios" }),
+        }),
+        "app_test",
+      );
+    });
+
+    test("keeps an explicit --app-id-prefix over the team", async () => {
+      const run = starter();
+
+      await init({ starter: true, framework: "ios", appIdPrefix: "LEGACY0001" });
+
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({ appIdPrefix: "LEGACY0001" }),
+        "app_test",
+      );
+    });
+
+    test("passes Apple answers and the macOS platform to the starter", async () => {
+      starter({ platform: "macos" });
+
+      await init({
+        starter: true,
+        framework: "macos",
+        bundleId: "com.example.MyApp",
+        teamId: "COMPANY001",
+      });
+
+      expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+        expect.any(String),
+        iosFramework,
+        expect.objectContaining({
+          apple: expect.objectContaining({
+            platform: "macos",
+            bundleId: "com.example.MyApp",
+            teamId: "COMPANY001",
+            flags: ["--bundle-id", "--team-id"],
+          }),
+        }),
+      );
+    });
+
+    test("an agent without an app is told to finish setup inside the new app", async () => {
+      const run = starter({}, { isAgent: true });
+      spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+      // A new starter has no Clerk package yet.
+      spyOn(context, "gatherContext").mockResolvedValue({
+        ...FAKE_CTX,
+        cwd: STARTER.projectDir,
+        deps: {},
+        existingClerk: false,
+        framework: iosFramework,
+      });
+      spyOn(scaffoldMod, "scaffold").mockResolvedValue({
+        actions: [],
+        postInstructions: ["Then run `clerk init --app <app_id> --json`."],
+      } as never);
+
+      await init({ starter: true, framework: "ios" });
+
+      expect(run).not.toHaveBeenCalled();
+      expect(captured.err).toContain("cd MyApp");
+      expect(captured.err).toContain("clerk init --app <app_id> --json");
+    });
+
+    function agentStarter(apple: Partial<typeof STARTER.apple> = {}) {
+      const run = starter(apple, { isAgent: true });
+      spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+      spyOn(context, "gatherContext").mockResolvedValue({
+        ...FAKE_CTX,
+        cwd: STARTER.projectDir,
+        deps: {},
+        existingClerk: false,
+        framework: iosFramework,
+      });
+      // The real iOS plan, so its continuation line is the one checked.
+      spyOn(scaffoldMod, "scaffold").mockImplementation(async (ctx) => ios.scaffold(ctx));
+      return run;
+    }
+
+    test.each([
+      {
+        name: "explicit options",
+        options: { appleSdk: "core" as const, appIdPrefix: "LEGACY0001", signInWithApple: true },
+        command:
+          "cd MyApp && clerk init --app <app_id> --json --apple-sdk core --app-id-prefix LEGACY0001 --sign-in-with-apple",
+      },
+      {
+        name: "the starter's team as the App ID Prefix",
+        options: { prebuiltAuthUi: true },
+        command:
+          "cd MyApp && clerk init --app <app_id> --json --app-id-prefix COMPANY001 --prebuilt-auth-ui",
+      },
+      {
+        name: "no Bundle ID or team, which the new project already holds",
+        options: { bundleId: "com.example.MyApp", teamId: "COMPANY001" },
+        command: "cd MyApp && clerk init --app <app_id> --json --app-id-prefix COMPANY001",
+      },
+    ])("an agent's continuation carries $name", async ({ options, command }) => {
+      const run = agentStarter();
+
+      await init({ starter: true, framework: "ios", ...options });
+
+      expect(run).not.toHaveBeenCalled();
+      // Every place that names the next command names the same one, starting in the new app.
+      const plain = Bun.stripANSI(captured.err);
+      expect(plain).toContain(`Then run \`${command}\``);
+      expect(plain.match(/(?:cd \S+ && )?clerk init --app <app_id>[^\n`]*/g)).toEqual([
+        command,
+        command,
+        command,
+      ]);
+    });
+
+    test.each([
+      [{ xcodeProject: "Other.xcodeproj" }, "--xcode-project selects an existing Xcode project"],
+      [{ xcodeTarget: "Foo" }, "--xcode-target selects an existing Xcode project"],
+      [
+        { xcodeTarget: "Foo", xcodeConfiguration: "Debug" },
+        "--xcode-target, --xcode-configuration select an existing Xcode project",
+      ],
+    ])("rejects %o with --starter before creating anything", async (options, message) => {
+      setup();
+
+      await expect(init({ starter: true, framework: "ios", ...options })).rejects.toThrow(message);
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    });
+
+    test.each([
+      [{ accountless: true }, "--accountless"],
+      [{ template: "native" as const }, "--template"],
+      [{ fresh: true }, "--fresh"],
+    ])("rejects %o for a new iOS app before the link checks", async (options, flag) => {
+      starter({}, { isAgent: true });
+      // Linked elsewhere: the link advice (--app, --create-app) would contradict the flag.
+      const check = spyOn(linkMod, "replacedLink").mockResolvedValue({
+        appId: "app_A",
+        scope: "/repo",
+      });
+      track(check);
+
+      await expect(init({ starter: true, framework: "ios", ...options })).rejects.toThrow(
+        `${flag} applies only to accountless web setup; iOS and macOS apps link a Clerk application instead.`,
+      );
+      expect(check).not.toHaveBeenCalled();
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    });
+
+    test("without Xcode, the starter's own error explains it, not the existing-app advice", async () => {
+      starter();
+      xcode.mockReturnValue(false);
+
+      await init({ starter: true, framework: "ios", teamId: "COMPANY001" });
+
+      // The real promptAndBootstrap stops here with "needs Xcode on macOS" before writing.
+      expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+    });
+
+    test("--json passes on to the starter and reports a missing answer as input-required", async () => {
+      starter();
+      spyOn(bootstrapMod, "promptAndBootstrap").mockRejectedValue(
+        new StarterInputRequired("--name is required for a new app with --json.", "name", {
+          suggestion: "MyClerkApp",
+        }),
+      );
+
+      await expect(init({ starter: true, framework: "ios", json: true })).rejects.toThrow(
+        "--name is required",
+      );
+      expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalledWith(
+        expect.any(String),
+        iosFramework,
+        expect.objectContaining({ json: true }),
+      );
+      expect(JSON.parse(captured.out)).toEqual({
+        status: "input-required",
+        appIntegrationComplete: false,
+        input: {
+          field: "name",
+          flag: "--name",
+          question: "What would you like to name your app?",
+          issue: "--name is required for a new app with --json.",
+          suggestion: "MyClerkApp",
+        },
+      });
+    });
+
+    test("an agent's JSON without an app names the new app and how to finish it", async () => {
+      const run = agentStarter();
+
+      await init({ starter: true, framework: "ios", json: true });
+
+      expect(run).not.toHaveBeenCalled();
+      expect(JSON.parse(captured.out)).toMatchObject({
+        status: "application-required",
+        starter: {
+          projectName: "MyApp",
+          platform: "ios",
+          projectDir: "/tmp/test/MyApp",
+          continuation: "cd MyApp && clerk init --app <app_id> --json --app-id-prefix COMPANY001",
+        },
+        next: [
+          expect.any(String),
+          expect.stringContaining(
+            "cd MyApp && clerk init --app <app_id> --json --app-id-prefix COMPANY001",
+          ),
+        ],
+      });
+    });
+
+    test("with --app, native setup gets the continuation for that app", async () => {
+      const run = starter({}, { isAgent: true });
+      track(spyOn(linkMod, "replacedLink").mockResolvedValue(undefined));
+
+      await init({ starter: true, framework: "ios", json: true, app: "app_test" });
+
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          starterProject: expect.objectContaining({
+            continuation: "cd MyApp && clerk init --app app_test --json --app-id-prefix COMPANY001",
+          }),
+        }),
+        "app_test",
+      );
+    });
+
+    test("a failed link after writing the app reports where it is and how to finish", async () => {
+      starter({}, { isAgent: true });
+      spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+      track(spyOn(linkMod, "replacedLink").mockResolvedValue(undefined));
+      spyOn(linkMod, "link").mockRejectedValue(new Error("Network unavailable"));
+
+      await expect(
+        init({ starter: true, framework: "ios", json: true, app: "app_new" }),
+      ).rejects.toThrow("Network unavailable");
+      expect(JSON.parse(captured.out)).toMatchObject({
+        status: "setup-interrupted",
+        error: "Network unavailable",
+        starter: {
+          projectName: "MyApp",
+          continuation: "cd MyApp && clerk init --app app_new --json --app-id-prefix COMPANY001",
+        },
+        next: [expect.stringContaining("Don't run --starter again")],
+      });
+    });
+
+    test("stops before writing a new app that would relink its repository", async () => {
+      starter({}, { isAgent: true });
+      const check = spyOn(linkMod, "replacedLink").mockResolvedValue({
+        appId: "app_A",
+        scope: "/repo",
+      });
+      track(check);
+
+      await expect(init({ starter: true, framework: "ios", app: "app_B" })).rejects.toThrow(
+        "/repo is linked to app_A. Linking a new app here to app_B switches every Clerk CLI command in /repo to app_B. Rerun with --relink to switch it, pass --app app_A to share its application, or create the new app outside this repository.",
+      );
+      expect(check).toHaveBeenCalledWith(expect.any(String), "app_B", { newProject: true });
+      expect(written).toBe(false);
+    });
+
+    describe("in a folder linked elsewhere, the starter's own answers come first", () => {
+      function linked() {
+        starter({}, { isAgent: true });
+        spyOn(config, "resolveProfile").mockResolvedValue({
+          path: "/work",
+          profile: { appId: "app_P", appName: "Parent" },
+        } as never);
+        const check = spyOn(linkMod, "replacedLink").mockResolvedValue({
+          appId: "app_A",
+          scope: "/repo",
+        });
+        track(check);
+        return check;
+      }
+
+      test.each([
+        {
+          name: "an invalid name",
+          failure: new StarterInputRequired('Invalid --name "Swift": it names a module.', "name"),
+        },
+        {
+          name: "an existing folder",
+          failure: new StarterInputRequired(
+            "Directory 'MyApp' already exists. Pick a different name or remove it first.",
+            "name",
+          ),
+        },
+      ])("$name is asked about, not the link", async ({ failure }) => {
+        const check = linked();
+        // The real starter rejects these before it runs the link checks.
+        spyOn(bootstrapMod, "promptAndBootstrap").mockRejectedValue(failure);
+
+        await expect(
+          init({ starter: true, framework: "ios", json: true, app: "app_B" }),
+        ).rejects.toBe(failure);
+        expect(JSON.parse(captured.out)).toMatchObject({
+          status: "input-required",
+          input: { field: "name", issue: failure.message },
+        });
+        expect(check).not.toHaveBeenCalled();
+      });
+
+      test.each([
+        { name: "with --app", options: { app: "app_B" }, flag: "--relink" },
+        { name: "without --app", options: {}, flag: "--app" },
+      ])(
+        "$name, valid answers still ask about the link before writing",
+        async ({ options, flag }) => {
+          linked();
+
+          await expect(
+            init({ starter: true, framework: "ios", json: true, ...options }),
+          ).rejects.toThrow(flag);
+          expect(JSON.parse(captured.out)).toMatchObject({
+            status: "input-required",
+            link: { flag },
+          });
+          expect(written).toBe(false);
+        },
+      );
+    });
+
+    test("an agent's continuation keeps --relink", async () => {
+      const run = starter({}, { isAgent: true });
+
+      await init({ starter: true, framework: "ios", json: true, app: "app_test", relink: true });
+
+      expect(run).toHaveBeenCalledWith(
+        expect.objectContaining({
+          starterProject: expect.objectContaining({
+            continuation:
+              "cd MyApp && clerk init --app app_test --json --relink --app-id-prefix COMPANY001",
+          }),
+        }),
+        "app_test",
+      );
+    });
+
+    describe("an agent's new app with no application chosen", () => {
+      function inherits() {
+        starter({}, { isAgent: true });
+        spyOn(config, "resolveProfile").mockResolvedValue({
+          path: "/work",
+          profile: { appId: "app_P", appName: "Parent" },
+        } as never);
+      }
+
+      test("stops before writing instead of using the link it would inherit", async () => {
+        inherits();
+
+        await expect(init({ starter: true, framework: "ios", json: true })).rejects.toThrow(
+          "is linked to Parent (app_P), so a new app here would use it too. Choose the new app's application: pass --app app_P to share it, or --app with another application (`clerk apps create` makes a new one).",
+        );
+        expect(JSON.parse(captured.out)).toMatchObject({
+          status: "input-required",
+          link: {
+            flag: "--app",
+            question: "Should the new app use Parent (app_P), or another application?",
+            current: { appId: "app_P", appName: "Parent" },
+          },
+        });
+        expect(written).toBe(false);
+      });
+
+      test("stops for a link left at the new app's own folder", async () => {
+        starter({}, { isAgent: true });
+        const inherited = spyOn(config, "resolveProfile").mockResolvedValue(undefined);
+        spyOn(config, "getProfile").mockImplementation(async (dir) =>
+          dir === STARTER.projectDir ? ({ appId: "app_OLD", appName: "Old" } as never) : undefined,
+        );
+        // Git caches a miss for a folder that doesn't exist yet, which would key the new app's link
+        // to that folder instead of its repository.
+        const git = spyOn(gitMod, "getGitRepoRoot");
+        track(git);
+
+        await expect(init({ starter: true, framework: "ios", json: true })).rejects.toThrow(
+          `${STARTER.projectDir} is linked to Old (app_OLD), so a new app here would use it too.`,
+        );
+        expect(JSON.parse(captured.out)).toMatchObject({
+          status: "input-required",
+          link: { flag: "--app", current: { appId: "app_OLD" }, scope: STARTER.projectDir },
+        });
+        expect(written).toBe(false);
+        expect(inherited).not.toHaveBeenCalledWith(STARTER.projectDir);
+        expect(git).not.toHaveBeenCalledWith(STARTER.projectDir);
+      });
+
+      test("with nothing to inherit, writes the app and asks for one after", async () => {
+        const run = agentStarter();
+
+        await init({ starter: true, framework: "ios", json: true });
+
+        expect(bootstrapMod.promptAndBootstrap).toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalled();
+        expect(JSON.parse(captured.out).status).toBe("application-required");
+      });
+    });
+
+    describe("detecting the new app fails after it's written", () => {
+      test.each([
+        {
+          name: "throws",
+          fail: () =>
+            spyOn(context, "gatherContext").mockRejectedValue(
+              new Error("project.pbxproj unreadable"),
+            ),
+          message: "project.pbxproj unreadable",
+        },
+        {
+          name: "finds no framework",
+          fail: () => spyOn(context, "gatherContext").mockResolvedValue(null),
+          message: "Project generation did not produce a detectable framework.",
+        },
+      ])("when it $name, says where the app is and how to finish it", async ({ fail, message }) => {
+        agentStarter();
+        fail();
+
+        await expect(init({ starter: true, framework: "ios", json: true })).rejects.toThrow(
+          message,
+        );
+        expect(JSON.parse(captured.out)).toMatchObject({
+          status: "setup-interrupted",
+          error: message,
+          starter: {
+            projectName: "MyApp",
+            projectDir: "/tmp/test/MyApp",
+            continuation: "cd MyApp && clerk init --app <app_id> --json --app-id-prefix COMPANY001",
+          },
+          next: [expect.stringContaining("Don't run --starter again")],
+        });
+      });
+
+      test("without --json, the original error comes through alone", async () => {
+        agentStarter();
+        const failure = new Error("project.pbxproj unreadable");
+        spyOn(context, "gatherContext").mockRejectedValue(failure);
+
+        await expect(init({ starter: true, framework: "ios" })).rejects.toBe(failure);
+        expect(captured.out).toBe("");
+      });
+    });
+
+    test("--team-id needs --starter", async () => {
+      setup();
+
+      await expect(init({ teamId: "COMPANY001" })).rejects.toThrow(
+        "--team-id applies to a new app with --starter",
+      );
+      expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
+    });
   });
 });

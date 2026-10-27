@@ -1,3 +1,4 @@
+import type { AppleTeam } from "./teams.ts";
 import type { ScaffoldPlan } from "../frameworks/types.ts";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -16,7 +17,12 @@ import {
   type AppliedFile,
 } from "./files.ts";
 import { planStarter } from "./starter.ts";
-import { planAllCapabilities } from "./capabilities.ts";
+import {
+  personalTeamConflictNote,
+  personalTeamConflicts,
+  planAllCapabilities,
+  readEntitlements,
+} from "./capabilities.ts";
 import { sdkHealth, resolvedSDKHealth } from "./sdk-health.ts";
 import { integrationHandoff } from "./handoff.ts";
 import {
@@ -54,6 +60,11 @@ import {
   type InspectOptions,
 } from "./xcode.ts";
 
+const PERSONAL_TEAM_APPLE =
+  "This app is signed by a Personal Team, which can't use Sign in with Apple, so its capability was left out. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
+const PERSONAL_TEAM_DOMAINS =
+  "Associated Domains were left out: a Personal Team can't provision them for a Mac app, so passkeys and password AutoFill stay off. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
+
 export interface SetupOptions extends InspectOptions {
   remote?: RemoteSelection;
   capabilities?: boolean;
@@ -62,6 +73,8 @@ export interface SetupOptions extends InspectOptions {
   starter?: boolean;
   inspectOnly?: boolean;
   checkAppleConnection?: boolean;
+  /** The app is signed by a Personal Team: no Sign in with Apple, and on macOS no Associated Domains. */
+  personalTeam?: boolean;
   /** An inspection of the same project taken earlier (say, before prompting), to avoid a second xcodebuild pass. */
   inspection?: Inspection;
 }
@@ -70,6 +83,8 @@ export interface Dependencies {
   api?: NativeAPI;
   appleAPI?: IOSNativeAppleAPI;
   promptIdentity?: IdentityPrompt;
+  /** Xcode's signed-in teams, instead of reading them from Xcode's settings. */
+  xcodeTeams?: AppleTeam[];
 }
 export interface SetupPreview {
   inspection: Inspection;
@@ -85,6 +100,10 @@ export interface SetupPreview {
   apple?: IOSNativeApplePlan;
   appleRequested: boolean;
   appleWarning?: string;
+  /** Why a Mac app signed by a Personal Team has no Associated Domain. */
+  personalTeamNote?: string;
+  /** Entitlements already in a file that its Personal Team can't sign, one note per file. */
+  personalTeamConflicts: string[];
   signInUIRequested: boolean;
   starter?: Awaited<ReturnType<typeof planStarter>>;
 }
@@ -125,6 +144,7 @@ export async function prepareSetup(
       "Native Apple sign-in requires an explicitly selected Clerk application and confirmed native identity.",
     );
   const originalAction = local.actions[0]!;
+  const mac = inspection.input.selection.sdk === "macosx";
   let appleEnabled = options.signInWithApple === true;
   let appleWarning: string | undefined;
   if (options.checkAppleConnection && remote && !options.signInWithApple) {
@@ -140,7 +160,8 @@ export async function prepareSetup(
       // Follow Clerk's setting only when the user wasn't asked; an explicit
       // "no" must not add the Sign in with Apple entitlement.
       if (options.signInWithApple === undefined) appleEnabled = enabledInClerk;
-      if (enabledInClerk && options.signInWithApple === false)
+      if (enabledInClerk && options.personalTeam) appleWarning = PERSONAL_TEAM_APPLE;
+      else if (enabledInClerk && options.signInWithApple === false)
         appleWarning =
           "Sign in with Apple is enabled for this Clerk instance, but its capability was not added. Apple sign-in fails on device until you add it, or rerun with --sign-in-with-apple.";
       else if (
@@ -162,8 +183,32 @@ export async function prepareSetup(
           originalAction.type === "modify" ? originalAction.content : inspection.document.source,
           remote?.context.frontendHost,
           appleEnabled,
+          !(options.personalTeam && mac),
         )
       : undefined;
+  // Setup never removes entitlements, so name the ones already there that the team can't sign,
+  // instead of saying they were left out.
+  const conflictNotes: string[] = [];
+  const conflicting = new Set<string>();
+  if (options.personalTeam && capabilities) {
+    const files = new Set<string>();
+    for (const context of inspection.contexts) {
+      const file = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+      if (!file || files.has(file)) continue;
+      files.add(file);
+      let conflicts: string[];
+      try {
+        const source = await readEntitlements(context);
+        conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
+      } catch {
+        continue;
+      }
+      for (const conflict of conflicts) conflicting.add(conflict);
+      if (conflicts.length) conflictNotes.push(personalTeamConflictNote(file, conflicts));
+    }
+    if (appleWarning === PERSONAL_TEAM_APPLE && conflicting.has("Sign in with Apple"))
+      appleWarning = undefined;
+  }
   if (capabilities) {
     if (
       capabilities.projectSource !==
@@ -248,6 +293,11 @@ export async function prepareSetup(
     apple,
     appleRequested: options.signInWithApple === true,
     appleWarning,
+    personalTeamNote:
+      options.personalTeam && capabilities && mac && !conflicting.has("Associated Domains")
+        ? PERSONAL_TEAM_DOMAINS
+        : undefined,
+    personalTeamConflicts: conflictNotes,
     signInUIRequested: options.signInUI === true,
     starter,
     sdk: originalAction,
@@ -468,6 +518,10 @@ export async function applySetup(
       );
     if (preview.appleWarning)
       remaining.push({ id: "apple-provider-review", detail: preview.appleWarning });
+    if (preview.personalTeamNote)
+      remaining.push({ id: "associated-domains", detail: preview.personalTeamNote });
+    for (const detail of preview.personalTeamConflicts)
+      remaining.push({ id: "personal-team-entitlements", detail });
     if (sdkCheck.status === "fail" || (preview.sdk.type === "skip" && sdkCheck.status !== "pass"))
       remaining.push({ id: "sdk-version", detail: sdkCheck.message });
     if (preview.resolvePackages)

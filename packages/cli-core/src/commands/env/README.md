@@ -2,6 +2,8 @@
 
 Pulls Clerk API keys for the linked instance and merges them into the project's `.env` file.
 
+`--print` writes `KEY=value` lines to stdout instead of touching any file, for piping into a hosting provider (`clerk env pull --instance prod --print | …`). It always includes the secret key, because nothing lands on disk, and it fails with `no_secret_key` without printing anything when the API returns none: a host given only the publishable key would pair it with the secret key it already has. It cannot be combined with `--file`.
+
 For an unclaimed **accountless** application there is no account to pull from — its keys only exist on this machine. When the directory isn't linked and no `--app` is passed, `env pull` instead copies the keys it finds locally (env var, `.env`/`.env.local`, or the `.clerk/.tmp/keyless.json` an SDK wrote for itself) into the env file the framework reads. This is what materializes an SDK-created accountless app into `.env.local`. If only the secret key can be found, it's written and a warning names the missing publishable key. Resolution order lives in [`lib/keyless-target.ts`](../../lib/keyless-target.ts).
 
 The secret key and publishable key are found independently and can each belong to a _different_ application (e.g. leftovers from two accountless apps in the same `.env.local`). Before writing, `env pull` calls `GET /v1/domains` with the secret key and confirms the publishable key's Frontend API host (decoded via `decodePublishableKey` in `lib/fapi.ts`) matches one of that instance's own domains. A mismatch aborts the pull with an error and writes nothing — a wrong pair on disk produces an app that fails at runtime in a way that's very hard to trace, so this is stricter than `clerk whoami`, which only warns about the same mismatch (see [`commands/whoami/README.md`](../whoami/README.md)).
@@ -9,7 +11,7 @@ The secret key and publishable key are found independently and can each belong t
 ## Usage
 
 ```sh
-clerk env pull [--app <app_id>] [--instance dev|prod|<instance_id>] [--file <path>]
+clerk env pull [--app <app_id>] [--instance dev|prod|<instance_id>] [--file <path> | --print]
 ```
 
 ### Options
@@ -19,6 +21,7 @@ clerk env pull [--app <app_id>] [--instance dev|prod|<instance_id>] [--file <pat
 | `--app <id>`      | Application ID to target directly (works from any directory)        |
 | `--instance <id>` | Instance to target (`dev`, `prod`, or a full instance ID)           |
 | `--file <path>`   | Target env file, relative to cwd or absolute (default: auto-detect) |
+| `--print`         | Print `KEY=value` lines to stdout instead of writing an env file    |
 
 ## Sequence Diagram
 

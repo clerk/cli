@@ -87,7 +87,8 @@ test("reads every page of a batch that matches more than one page", async () => 
   expect(urls[0]?.searchParams.getAll("external_id")).toEqual(["+-dup"]);
 });
 
-test("stops paging when the cursor does not move", async () => {
+// Stopping quietly would pass a short lookup off as complete.
+test("fails, rather than looping or stopping short, when the cursor does not move", async () => {
   let requests = 0;
   // A server that ignores `starting_after` serves the same full page again.
   globalThis.fetch = (async () => {
@@ -97,12 +98,13 @@ test("stops paging when the cursor does not move", async () => {
     );
   }) as unknown as typeof fetch;
 
-  await lookupUsers({
-    filter: "external_id",
-    values: ["a"],
-    secretKey: "sk_test_x",
-    schedule: createApiScheduler(1, 10_000),
-  });
-
+  await expect(
+    lookupUsers({
+      filter: "external_id",
+      values: ["a"],
+      secretKey: "sk_test_x",
+      schedule: createApiScheduler(1, 10_000),
+    }),
+  ).rejects.toThrow(/same page of users twice/);
   expect(requests).toBe(2);
 });
