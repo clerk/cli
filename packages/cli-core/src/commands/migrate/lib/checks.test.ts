@@ -310,7 +310,8 @@ describe("rejects", () => {
         ],
       }),
     ).toEqual({
-      unverified: "only has an unverified email, and this instance requires an email",
+      unverified:
+        "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though never verified)",
       none: "no email, which this instance requires",
     });
   });
