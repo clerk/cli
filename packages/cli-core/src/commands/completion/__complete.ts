@@ -26,6 +26,16 @@ function noFileComp(completions: Completion[]): CompletionResult {
   return { completions, directive: DIRECTIVE.NO_FILE_COMP };
 }
 
+/** The known values that start with `partial`, from a registry entry. */
+function matching(known: Completion[], partial: string): CompletionResult {
+  const completions = known.filter((c) => c.name.startsWith(partial));
+  // A migrate source can be a path to one you wrote, so the shell still
+  // completes files beside the built-in keys.
+  return known === SOURCE_COMPLETIONS
+    ? { completions, directive: DIRECTIVE.DEFAULT }
+    : noFileComp(completions);
+}
+
 const HTTP_METHOD_COMPLETIONS: Completion[] = [
   { name: "GET", description: "Read resource" },
   { name: "POST", description: "Create resource" },
@@ -121,13 +131,15 @@ export function generateCompletions(root: CommandUnknownOpts, args: string[]): C
   }
 
   // Combine subcommands + argument choices + options
+  const argument = completeArguments(command, partial, positionalCount);
   const completions = [
     ...completeSubcommands(command, partial).completions,
-    ...completeArguments(command, partial, positionalCount).completions,
+    ...argument.completions,
     ...completeOptions(command, "", usedOptions).completions,
   ];
 
-  return noFileComp(completions);
+  // The argument decides file completion: on only for one that can be a path.
+  return { completions, directive: argument.directive };
 }
 
 // ── Tree walking ─────────────────────────────────────────────────────────────
@@ -242,10 +254,10 @@ function completeArguments(
   const path = commandPath(cmd);
   const registered = KNOWN_POSITIONAL_COMPLETIONS[path];
   if (registered) {
-    return noFileComp(registered.filter((c) => c.name.startsWith(partial)));
+    return matching(registered, partial);
   }
 
-  return EMPTY_DEFAULT;
+  return EMPTY_NO_FILE;
 }
 
 function commandPath(cmd: CommandUnknownOpts): string {
@@ -278,7 +290,7 @@ function completeOptionValue(opt: Option, flag: string, partial: string): Comple
   const candidates = resolveOptionValues(opt, flag);
   if (!candidates) return EMPTY_DEFAULT;
 
-  return noFileComp(candidates.filter((c) => c.name.startsWith(partial)));
+  return matching(candidates, partial);
 }
 
 function resolveOptionValues(opt: Option, flag: string): Completion[] | undefined {

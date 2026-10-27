@@ -221,6 +221,8 @@ describe("generateCompletions", () => {
     });
 
     test("completes --source with the built-in migrate sources", () => {
+      // A source you wrote is a path, so the shell's file completion stays on.
+      expect(complete("migrate", "import", "--source", "").directive).toBe(0);
       const names = completionNames("migrate", "import", "--source", "");
       expect(names).toEqual([
         "clerk",
@@ -286,6 +288,7 @@ describe("generateCompletions", () => {
     });
 
     test("migrate sources: suggests the built-in sources", () => {
+      expect(complete("migrate", "sources", "").directive).toBe(0);
       const names = completionNames("migrate", "sources", "");
       expect(names).toContain("supabase");
       expect(names).toContain("workos");
