@@ -809,6 +809,23 @@ describe("run", () => {
       expect(captured.err).toContain("only signs in with Discord, which is not enabled in Clerk");
     });
 
+    // Without its own `socialProviders`, a source you wrote counts the export's.
+    test("a source you wrote over an Auth0 export still counts its social providers", async () => {
+      stubClerk({
+        settings: {
+          attributes: { email_address: { enabled: true } },
+          enterprise_sso: { enabled: true },
+        },
+      });
+      const { record } = exportRun("auth0", [
+        { user_id: "google-oauth2|g1", email: "g@x.dev", email_verified: true },
+      ]);
+
+      await run({ ...noSource, source: ownAuth0Source(), input: record.id, dryRun: true });
+
+      expect(captured.err).toContain("1 user signed in with Google, which is not enabled in Clerk");
+    });
+
     test("the printed command keeps a source you wrote in place of the envelope's", async () => {
       const { record } = exportRun("auth0", auth0Rows);
       const own = ownAuth0Source();
