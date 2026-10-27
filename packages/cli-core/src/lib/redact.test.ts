@@ -970,6 +970,8 @@ describe("large pastes stay linear", () => {
     for (let i = 0; i < size; i++) out += NAME_CHARS[(i * 7919) % NAME_CHARS.length];
     return out;
   }
+  // Not above 192 KB: between there and 256 KB, Bun 1.3.14 makes the literal
+  // \n shape ten times slower in one step, which the ratio check fails on.
   const SIZE = 131_072;
   const fill = (unit: string, size: number) => unit.repeat(Math.ceil(size / unit.length));
   const urlHeavyJson = (size: number) =>
