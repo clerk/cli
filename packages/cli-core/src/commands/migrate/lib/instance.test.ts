@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEV_USER_LIMIT,
-  resolveDevUserLimit,
+  resolveUserLimit,
   detectInstanceType,
   getDefaultConcurrencyLimit,
   getDefaultRateLimit,
@@ -41,16 +41,35 @@ describe("default limits", () => {
   });
 });
 
-describe("resolveDevUserLimit", () => {
+describe("resolveUserLimit", () => {
+  // Without `max_allowed_users`, a development instance falls back.
   test.each([
-    [undefined, 100],
-    ["500", 500],
-    ["250.7", 250],
-    ["0", 100],
-    ["-5", 100],
-    ["lots", 100],
-  ])("CLERK_MIGRATE_DEV_USER_LIMIT=%p gives %i", (value, expected) => {
-    expect(resolveDevUserLimit({ CLERK_MIGRATE_DEV_USER_LIMIT: value })).toBe(expected);
+    [undefined, { limit: 100, source: "default" }],
+    ["500", { limit: 500, source: "env" }],
+    ["250.7", { limit: 250, source: "env" }],
+    ["0", { limit: 100, source: "default" }],
+    ["-5", { limit: 100, source: "default" }],
+    ["lots", { limit: 100, source: "default" }],
+  ] as const)("CLERK_MIGRATE_DEV_USER_LIMIT=%p gives %p", (value, expected) => {
+    expect(resolveUserLimit(undefined, "dev", { CLERK_MIGRATE_DEV_USER_LIMIT: value })).toEqual(
+      expected,
+    );
+  });
+
+  // Clerk's own number is the one it enforces, so it beats the variable.
+  test.each([["dev"], ["prod"]] as const)("a reported limit wins on %s", (type) => {
+    expect(resolveUserLimit(500, type, { CLERK_MIGRATE_DEV_USER_LIMIT: "50" })).toEqual({
+      limit: 500,
+      source: "instance",
+    });
+  });
+
+  test("a reported null is no limit, even on a development instance", () => {
+    expect(resolveUserLimit(null, "dev", { CLERK_MIGRATE_DEV_USER_LIMIT: "50" })).toBeUndefined();
+  });
+
+  test("production has no limit when Clerk did not report one", () => {
+    expect(resolveUserLimit(undefined, "prod", {})).toBeUndefined();
   });
 });
 

@@ -497,7 +497,13 @@ describe("rejects", () => {
           "over the development instance's 100-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)",
       },
     ]);
-    expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 2, over: 1 });
+    expect(checks.quota).toEqual({
+      existing: 98,
+      limit: 100,
+      limitSource: "default",
+      headroom: 2,
+      over: 1,
+    });
   });
 
   // A continued run's adopted users exist already and are never created
@@ -514,7 +520,13 @@ describe("rejects", () => {
     );
     expect(checks.importable.map((entry) => entry.userId)).toEqual(["a", "c"]);
     expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["b"]);
-    expect(checks.quota).toEqual({ existing: 99, limit: 100, headroom: 1, over: 1 });
+    expect(checks.quota).toEqual({
+      existing: 99,
+      limit: 100,
+      limitSource: "default",
+      headroom: 1,
+      over: 1,
+    });
   });
 
   // The checks stop creates; an adopted user needs none, so a reject would
@@ -605,10 +617,60 @@ describe("rejects", () => {
         input({ instanceType: "dev", existingUsers: 98, users: [user("a"), user("b"), user("c")] }),
       );
       expect(checks.rejects).toEqual([]);
-      expect(checks.quota).toEqual({ existing: 98, limit: 500, headroom: 402, over: 0 });
+      expect(checks.quota).toEqual({
+        existing: 98,
+        limit: 500,
+        limitSource: "env",
+        headroom: 402,
+        over: 0,
+      });
     } finally {
       delete process.env.CLERK_MIGRATE_DEV_USER_LIMIT;
     }
+  });
+
+  test("the instance's own limit wins over CLERK_MIGRATE_DEV_USER_LIMIT, and names support", async () => {
+    process.env.CLERK_MIGRATE_DEV_USER_LIMIT = "500";
+    try {
+      const checks = await checkImport(
+        input({
+          instanceType: "dev",
+          maxAllowedUsers: 99,
+          existingUsers: 98,
+          users: [user("a"), user("b")],
+        }),
+      );
+      expect(checks.rejects).toEqual([
+        {
+          sourceId: "b",
+          reason: "over this instance's 99-user limit (contact support to raise it)",
+        },
+      ]);
+      expect(checks.quota).toMatchObject({ limit: 99, limitSource: "instance", headroom: 1 });
+    } finally {
+      delete process.env.CLERK_MIGRATE_DEV_USER_LIMIT;
+    }
+  });
+
+  test("a production instance with a reported limit is held to it", async () => {
+    const checks = await checkImport(
+      input({ instanceType: "prod", maxAllowedUsers: 1, existingUsers: 1, users: [user("a")] }),
+    );
+    expect(checks.rejects).toEqual([
+      {
+        sourceId: "a",
+        reason: "over this instance's 1-user limit (upgrade to a paid plan to remove it)",
+      },
+    ]);
+    expect(checks.quota).toMatchObject({ limit: 1, limitSource: "instance", headroom: 0 });
+  });
+
+  test("a reported null limit checks no quota", async () => {
+    const checks = await checkImport(
+      input({ instanceType: "dev", maxAllowedUsers: null, existingUsers: 500, users: [user("a")] }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.quota).toBeUndefined();
   });
 
   // Skipped, not rejected: a reject stops the import without --allow-partial,
