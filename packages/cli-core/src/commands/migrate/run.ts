@@ -230,8 +230,7 @@ export function explainErrors(errors: Iterable<string>, instanceType: InstanceTy
     );
   }
 
-  // Production has no user limit unless a plan imposes one, and the API's own
-  // message already names the fix ("upgrade to a paid plan") in that case.
+  // Only a development instance has a user limit; Clerk sets none on production.
   if (
     instanceType === "dev" &&
     all.some((error) => /You have reached your limit of \d+ users/.test(error))
