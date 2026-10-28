@@ -1257,7 +1257,7 @@ Two optional hooks run around the `transformer` mapping:
 - `preTransform(filePath, fileType)` runs once, before the file is read, and
   may be `async`. `fileType` is `"application/json"`, `"text/csv"` or `""`.
   Return `{ filePath, data?, csvHeaders? }`: `filePath` is the file to read
-  (the same one, or one you wrote), `data` is the users when you parsed them
+  (the same one, or one you wrote in the same format as `fileType`), `data` is the users when you parsed them
   yourself and skips reading the file, and `csvHeaders` names the columns of
   a CSV with no header row. It isn't called for a file from
   `clerk migrate export`, which holds its users already.
