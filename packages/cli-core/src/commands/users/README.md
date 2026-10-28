@@ -2,6 +2,8 @@
 
 Manage direct Clerk user resources with first-class commands. Use `clerk api` for unsupported or fully custom user requests.
 
+To bring users in from another provider (Auth0, Firebase, Supabase and more), use [`clerk migrate`](../migrate/README.md). `clerk users --help` ends with the same pointer.
+
 Works with no login and no linked project on an **unclaimed accountless
 application** — the one an SDK creates for itself the first time you run
 `next dev` (or similar) with no keys configured. See

@@ -54,6 +54,12 @@ export function registerUsers(program: Program): void {
         description: "Create a user from an inline BAPI request body",
       },
     ])
+    .addHelpText(
+      "after",
+      `
+To bring users in from another provider (Auth0, Firebase, Supabase and more),
+use \`clerk migrate\`.`,
+    )
     .action(async (_opts, cmd) =>
       users.menu(cmd.optsWithGlobals() as Parameters<typeof users.menu>[0]),
     );
