@@ -1368,8 +1368,8 @@ cannot sign in with it, and another user can claim it by verifying it first.
 any, creates them **reserved** instead, on `POST /v1/users` through
 `email_address_identification_status` / `phone_number_identification_status`.
 A reserved identifier is unverified, but usable for sign-in and locked to the
-user, and becomes verified the first time the user signs in with it. That is
-how most source platforms treat an unconfirmed address, but it lets the user
+user, and becomes verified the first time the user signs in with a code or
+link sent to it. That is how most source platforms treat an unconfirmed address, but it lets the user
 sign in with one nobody proved they own, so it is opt-in. `-y`, `--json` and
 agent mode never ask, and keep them unverified without the flag.
 
