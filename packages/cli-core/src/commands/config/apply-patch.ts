@@ -33,7 +33,7 @@ export interface ApplyPatchOptions {
 export async function applyConfigPatch(opts: ApplyPatchOptions): Promise<boolean> {
   const { target, payload, verb, successMessage, failureContext, yes, dryRun, warning } = opts;
 
-  assertPayloadWritable(target, payload);
+  await assertPayloadWritable(target, payload);
 
   const current =
     opts.currentConfig ??
