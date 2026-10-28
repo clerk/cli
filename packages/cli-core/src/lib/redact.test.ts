@@ -1336,16 +1336,14 @@ describe("secrets right after an escape sequence", () => {
 });
 
 // Bun's regex engine gives up on a long run without an error and reports no match.
-describe("a secret followed by a long run", () => {
-  test.each([
-    ["URL query", (tail: string) => `password=hunter2xyz&data=${tail}`],
-    ["flag", (tail: string) => `--token hunter2xyz${tail}`],
-    ["JSON field", (tail: string) => `{"password":"hunter2xyz","data":"${tail}"}`],
-    ["camelCase name", (tail: string) => `dbPass=hunter2xyz${tail}`],
-  ])("%s", (_label, shape) => {
-    for (const size of [10_000, 60_000, 200_000]) {
-      expect(redact(shape("a".repeat(size))).text).not.toContain("hunter2xyz");
-    }
+describe.each([
+  ["URL query", (tail: string) => `password=hunter2xyz&data=${tail}`],
+  ["flag", (tail: string) => `--token hunter2xyz${tail}`],
+  ["JSON field", (tail: string) => `{"password":"hunter2xyz","data":"${tail}"}`],
+  ["camelCase name", (tail: string) => `dbPass=hunter2xyz${tail}`],
+])("a secret followed by a long run: %s", (_label, shape) => {
+  test.each([10_000, 60_000, 200_000])("%d characters", (size) => {
+    expect(redact(shape("a".repeat(size))).text).not.toContain("hunter2xyz");
   });
 });
 
