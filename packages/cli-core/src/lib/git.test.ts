@@ -100,15 +100,21 @@ describe("ensureGitignoreEntry", () => {
     expect(await Bun.file(gitignorePath).text()).toBe("node_modules\n.clerk/\n");
   });
 
-  test.each([".clerk/", "/.clerk/", "/.clerk", ".clerk", ".clerk/*", ".clerk/**", "  /.clerk/  "])(
-    "leaves .gitignore unchanged when %p is already listed",
-    async (existing) => {
-      const content = `node_modules\n# clerk configuration (can include secrets)\n${existing}\n`;
-      await Bun.write(gitignorePath, content);
-      await ensureGitignoreEntry(tempDir, ".clerk/");
-      expect(await Bun.file(gitignorePath).text()).toBe(content);
-    },
-  );
+  test.each([
+    ".clerk/",
+    "/.clerk/",
+    "/.clerk",
+    ".clerk",
+    ".clerk/*",
+    ".clerk/**",
+    "/.clerk/  ",
+    "/.clerk/\r",
+  ])("leaves .gitignore unchanged when %p is already listed", async (existing) => {
+    const content = `node_modules\n# clerk configuration (can include secrets)\n${existing}\n`;
+    await Bun.write(gitignorePath, content);
+    await ensureGitignoreEntry(tempDir, ".clerk/");
+    expect(await Bun.file(gitignorePath).text()).toBe(content);
+  });
 
   test("does not treat a commented-out entry as listed", async () => {
     await Bun.write(gitignorePath, "# .clerk/\n");
@@ -120,6 +126,25 @@ describe("ensureGitignoreEntry", () => {
     await Bun.write(gitignorePath, "!.clerk/\n");
     await ensureGitignoreEntry(tempDir, ".clerk/");
     expect(await Bun.file(gitignorePath).text()).toBe("!.clerk/\n.clerk/\n");
+  });
+
+  test("does not treat an entry with leading whitespace as listed", async () => {
+    await Bun.write(gitignorePath, "  /.clerk/\n");
+    await ensureGitignoreEntry(tempDir, ".clerk/");
+    expect(await Bun.file(gitignorePath).text()).toBe("  /.clerk/\n.clerk/\n");
+  });
+
+  test("appends the entry when a later negation re-includes the folder", async () => {
+    await Bun.write(gitignorePath, "/.clerk/\n!.clerk/\n");
+    await ensureGitignoreEntry(tempDir, ".clerk/");
+    expect(await Bun.file(gitignorePath).text()).toBe("/.clerk/\n!.clerk/\n.clerk/\n");
+  });
+
+  test("leaves .gitignore unchanged when the entry follows a negation", async () => {
+    const content = "!.clerk/\n/.clerk/\n";
+    await Bun.write(gitignorePath, content);
+    await ensureGitignoreEntry(tempDir, ".clerk/");
+    expect(await Bun.file(gitignorePath).text()).toBe(content);
   });
 
   test("does not treat a nested path as listed", async () => {

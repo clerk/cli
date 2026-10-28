@@ -124,11 +124,15 @@ export async function ensureGitignoreEntry(cwd: string, entry: string): Promise<
     .text()
     .catch(() => "");
   const target = normalizeGitignorePattern(entry);
-  const listed = content
-    .split("\n")
-    .map((l) => l.trim())
-    .filter((l) => l && !l.startsWith("#"))
-    .some((l) => normalizeGitignorePattern(l) === target);
+  // Git ignores trailing whitespace but not leading, and the last matching
+  // rule wins, so a later `!.clerk/` re-includes the folder.
+  let listed = false;
+  for (const line of content.split("\n").map((l) => l.trimEnd())) {
+    if (!line || line.startsWith("#")) continue;
+    const negated = line.startsWith("!");
+    const pattern = negated ? line.slice(1) : line;
+    if (normalizeGitignorePattern(pattern) === target) listed = !negated;
+  }
   if (listed) return;
   const separator = content && !content.endsWith("\n") ? "\n" : "";
   await Bun.write(gitignorePath, `${content}${separator}${entry}\n`);
