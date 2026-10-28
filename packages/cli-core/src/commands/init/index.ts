@@ -58,7 +58,7 @@ import { installSkills } from "./skills.js";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.js";
 import {
   promptAndBootstrap,
-  rejectAccountlessApple,
+  rejectAccountlessNative,
   confirmOverwrite,
   type BootstrapOverrides,
   type BootstrapResult,
@@ -76,6 +76,7 @@ import {
 import { withNativeProgress } from "./native/progress.js";
 import { applicationRequired as nativeApplicationRequired } from "./native/status.js";
 import { StarterInputRequired, type AppleStarter } from "./ios/starter-bootstrap.js";
+import type { AndroidStarter } from "./android/starter-bootstrap.js";
 import { runAndroidInit, type AndroidInitOptions } from "./android/coordinator.js";
 import { UnsupportedLayout } from "./android/types.js";
 import { androidManualSteps } from "./frameworks/android.js";
@@ -144,8 +145,10 @@ export async function init(options: InitOptions = {}) {
   ].filter((flag): flag is string => Boolean(flag));
   const appleStarter =
     options.starter === true && (options.framework === "ios" || options.framework === MACOS);
+  const nativeStarter =
+    appleStarter || (options.starter === true && options.framework === "android");
   // Before the link checks below, whose advice (--app) these flags would contradict.
-  if (appleStarter && accountlessFlags.length) rejectAccountlessApple(accountlessFlags);
+  if (nativeStarter && accountlessFlags.length) rejectAccountlessNative(accountlessFlags);
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.
   const overrides: BootstrapOverrides = {
     skipConfirm: options.yes || agent,
@@ -162,6 +165,9 @@ export async function init(options: InitOptions = {}) {
         flags: appleFlags,
       },
     }),
+    ...(androidFlags.length && {
+      android: { applicationId: options.androidPackage, flags: androidFlags },
+    }),
   };
 
   intro("Setting up Clerk");
@@ -172,8 +178,9 @@ export async function init(options: InitOptions = {}) {
   const existingProjectFlags = [
     options.dryRun && "--dry-run",
     options.json && !options.starter && "--json",
+    options.prebuiltAuthUi && !options.starter && "--prebuilt-auth-ui",
     ...(options.starter ? [] : appleFlags),
-    ...androidFlags,
+    ...(options.starter ? [] : androidFlags),
   ].filter((flag): flag is string => Boolean(flag));
   // A new app inside a repository linked elsewhere would move the whole repository's link, so an
   // agent hears about it before anything is written. An iOS or macOS starter asks once its own
@@ -186,7 +193,7 @@ export async function init(options: InitOptions = {}) {
       if (projectDir) await assertApplicationChosen(projectDir, options, { exact: true });
     }
   };
-  if (appleStarter && agent) overrides.beforeWrite = linkChecks;
+  if (nativeStarter && agent) overrides.beforeWrite = linkChecks;
   else if (options.starter && agent && options.app) await linkChecks();
   let resolved: ResolvedContext | undefined;
   try {
@@ -218,6 +225,18 @@ export async function init(options: InitOptions = {}) {
           2,
         ),
       );
+    if (options.json && bootstrap.android)
+      log.data(
+        JSON.stringify(
+          setupInterrupted(
+            starterAndroidOptions(options, { ...bootstrap, android: bootstrap.android })
+              .starterProject,
+            error.failure,
+          ),
+          null,
+          2,
+        ),
+      );
     throw error.failure;
   }
 
@@ -236,13 +255,18 @@ export async function init(options: InitOptions = {}) {
     agent,
     ...(bootstrap?.apple && starterAppleOptions(options, bootstrap)),
   };
-  const newApp = appleOptions.starterProject;
-  const androidOptions: AndroidInitOptions = { ...options, root: ctx.cwd, agent };
+  const androidOptions: AndroidInitOptions = {
+    ...options,
+    root: ctx.cwd,
+    agent,
+    ...(bootstrap?.android && starterAndroidOptions(options, bootstrap)),
+  };
+  const newApp = appleOptions.starterProject ?? androidOptions.starterProject;
   // A new app's guidance and its JSON statuses name the same command.
   if (ctx.framework.dep === "ios")
     ctx.nativeContinuation = newApp?.continuation ?? appleContinuation(options);
   else if (ctx.framework.dep === "android")
-    ctx.nativeContinuation = nativeContinuation(options, ANDROID_FLAGS);
+    ctx.nativeContinuation = newApp?.continuation ?? androidContinuation(options);
   // Only native setup supports a dry run; it inspects without signing in.
   if (options.dryRun)
     return withNativeProgress(async () =>
@@ -351,7 +375,11 @@ export async function init(options: InitOptions = {}) {
   }
   if (ctx.framework.dep === "android" && strategy === "manual" && options.json) {
     log.data(
-      JSON.stringify(nativeApplicationRequired(ctx.nativeContinuation, "Android project"), null, 2),
+      JSON.stringify(
+        nativeApplicationRequired(ctx.nativeContinuation, "Android project", newApp),
+        null,
+        2,
+      ),
     );
     setTelemetryStage("done");
     return;
@@ -463,10 +491,11 @@ async function assertUsableFlags(
     options.starter &&
     options.json &&
     options.framework !== "ios" &&
-    options.framework !== MACOS
+    options.framework !== MACOS &&
+    options.framework !== "android"
   ) {
     throwUsageError(
-      "--json works with --starter only for a new iOS or macOS app: add --framework ios or --framework macos.",
+      "--json works with --starter only for a new iOS, macOS, or Android app: add --framework ios, --framework macos, or --framework android.",
     );
   }
   if (options.dryRun && (options.app || accountless || options.login || options.template)) {
@@ -495,12 +524,15 @@ async function assertUsableFlags(
   if (options.appleSdk === "core" && options.prebuiltAuthUi) {
     throwUsageError("--prebuilt-auth-ui needs ClerkKitUI; use --apple-sdk ui or omit --apple-sdk.");
   }
-  const androidSelection = ANDROID_FLAGS.filter(([key]) => options[key] != null).map(
-    ([, flag]) => flag,
-  );
-  if (options.starter && androidSelection.length) {
+  if (options.androidSdk === "core" && options.prebuiltAuthUi) {
     throwUsageError(
-      `${androidSelection.join(", ")} ${androidSelection.length === 1 ? "selects" : "select"} an existing Android project and can't be combined with --starter.`,
+      "--prebuilt-auth-ui needs clerk-android-ui; use --android-sdk ui or omit --android-sdk.",
+    );
+  }
+  // A new starter has one module, so only the flag that names an existing one is refused.
+  if (options.starter && options.androidModule != null) {
+    throwUsageError(
+      "--android-module selects an existing Android project and can't be combined with --starter.",
     );
   }
   for (const value of options.androidFingerprint ?? [])
@@ -527,8 +559,10 @@ const APPLE_FLAGS = [
   ["appIdPrefix", "--app-id-prefix"],
   ["teamId", "--team-id"],
   ["signInWithApple", "--sign-in-with-apple"],
-  ["prebuiltAuthUi", "--prebuilt-auth-ui"],
 ] as const;
+
+/** Native flags both the Apple and the Android engines take. */
+const NATIVE_FLAGS = [["prebuiltAuthUi", "--prebuilt-auth-ui"]] as const;
 
 const ANDROID_FLAGS = [
   ["androidModule", "--android-module"],
@@ -589,7 +623,7 @@ function appleContinuation(
     `clerk init --app ${appId ? quoteArg(appId) : "<app_id>"} --json`,
     ...(options.relink ? ["--relink"] : []),
   ];
-  for (const [key, flag] of APPLE_FLAGS) {
+  for (const [key, flag] of [...APPLE_FLAGS, ...NATIVE_FLAGS]) {
     if (key === "teamId" || (starter && key === "bundleId")) continue;
     const value = values[key];
     if (value === true) parts.push(flag);
@@ -599,15 +633,23 @@ function appleContinuation(
 }
 
 /**
- * The `clerk init` an agent runs once it has chosen an application for an existing native project,
- * carrying the platform's setup options so the next run doesn't fall back to defaults.
+ * The `clerk init` an agent runs once it has chosen an application for an Android project,
+ * carrying this run's setup options so the next run doesn't fall back to defaults. After a new
+ * starter it runs inside the new app, so it starts with `cd`: the project already holds the
+ * applicationId, so that flag is dropped.
  */
-function nativeContinuation(
+function androidContinuation(
   options: InitOptions,
-  flags: readonly (readonly [keyof InitOptions, string])[],
+  starter?: { projectName: string },
+  appId?: string,
 ): string {
-  const parts = ["clerk init --app <app_id> --json", ...(options.relink ? ["--relink"] : [])];
-  for (const [key, flag] of flags) {
+  const parts = [
+    ...(starter ? [`cd ${quoteArg(starter.projectName)}`, "&&"] : []),
+    `clerk init --app ${appId ? quoteArg(appId) : "<app_id>"} --json`,
+    ...(options.relink ? ["--relink"] : []),
+  ];
+  for (const [key, flag] of [...ANDROID_FLAGS, ...NATIVE_FLAGS]) {
+    if (starter && (key === "androidPackage" || key === "androidModule")) continue;
     const value = options[key];
     if (value === true) parts.push(flag);
     else if (typeof value === "string" && value) parts.push(flag, quoteArg(value));
@@ -615,6 +657,23 @@ function nativeContinuation(
       parts.push(flag, ...value.map((item) => quoteArg(String(item))));
   }
   return parts.join(" ");
+}
+
+/** The options setup uses for a new Android starter: no confirmation, and its continuation. */
+function starterAndroidOptions(
+  options: InitOptions,
+  starter: { projectDir: string; projectName: string; android: AndroidStarter },
+): Partial<AndroidInitOptions> & { starterProject: StarterProjectSummary } {
+  return {
+    // The project already carries `--android-package`; the inspection reads it back.
+    androidPackage: undefined,
+    starterProject: {
+      projectName: starter.projectName,
+      platform: "android",
+      projectDir: starter.projectDir,
+      continuation: androidContinuation(options, starter, options.app),
+    },
+  };
 }
 
 /** A link decision the user must make, already printed as an `input-required` status with `--json`. */
@@ -721,6 +780,8 @@ function assertFrameworkFlags(options: InitOptions, framework: FrameworkInfo): v
     throwUsageError(
       `${apple.join(", ")} ${apple.length === 1 ? "applies" : "apply"} only to iOS (Swift) projects.`,
     );
+  if (options.prebuiltAuthUi && framework.dep !== "ios" && framework.dep !== "android")
+    throwUsageError("--prebuilt-auth-ui applies only to iOS, macOS, and Android projects.");
   const android = ANDROID_FLAGS.filter(([key]) => options[key] != null).map(([, flag]) => flag);
   if (android.length && framework.dep !== "android")
     throwUsageError(
@@ -917,8 +978,12 @@ function printBootstrapNextSteps(
 ): void {
   // Reached for a native starter only when an agent hasn't chosen a Clerk application yet. The
   // agent must finish setup from inside the new app, so it gets the steps too.
-  if (bootstrap.apple) {
-    const steps = [appleContinuation(options, bootstrap)];
+  if (bootstrap.apple || bootstrap.android) {
+    const steps = [
+      bootstrap.apple
+        ? appleContinuation(options, { ...bootstrap, apple: bootstrap.apple })
+        : androidContinuation(options, bootstrap),
+    ];
     printNextSteps(steps);
     printAgentNextSteps(steps);
     return;

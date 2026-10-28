@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { readFile, rm } from "node:fs/promises";
+import { writeAndroidStarter } from "./starter-project.ts";
 import { join } from "node:path";
 import * as prompts from "../../../lib/prompts.ts";
 import * as lists from "../../../lib/listage.ts";
@@ -204,6 +205,126 @@ describe("clerk init for Android", () => {
       status: "incomplete",
       local: "updated",
       remote: "incomplete",
+    });
+  });
+});
+
+describe("clerk init for a new Android starter", () => {
+  async function starterFixture() {
+    const cwd = await createAndroidFixture();
+    roots.push(cwd);
+    await rm(join(cwd, "app"), { recursive: true, force: true });
+    await rm(join(cwd, "gradle"), { recursive: true, force: true });
+    await rm(join(cwd, "build.gradle.kts"), { force: true });
+    const dir = join(cwd, "MyApp");
+    await writeAndroidStarter(dir, { name: "MyApp", applicationId: "com.example.myapp" });
+    const { api, state } = fakeNativeAPI();
+    return {
+      root: dir,
+      state,
+      dependencies: { api, debugKeystore: keystore() },
+      starterProject: {
+        projectName: "MyApp",
+        platform: "android" as const,
+        projectDir: dir,
+        continuation: "cd MyApp && clerk init --app app_test --json",
+      },
+    };
+  }
+
+  test("--yes adds the prebuilt sign-in screen and skips the confirmation", async () => {
+    const f = await starterFixture();
+    const confirm = spyOn(prompts, "confirm").mockRejectedValue(new Error("no prompt expected"));
+    const outro = spyOn(spinner, "outro").mockResolvedValue(undefined);
+    spies.push(confirm, outro);
+    await runAndroidInit(
+      { root: f.root, agent: false, yes: true, starterProject: f.starterProject },
+      "app_test",
+      f.dependencies,
+    );
+    expect(confirm).not.toHaveBeenCalled();
+    const activity = await readFile(
+      join(f.root, "app/src/main/java/com/example/myapp/MainActivity.kt"),
+      "utf8",
+    );
+    expect(activity).toContain("AuthView(isDismissible = false)");
+    expect(await readFile(join(f.root, "app/build.gradle.kts"), "utf8")).toContain(
+      "implementation(libs.clerk.android.ui)",
+    );
+    expect(captured.err).toContain("sign-in screen added");
+    expect(captured.err).toContain("Open MyApp in Android Studio");
+    expect(outro).toHaveBeenCalledWith("CLI setup complete; app verification remains");
+  });
+
+  test("interactively, the starter asks only about the sign-in screen", async () => {
+    const f = await starterFixture();
+    const confirm = spyOn(prompts, "confirm").mockResolvedValue(false);
+    const select = spyOn(lists, "select").mockRejectedValue(
+      new Error("no artifact question expected"),
+    );
+    spies.push(confirm, select, spyOn(spinner, "outro").mockResolvedValue(undefined));
+    await runAndroidInit(
+      { root: f.root, agent: false, starterProject: f.starterProject },
+      "app_test",
+      f.dependencies,
+    );
+    expect(confirm.mock.calls.map((call) => call[0].message)).toEqual([
+      "Add Clerk’s prebuilt sign-in screen?",
+    ]);
+    expect(confirm.mock.calls[0]![0].default).toBe(true);
+    const activity = await readFile(
+      join(f.root, "app/src/main/java/com/example/myapp/MainActivity.kt"),
+      "utf8",
+    );
+    expect(activity).toContain("Greeting(");
+  });
+
+  test("an agent adds the screen only with --prebuilt-auth-ui, and every status carries the starter", async () => {
+    const f = await starterFixture();
+    await runAndroidInit(
+      { root: f.root, agent: true, json: true, starterProject: f.starterProject },
+      "app_test",
+      f.dependencies,
+    );
+    const result = JSON.parse(captured.out);
+    expect(result.starter).toMatchObject({ projectName: "MyApp", platform: "android" });
+    expect(
+      result.handoff.tasks.find((task: { id: string }) => task.id === "optional-sign-in-ui"),
+    ).toMatchObject({ status: "requires-user-intent" });
+    expect(
+      await readFile(join(f.root, "app/src/main/java/com/example/myapp/MainActivity.kt"), "utf8"),
+    ).toContain("Greeting(");
+    captured.clear();
+    await runAndroidInit(
+      {
+        root: f.root,
+        agent: true,
+        json: true,
+        prebuiltAuthUi: true,
+        starterProject: f.starterProject,
+      },
+      "app_test",
+      f.dependencies,
+    );
+    expect(
+      JSON.parse(captured.out).handoff.completed.map((item: { id: string }) => item.id),
+    ).toContain("optional-sign-in-ui");
+  });
+
+  test("a setup error after writing reports setup-interrupted with the continuation", async () => {
+    const f = await starterFixture();
+    f.state.wrongApp = true;
+    await expect(
+      runAndroidInit(
+        { root: f.root, agent: true, json: true, starterProject: f.starterProject },
+        "app_test",
+        f.dependencies,
+      ),
+    ).rejects.toThrow();
+    expect(JSON.parse(captured.out)).toMatchObject({
+      status: "setup-interrupted",
+      starter: { projectName: "MyApp" },
+      next: [expect.stringContaining("cd MyApp && clerk init --app app_test --json")],
     });
   });
 });

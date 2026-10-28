@@ -319,7 +319,11 @@ describe("promptAndBootstrap for native Apple starters", () => {
       promptAndBootstrap("/tmp", undefined, { skipConfirm: false, implicitBootstrap: true }),
     ).rejects.toThrow("stop");
 
-    expect(names).toEqual([...BOOTSTRAP_REGISTRY.map((entry) => entry.label), ...added]);
+    expect(names).toEqual([
+      ...BOOTSTRAP_REGISTRY.map((entry) => entry.label),
+      ...added,
+      "Android (Jetpack Compose)",
+    ]);
   });
 
   test("choosing iOS in the list creates the Apple starter", async () => {
@@ -388,4 +392,22 @@ describe("accountless flags with a native Apple starter", () => {
       }
     },
   );
+});
+
+describe("starter picker", () => {
+  test("offers the Android starter everywhere, and the Apple ones only with Xcode", async () => {
+    const { starterChoices } = await import("./bootstrap.ts");
+    const xcode = spyOn(coordinator, "canSetUpXcode").mockReturnValue(false);
+    try {
+      const without = starterChoices().map((choice) => choice.name);
+      expect(without).toContain("Android (Jetpack Compose)");
+      expect(without).not.toContain("iOS (SwiftUI)");
+      xcode.mockReturnValue(true);
+      const names = starterChoices().map((choice) => choice.name);
+      expect(names).toContain("iOS (SwiftUI)");
+      expect(names.at(-1)).toBe("Android (Jetpack Compose)");
+    } finally {
+      xcode.mockRestore();
+    }
+  });
 });
