@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
 import {
   continueRun,
   type RunRecord,
@@ -425,5 +425,27 @@ describe("runs <id>", () => {
     await expect(runs("nope", { runsDir })).rejects.toThrow(
       `clerk migrate runs --runs-dir ${quoteArg(runsDir)}`,
     );
+  });
+});
+
+describe("telemetry", () => {
+  test("showing one run records its source and instance", async () => {
+    const record = partialImport({ target: { ...TARGET, appId: "app_1" } });
+    const { payload } = await captureTelemetryPayload("migrate runs", () =>
+      runs(record.id, { runsDir }),
+    );
+    expect(payload).toMatchObject({
+      migrate_source: "clerk",
+      instance_id: "ins_1",
+      app_id: "app_1",
+    });
+  });
+
+  test("a run imported through a source you wrote records custom", async () => {
+    const record = partialImport({ sourceHash: "abc123" });
+    const { payload } = await captureTelemetryPayload("migrate runs", () =>
+      runs(record.id, { runsDir }),
+    );
+    expect(payload.migrate_source).toBe("custom");
   });
 });
