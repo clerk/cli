@@ -981,11 +981,11 @@ A non-numeric or non-positive value is ignored in favour of the default.
 
 A development instance's user limit is checked with the other
 [checks](#checks): new development instances are created with a 100-user limit,
-production instances have none by default (a plan can set one; the import
-stops at the first refusal), and the run reads the live count
-(`GET /v1/users/count`). The limit itself is not served by any API, so for a
-development instance Clerk has raised, set `CLERK_MIGRATE_DEV_USER_LIMIT` to
-the raised limit; `--allow-partial` imports up to the headroom.
+production instances have none (Clerk won't set one there), and the run reads
+the live count (`GET /v1/users/count`). The limit itself is not served by any
+API, so for a development instance Clerk has raised, set
+`CLERK_MIGRATE_DEV_USER_LIMIT` to the raised limit; `--allow-partial` imports
+up to the headroom.
 
 Users that do exceed the limit come back in the error breakdown as
 `You have reached your limit of N users`, annotated with what a development
