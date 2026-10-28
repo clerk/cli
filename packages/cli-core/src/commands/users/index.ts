@@ -57,7 +57,7 @@ export function registerUsers(program: Program): void {
     .addHelpText(
       "after",
       `
-To bring users in from another provider (Auth0, Firebase, Supabase and more),
+To bring users in from another provider (Auth0, Firebase, Supabase, and more),
 use \`clerk migrate\`.`,
     )
     .action(async (_opts, cmd) =>

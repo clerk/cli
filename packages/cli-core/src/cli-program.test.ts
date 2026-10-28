@@ -261,7 +261,7 @@ describe("users --help", () => {
     expect(captured.out.trimEnd()).toEndWith(
       [
         "",
-        "To bring users in from another provider (Auth0, Firebase, Supabase and more),",
+        "To bring users in from another provider (Auth0, Firebase, Supabase, and more),",
         "use `clerk migrate`.",
       ].join("\n"),
     );
