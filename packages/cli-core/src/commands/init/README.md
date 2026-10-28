@@ -346,7 +346,7 @@ In accountless mode, after calling `POST /v1/accountless_applications`, `clerk i
 }
 ```
 
-When `clerk init` writes the breadcrumb, it adds `.clerk/` to `.gitignore` unless an equivalent pattern such as `/.clerk/`, `.clerk`, or `.clerk/*` already ignores the folder. The CLI removes the breadcrumb after a successful claim, or once the claim token expires or another claim uses it.
+When `clerk init` writes the breadcrumb, it adds `.clerk/` to `.gitignore` unless an equivalent pattern such as `/.clerk/`, `.clerk`, or `.clerk/*` already ignores the folder. The next `clerk auth login` claims the application and removes the breadcrumb, or removes it without claiming when the token has expired. See the [breadcrumb lifecycle](../auth/README.md#accountless-autoclaim-breadcrumb-lifecycle) for every case.
 
 ### Re-running init on an already-accountless project
 
