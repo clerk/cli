@@ -12,7 +12,7 @@ import path from "node:path";
 import csvParser from "csv-parser";
 import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import { getSource } from "../sources/registry.ts";
-import { normalizeBooleanField } from "../sources/shared.ts";
+import { normalizeBooleanField, parseDate } from "../sources/shared.ts";
 import { type TransformContext, type SourceEntry, type User } from "../types.ts";
 import { userSchema } from "../validator.ts";
 import { isEnvelope, readJsonFile } from "./export-file.ts";
@@ -195,7 +195,7 @@ function normalizeDateField(value: unknown): unknown {
   const trimmed = value.trim();
   if (!trimmed) return undefined;
 
-  const date = new Date(trimmed);
+  const date = parseDate(trimmed);
   return Number.isNaN(date.getTime()) ? value : date.toISOString();
 }
 
@@ -457,7 +457,7 @@ async function readUsersFromFile(
   }
 
   // A pre-transform's rows win over the file, CSV or not.
-  if (preExtracted) return preExtracted;
+  if (preExtracted) return assertUserRows(preExtracted, file);
   if (type === "text/csv") return readCsv(filePath, csvHeaders);
 
   return assertUserRows(readJsonFile(filePath), file);

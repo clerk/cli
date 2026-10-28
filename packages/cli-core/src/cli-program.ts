@@ -1,4 +1,4 @@
-import { Command } from "@commander-js/extra-typings";
+import { Command, type CommandUnknownOpts, type Option } from "@commander-js/extra-typings";
 import { expandInputJson } from "./lib/input-json.ts";
 import { setLogLevel } from "./lib/log.ts";
 import { interruptedExitCode } from "./lib/signals.ts";
@@ -15,9 +15,11 @@ import { registerImpersonate } from "./commands/impersonate/index.ts";
 import { registerEnv } from "./commands/env/index.ts";
 import { registerConfig } from "./commands/config/index.ts";
 import { registerTelemetry } from "./commands/telemetry/index.ts";
+import { registerFeedback } from "./commands/feedback/index.ts";
 import { registerToggles } from "./commands/toggles/index.ts";
 import { registerApi } from "./commands/api/index.ts";
 import { registerDoctor } from "./commands/doctor/index.ts";
+import { registerSecurity } from "./commands/security/index.ts";
 import { registerMcp } from "./commands/mcp/index.ts";
 import { registerSwitchEnv } from "./commands/switch-env/index.ts";
 import { registerCompletion } from "./commands/completion/index.ts";
@@ -76,9 +78,11 @@ const registrants: CommandRegistrant[] = [
   registerEnv,
   registerConfig,
   registerTelemetry,
+  registerFeedback,
   registerToggles,
   registerApi,
   registerDoctor,
+  registerSecurity,
   registerMcp,
   registerSwitchEnv,
   registerCompletion,
@@ -240,13 +244,60 @@ type ParseFrom = "user" | "node";
  * `process.argv` (cli.ts entry point).
  */
 async function resolveArgv(
+  program: Program,
   args: string[] | undefined,
   from: ParseFrom | undefined,
 ): Promise<{ argv: string[]; from: ParseFrom }> {
   const raw = args ?? process.argv;
   const effectiveFrom = from ?? (args === undefined ? "node" : "user");
   const argv = await expandInputJson([...raw]);
-  return { argv, from: effectiveFrom };
+  return {
+    argv: attachOptionValues(program, argv, effectiveFrom === "node" ? 2 : 0),
+    from: effectiveFrom,
+  };
+}
+
+/**
+ * Rewrite `--opt value` as `--opt=value` for each option on the command path
+ * that requires a value. The root parses its own flags anywhere in argv, so a
+ * value that starts like one (`--issue "-v is ignored"`) would print the
+ * version instead of reaching its option. A value that is one of those flags
+ * as typed (`--file --verbose`, `--file --mode=agent`) ends the rewrite, so
+ * the rest of argv parses as Commander reads it; a word with a space in it
+ * (`--command "--mode=agent env pull"`) is a value.
+ */
+function attachOptionValues(program: Program, argv: string[], start: number): string[] {
+  const out = argv.slice(0, start);
+  const options: Option[] = [...program.options];
+  const isRootFlag = (word: string) =>
+    !/\s/.test(word) &&
+    program.options.some(
+      (o) =>
+        word === o.long ||
+        word === o.short ||
+        (!o.isBoolean() && o.long !== undefined && word.startsWith(`${o.long}=`)),
+    );
+  let node: CommandUnknownOpts = program;
+  for (let i = start; i < argv.length; i++) {
+    const word = argv[i]!;
+    const option = options.find((o) => o.long === word);
+    const takesValue = option?.required && !option.variadic && i + 1 < argv.length;
+    if (word === "--" || (takesValue && isRootFlag(argv[i + 1]!))) {
+      out.push(...argv.slice(i));
+      break;
+    }
+    if (takesValue) {
+      out.push(`${word}=${argv[++i]}`);
+      continue;
+    }
+    const child = node.commands.find((c) => c.name() === word || c.aliases().includes(word));
+    if (child) {
+      node = child;
+      options.push(...child.options);
+    }
+    out.push(word);
+  }
+  return out;
 }
 
 /**
@@ -259,7 +310,7 @@ export async function runProgram(
   options?: { from: ParseFrom },
 ): Promise<void> {
   try {
-    const { argv, from } = await resolveArgv(args, options?.from);
+    const { argv, from } = await resolveArgv(program, args, options?.from);
     await program.parseAsync(argv, { from });
     // Ctrl-C aborts in-flight work, so a command can finish or fail *because* it
     // was interrupted. The SIGINT handler already owns rendering, telemetry, and

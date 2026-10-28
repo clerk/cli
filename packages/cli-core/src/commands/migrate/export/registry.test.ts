@@ -4,7 +4,15 @@ import { exportPlatformKeys, exportPlatforms, getExportPlatform } from "./regist
 
 describe("export registry", () => {
   test("registers every source platform", () => {
-    expect(exportPlatformKeys()).toEqual(["clerk", "supabase"]);
+    expect(exportPlatformKeys()).toEqual([
+      "clerk",
+      "auth0",
+      "supabase",
+      "authjs",
+      "firebase",
+      "betterauth",
+      "workos",
+    ]);
   });
 
   test.each([...exportPlatforms])("$key carries a label and description", (entry) => {
@@ -23,7 +31,7 @@ describe("export registry", () => {
   });
 
   test("looks a platform up by key", () => {
-    expect(getExportPlatform("supabase")?.label).toBe("Supabase");
+    expect(getExportPlatform("auth0")?.label).toBe("Auth0");
   });
 
   test("returns nothing for a platform that is not registered", () => {

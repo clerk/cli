@@ -25,13 +25,15 @@ import { isEnabled, isRequired, type AttributeName } from "../../users/interacti
 import { splitIdentifiers } from "../import-users.ts";
 import type { User } from "../types.ts";
 import { analyzeFields, hasValue } from "./analysis.ts";
+import { argon2Variant } from "../sources/shared.ts";
+import { decodesLikeClerk } from "./firebase-hash.ts";
 import {
   clerkOffersProvider,
   enabledSocialProviders,
   providerLabel,
   toClerkStrategy,
 } from "./clerk-config.ts";
-import { resolveDevUserLimit } from "./instance.ts";
+import { resolveUserLimit, type UserLimitSource } from "./instance.ts";
 import { buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
 import { acceptsIdentifier, buildReadinessReport } from "./readiness.ts";
 import type { ApiScheduler } from "./scheduler.ts";
@@ -71,6 +73,8 @@ export type Quota = {
   /** Users already in the instance, or `null` when the count could not be read. */
   existing: number | null;
   limit: number;
+  /** Whether Clerk reported the limit, or it is `CLERK_MIGRATE_DEV_USER_LIMIT` or the default. */
+  limitSource: UserLimitSource;
   headroom: number;
   /** Importable users over the headroom. */
   over: number;
@@ -84,6 +88,13 @@ export type ImportChecks = {
   /** Users that do not, each with the first reason that applies to them. */
   rejects: Reject[];
   rejectReasons: ReasonCount[];
+  /**
+   * Users their source asked to skip (a soft-deleted or anonymous account),
+   * with its reason. Left out like a reject, but never a reason to stop the
+   * import: nobody is meant to bring them across.
+   */
+  skipped: Reject[];
+  skippedReasons: ReasonCount[];
   warnings: string[];
   fixes: Fix[];
   quota?: Quota;
@@ -98,9 +109,16 @@ export type CheckInput = {
   unknownFields?: Record<string, number>;
   /** The raw Supabase rows, for the provider checks. Absent for any other source. */
   supabaseRows?: Record<string, unknown>[];
+  /** Another source's reading of each user's social providers, for the readiness check. */
+  socialProviders?: (user: User) => string[];
   settings: UserSettingsJSON | null;
-  /** Users already in the instance, for the quota. Development instances only. */
+  /** Users already in the instance, for the quota. Only read when a limit applies. */
   existingUsers?: number | null;
+  /**
+   * `max_allowed_users` from `GET /v1/instance`: `null` for no limit, absent
+   * when Clerk did not say. See {@link resolveUserLimit}.
+   */
+  maxAllowedUsers?: number | null;
   instanceType: "dev" | "prod";
   target: ClerkTarget;
   secretKey: string;
@@ -145,7 +163,10 @@ export function hashShapeProblem(password: string, hasher: string): string | und
       const parts = password.split("$");
       const numeric = (value: string | undefined) => /^\d+$/.test(value ?? "");
       return parts.length === 6 &&
-        parts.slice(0, 4).every(Boolean) &&
+        // The salt separator (parts[3]) may be empty.
+        parts.slice(0, 3).every(Boolean) &&
+        // Clerk decodes all four as base64 (`Validate` in pkg/hash/scrypt.go).
+        parts.slice(0, 4).every(decodesLikeClerk) &&
         numeric(parts[4]) &&
         numeric(parts[5])
         ? undefined
@@ -153,7 +174,9 @@ export function hashShapeProblem(password: string, hasher: string): string | und
     }
     case "argon2i":
     case "argon2id":
-      return password.startsWith("$argon2") ? undefined : "password is not an argon2 hash";
+      return argon2Variant(password) === hasher
+        ? undefined
+        : `password is not an ${hasher} hash Clerk can verify ($${hasher}$v=19$m=…,t=…,p=…$salt$hash)`;
     case "scrypt_werkzeug":
       return /^scrypt:\d+:\d+:\d+\$[^$]+\$[0-9a-f]+$/i.test(password)
         ? undefined
@@ -733,6 +756,18 @@ function rowsFor(input: CheckInput, users: User[]): Record<string, unknown>[] {
   return input.supabaseRows.filter((row) => ids.has(String(row.id)));
 }
 
+/** Users per social provider, from Supabase's rows or the source's own reading. */
+function socialCounts(input: CheckInput, users: User[]): Record<string, number> {
+  if (input.supabaseRows) return countSocialProviders(rowsFor(input, users));
+  const counts: Record<string, number> = {};
+  for (const user of users) {
+    for (const provider of input.socialProviders?.(user) ?? []) {
+      counts[provider] = (counts[provider] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
 /** Each readiness row's field, with its article: "an email", not "a email". */
 const FIELD_NOUNS: Record<string, string> = {
   email_address: "an email",
@@ -749,7 +784,7 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
     const report = buildReadinessReport({
       analysis: analyzeFields(importable),
       settings: input.settings,
-      providerCounts: countSocialProviders(rowsFor(input, importable)),
+      providerCounts: socialCounts(input, importable),
     });
     for (const item of report.blocking) {
       if (item.consequence === "stored") {
@@ -829,7 +864,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   const report = buildReadinessReport({
     analysis: analyzeFields(users),
     settings: input.settings,
-    providerCounts: countSocialProviders(rowsFor(input, users)),
+    providerCounts: socialCounts(input, users),
   });
 
   // An unverified email does not satisfy a required one, so a file of only
@@ -985,6 +1020,7 @@ function placeholderWarning(count: number): string[] {
 export const ALREADY_IMPORTED = "already in the instance, with this source ID";
 
 export async function checkImport(input: CheckInput): Promise<ImportChecks> {
+  const skipped: Reject[] = [];
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
     reason: `invalid: ${failure.error}`,
@@ -1060,9 +1096,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         usernameProblem(user, input.settings, loosePhones) ??
         hashProblem ??
         disabledProviders.get(user.userId));
-    if (reason) {
-      const inFile =
-        reason === original.skipReason || reason === refusedOnly || reason === hashProblem;
+    if (reason && reason === original.skipReason) {
+      skipped.push({ sourceId: user.userId, reason, inFile: true });
+    } else if (reason) {
+      const inFile = reason === refusedOnly || reason === hashProblem;
       rejects.push({ sourceId: user.userId, reason, ...(inFile ? { inFile: true as const } : {}) });
     } else {
       passed.push(sent);
@@ -1125,26 +1162,29 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   }
   candidates = unique;
 
-  // The limit is a development-instance default, not a number the API serves,
-  // so it is checked against the live count and the importable users alone.
-  // An instance Clerk has raised sets CLERK_MIGRATE_DEV_USER_LIMIT.
+  // Checked against the live count and the importable users alone. The limit
+  // is Clerk's own when it reported one; otherwise a development instance
+  // falls back to CLERK_MIGRATE_DEV_USER_LIMIT, then the default.
   let quota: Quota | undefined;
-  if (input.instanceType === "dev") {
-    const limit = resolveDevUserLimit();
+  const userLimit = resolveUserLimit(input.maxAllowedUsers, input.instanceType);
+  if (userLimit) {
+    const { limit, source: limitSource } = userLimit;
     // An adopted user is in the instance's count already, and is never
     // created: only the new users take headroom, in file order.
     const headroom = Math.max(0, limit - (input.existingUsers ?? 0));
     const fresh = candidates.filter((user) => !adopted(user));
     const over = Math.max(0, fresh.length - headroom);
-    quota = { existing: input.existingUsers ?? null, limit, headroom, over };
+    quota = { existing: input.existingUsers ?? null, limit, limitSource, headroom, over };
     if (over > 0) {
+      // Clerk's own refusal names the same fix: a paid plan in production.
+      const reason =
+        limitSource !== "instance"
+          ? `over the development instance's ${limit}-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)`
+          : input.instanceType === "prod"
+            ? `over this instance's ${limit}-user limit (upgrade to a paid plan to remove it)`
+            : `over this instance's ${limit}-user limit (contact support to raise it)`;
       const past = new Set(fresh.slice(headroom));
-      for (const user of past) {
-        rejects.push({
-          sourceId: user.userId,
-          reason: `over the development instance's ${limit}-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)`,
-        });
-      }
+      for (const user of past) rejects.push({ sourceId: user.userId, reason });
       candidates = candidates.filter((user) => !past.has(user));
     }
   }
@@ -1156,6 +1196,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     ),
     rejects,
     rejectReasons: countReasons(rejects),
+    skipped,
+    skippedReasons: countReasons(skipped),
     warnings: [
       ...buildWarnings(
         input,
@@ -1174,7 +1216,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       // An unknown count is checked as zero; say so rather than imply it fit.
       ...(quota && quota.existing === null
         ? [
-            `Could not read how many users this development instance holds, so the ${quota.limit}-user limit was checked as if it were empty`,
+            `Could not read how many users this instance holds, so the ${quota.limit}-user limit was checked as if it were empty`,
           ]
         : []),
     ],

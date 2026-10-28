@@ -80,12 +80,25 @@ export function routeByVerification(
   delete user[verifiedField];
 }
 
+/** The user's email addresses, wherever the source routed them. */
+function emailsOf(user: Record<string, unknown>): Set<string> {
+  const emails = new Set<string>();
+  for (const field of ["email", "emailAddresses", "unverifiedEmailAddresses"]) {
+    const value = user[field];
+    for (const email of Array.isArray(value) ? value : [value]) {
+      if (typeof email === "string") emails.add(email.trim().toLowerCase());
+    }
+  }
+  return emails;
+}
+
 /**
  * Splits a single display name into `firstName` and `lastName`: the first word,
  * then the rest. A one-word name (`Cher`) becomes the first name alone.
  *
- * A one-word value that is an email address is dropped instead: Auth0 fills
- * `name` with the email for database users, and that is not anyone's name.
+ * A one-word value that is one of the user's own email addresses is dropped
+ * instead: Auth0 fills `name` with the email for database users, and that is
+ * not anyone's name. Any other name with an `@` in it is kept.
  */
 export function splitName(user: Record<string, unknown>, field = "name"): void {
   const name = user[field];
@@ -95,10 +108,23 @@ export function splitName(user: Record<string, unknown>, field = "name"): void {
   if (parts.length > 1) {
     user.firstName = parts[0];
     user.lastName = parts.slice(1).join(" ");
-  } else if (parts[0] && !parts[0].includes("@")) {
+  } else if (parts[0] && !emailsOf(user).has(parts[0].toLowerCase())) {
     user.firstName = parts[0];
   }
   delete user[field];
+}
+
+/**
+ * Parses a date string as `Date` does, but reads a date and time with no
+ * offset (`2024-08-24 03:40:02`, as SQL and CSV exports write them) as UTC
+ * rather than the machine's local time, so an import means the same on any
+ * clock.
+ */
+export function parseDate(value: string): Date {
+  const trimmed = value.trim();
+  return /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}(:\d{2}(\.\d+)?)?$/.test(trimmed)
+    ? new Date(`${trimmed.replace(" ", "T")}Z`)
+    : new Date(trimmed);
 }
 
 /**
@@ -115,7 +141,7 @@ export function toIsoDate(value: unknown, epochMillis = false): unknown {
   const parsed =
     epochMillis && (typeof value === "number" || /^\d+$/.test(String(value)))
       ? new Date(Number(value))
-      : new Date(String(value));
+      : parseDate(String(value));
 
   return Number.isNaN(parsed.getTime()) ? value : parsed.toISOString();
 }
@@ -125,13 +151,39 @@ export function toIsoDate(value: unknown, epochMillis = false): unknown {
  * Platforms that accept imported hashes (Supabase, Better Auth) can hold
  * either, so the hasher is read per user rather than assumed per source.
  */
+/**
+ * The argon2 variant of a digest Clerk can decode, or undefined.
+ *
+ * Mirrors clerk_go's `argon2.DecodeHash`: `$argon2id$v=19$m=…,t=…,p=…$salt$key`,
+ * salt and key in unpadded standard base64 that re-encodes to itself, and the
+ * costs Clerk caps on import (1 GiB of memory, 20 passes, 16 lanes). A zero
+ * cost decodes, but argon2 cannot run with it.
+ */
+export function argon2Variant(hash: string): "argon2id" | "argon2i" | undefined {
+  const match =
+    /^\$(argon2id|argon2i)\$v=19\$m=(\d+),t=(\d+),p=(\d+)\$([A-Za-z0-9+/]+)\$([A-Za-z0-9+/]+)$/.exec(
+      hash,
+    );
+  if (!match) return undefined;
+  const [, variant, memory, passes, lanes, salt, key] = match;
+  const within = (value: string | undefined, max: number) =>
+    Number(value) >= 1 && Number(value) <= max;
+  const canonical = (value: string | undefined) =>
+    !!value && Buffer.from(value, "base64").toString("base64").replace(/=+$/, "") === value;
+  return within(memory, 1 << 20) &&
+    within(passes, 20) &&
+    within(lanes, 16) &&
+    canonical(salt) &&
+    canonical(key)
+    ? (variant as "argon2id" | "argon2i")
+    : undefined;
+}
+
 export function detectStandardHasher(hash: string): "bcrypt" | "argon2id" | "argon2i" | undefined {
   // The whole digest, not the prefix: a malformed one is dropped like any
   // other unusable hash, where a prefix match would see the user rejected.
   // clerk_go caps the cost at 15 (pkg/hash/bcrypt.go), and Go's bcrypt
   // refuses any cost under 4 at sign-in, so such a digest could never be used.
   if (/^\$2[aby]\$(0[4-9]|1[0-5])\$[./A-Za-z0-9]{53}$/.test(hash)) return "bcrypt";
-  if (hash.startsWith("$argon2id$")) return "argon2id";
-  if (hash.startsWith("$argon2i$")) return "argon2i";
-  return undefined;
+  return argon2Variant(hash);
 }

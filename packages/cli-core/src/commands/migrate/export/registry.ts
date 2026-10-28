@@ -10,8 +10,13 @@
  * and M2M credentials) has nothing in common with what a database export needs.
  */
 
+import { exportAuth0 } from "./auth0.ts";
+import { exportAuthJs } from "./authjs.ts";
+import { exportBetterAuth } from "./betterauth.ts";
 import { exportClerk } from "./clerk.ts";
+import { exportFirebase } from "./firebase.ts";
 import { exportSupabase } from "./supabase.ts";
+import { exportWorkOs } from "./workos.ts";
 
 export type ExportRegistryEntry = {
   key: string;
@@ -31,11 +36,46 @@ export const exportPlatforms: ExportRegistryEntry[] = [
     run: async (options) => exportClerk(options),
   },
   {
+    key: "auth0",
+    label: "Auth0",
+    description: "An Auth0 tenant, via the Management API",
+    sourceKey: "auth0",
+    run: async (options) => exportAuth0(options),
+  },
+  {
     key: "supabase",
     label: "Supabase",
     description: "A Supabase Postgres database — includes password hashes",
     sourceKey: "supabase",
     run: async (options) => exportSupabase(options),
+  },
+  {
+    key: "authjs",
+    label: "Auth.js (NextAuth)",
+    description: "An Auth.js database — Postgres, MySQL or SQLite",
+    sourceKey: "authjs",
+    run: async (options) => exportAuthJs(options),
+  },
+  {
+    key: "firebase",
+    label: "Firebase",
+    description: "A Firebase project, via Identity Toolkit",
+    sourceKey: "firebase",
+    run: async (options) => exportFirebase(options),
+  },
+  {
+    key: "betterauth",
+    label: "Better Auth",
+    description: "A Better Auth database — plugin columns detected automatically",
+    sourceKey: "betterauth",
+    run: async (options) => exportBetterAuth(options),
+  },
+  {
+    key: "workos",
+    label: "WorkOS",
+    description: "A WorkOS tenant, via the User Management API — no password hashes",
+    sourceKey: "workos",
+    run: async (options) => exportWorkOs(options),
   },
 ];
 

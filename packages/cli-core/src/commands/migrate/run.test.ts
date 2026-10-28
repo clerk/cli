@@ -105,6 +105,8 @@ type Stub = {
   failing?: Set<string>;
   /** `GET /v1/instance` fails, so the target falls back to the key's stand-in ID. */
   instanceDown?: boolean;
+  /** `max_allowed_users` on `GET /v1/instance`; left out when undefined, as an older API does. */
+  maxAllowedUsers?: number | null;
 };
 
 describe("run", () => {
@@ -134,7 +136,14 @@ describe("run", () => {
         return new Response("unavailable", { status: 503 });
       }
       if (url.pathname === "/v1/instance") {
-        return Response.json({ object: "instance", id: "ins_1", environment_type: "development" });
+        return Response.json({
+          object: "instance",
+          id: "ins_1",
+          environment_type: "development",
+          ...(stub.maxAllowedUsers === undefined
+            ? {}
+            : { max_allowed_users: stub.maxAllowedUsers }),
+        });
       }
       if (url.pathname === "/v1/domains") {
         if (!stub.settings) return new Response("nope", { status: 500 });
@@ -308,7 +317,7 @@ describe("run", () => {
 
   describe("export envelopes", () => {
     /** An export run whose envelope holds `users`, as `clerk migrate export` writes it. */
-    function exportRun(source: string, rows: unknown[]) {
+    function exportRun(source: string, rows: unknown[], extra: Record<string, unknown> = {}) {
       const run = startRun(runsDir(), { kind: "export", target: { platform: source }, source });
       const file = path.join(run.dir, "export.json");
       fs.writeFileSync(
@@ -319,6 +328,7 @@ describe("run", () => {
           exportedAt: "2026-09-01T00:00:00.000Z",
           runId: run.record.id,
           users: rows,
+          ...extra,
         }),
       );
       run.update({ file: { path: file, sha256: sha256File(file) } });
@@ -400,6 +410,28 @@ describe("run", () => {
       fs.rmSync(file);
 
       await expect(run({ ...noSource, input: record.id })).rejects.toThrow(/is gone/);
+    });
+
+    test("warns that a truncated export run is not every user", async () => {
+      const { record } = exportRun("clerk", export2);
+      patchRun(runsDir(), record.id, { truncated: true });
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`Export run ${record.id} did not get every user`);
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
+    // An agent reads stdout: the warning has to be in the JSON, not only stderr.
+    test("carries a truncated export run's warning in --json", async () => {
+      const { record } = exportRun("clerk", export2);
+      patchRun(runsDir(), record.id, { truncated: true });
+
+      await run({ ...noSource, input: record.id, dryRun: true, json: true });
+
+      expect(JSON.parse(captured.out).checks.warnings).toContainEqual(
+        expect.stringContaining(`Export run ${record.id} did not get every user`),
+      );
     });
 
     test("names an --output export file outside the run folder for deletion too", async () => {
@@ -560,8 +592,8 @@ describe("run", () => {
     test("refuses a source that contradicts the envelope", async () => {
       const { record } = exportRun("clerk", export2);
 
-      await expect(run({ ...noSource, source: "supabase", input: record.id })).rejects.toThrow(
-        /exported from clerk, but --source names supabase/,
+      await expect(run({ ...noSource, source: "auth0", input: record.id })).rejects.toThrow(
+        /exported from clerk, but --source names auth0/,
       );
       expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
     });
@@ -609,6 +641,146 @@ describe("run", () => {
         /No run `20260101-000000-abcd`/,
       );
       expect(requests).toHaveLength(0);
+    });
+
+    test("reads Firebase's hash parameters from the envelope", async () => {
+      const firebase = {
+        base64_signer_key: "SIGNER",
+        base64_salt_separator: "Bw==",
+        rounds: 8,
+        mem_cost: 14,
+      };
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        { firebase },
+      );
+
+      await run({ ...noSource, input: record.id });
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect(created?.body).toMatchObject({
+        password_hasher: "scrypt_firebase",
+        password_digest: "HASH$SALT$SIGNER$Bw==$8$14",
+      });
+    });
+
+    // Each goes into every digest: a bad one would cost every password.
+    test("refuses Firebase hash parameters Clerk would reject, from the envelope or the flags", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "SIGNER",
+            base64_salt_separator: "Bw==",
+            rounds: 0,
+            mem_cost: 14,
+          },
+        },
+      );
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /from the export file won't work: rounds must be a whole number from 1 to 16/,
+      );
+      await expect(
+        run({
+          ...noSource,
+          input: record.id,
+          firebaseSignerKey: "SIGNER",
+          firebaseSaltSeparator: "Bw==",
+          firebaseRounds: 8,
+          firebaseMemCost: 17,
+        }),
+      ).rejects.toThrow(/from the --firebase-\* flags won't work: memory cost/);
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("lets the --firebase-* flags override the envelope", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "OLD",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+
+      await run({
+        ...noSource,
+        input: record.id,
+        firebaseSignerKey: "NEW",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      });
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect((created!.body as { password_digest: string }).password_digest).toContain("$NEW$");
+    });
+
+    // Variables left over from another project would hash every password wrongly.
+    test("keeps the envelope's parameters over the CLERK_FIREBASE_* variables", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "FILE",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+      const env = {
+        CLERK_FIREBASE_SIGNER_KEY: "STALE",
+        CLERK_FIREBASE_SALT_SEPARATOR: "Bw==",
+        CLERK_FIREBASE_ROUNDS: "8",
+        CLERK_FIREBASE_MEM_COST: "14",
+      };
+      Object.assign(process.env, env);
+      try {
+        await run({ ...noSource, input: record.id });
+      } finally {
+        for (const key of Object.keys(env)) delete process.env[key];
+      }
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect((created!.body as { password_digest: string }).password_digest).toContain("$FILE$");
+    });
+
+    test("does not complete a partial flag set from the variables when the envelope has parameters", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "FILE",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+      const env = {
+        CLERK_FIREBASE_SALT_SEPARATOR: "Bw==",
+        CLERK_FIREBASE_ROUNDS: "8",
+        CLERK_FIREBASE_MEM_COST: "14",
+      };
+      Object.assign(process.env, env);
+      try {
+        await expect(
+          run({ ...noSource, input: record.id, firebaseSignerKey: "NEW" }),
+        ).rejects.toThrow(/must be supplied together/);
+      } finally {
+        for (const key of Object.keys(env)) delete process.env[key];
+      }
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
     });
   });
 
@@ -1134,6 +1306,19 @@ describe("run", () => {
       expect(latestUserLines(runsDir(), record!.id).get("u2")?.reason).toContain("100-user limit");
     });
 
+    // Clerk enforces the limit it reports, so it binds a production key too,
+    // and the count is read to measure the headroom against it.
+    test("holds the import to the limit the instance reports, and says where it came from", async () => {
+      stubClerk({ count: 1, maxAllowedUsers: 2 });
+
+      await run({ ...baseOptions, secretKey: "sk_live_x", dryRun: true, json: true });
+
+      expect(JSON.parse(captured.out)).toMatchObject({
+        checks: { quota: { existing: 1, limit: 2, limitSource: "instance", headroom: 1, over: 1 } },
+      });
+      expect(requests.some((r) => r.url.endsWith("/v1/users/count"))).toBe(true);
+    });
+
     test("supabase users whose only provider is disabled are rejected", async () => {
       stubClerk({
         settings: {
@@ -1167,6 +1352,49 @@ describe("run", () => {
       expect(captured.err).toContain(
         "1 user signed in with Discord, which is not enabled in Clerk",
       );
+    });
+
+    // A user the source skips is nobody to bring across: without
+    // --allow-partial the rest still import, and the run says who was left out.
+    test("imports the rest past a user the source skips, and records the skip", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "sb1", email: "a@x.dev", email_confirmed_at: "2024-01-01 00:00:00+00" },
+          {
+            id: "sb2",
+            email: "b@x.dev",
+            email_confirmed_at: "2024-01-01 00:00:00+00",
+            deleted_at: "2026-01-01 00:00:00+00",
+          },
+        ]),
+      );
+
+      await run({ ...baseOptions, source: "supabase", json: true });
+
+      expect(created()).toEqual(["sb1"]);
+      const out = JSON.parse(captured.out);
+      expect(out.checks.rejects).toEqual([]);
+      expect(out.checks.skipped).toEqual([
+        { sourceId: "sb2", reason: "deleted in Supabase", inFile: true },
+      ]);
+      expect(out.result.skipped).toBe(1);
+      const [record] = listRuns(runsDir());
+      expect(latestUserLines(runsDir(), record!.id).get("sb2")).toMatchObject({
+        status: "skipped",
+        reason: "deleted in Supabase",
+        code: "source_skip",
+      });
+      // Everyone meant to come across did: nothing makes the run partial.
+      expect(record?.status).toBe("complete");
+      // Unset or 0: either is a clean exit, whichever test ran before.
+      expect(process.exitCode ?? 0).toBe(0);
+
+      // So the same import again has nothing to continue.
+      captured.clear();
+      await run({ ...baseOptions, source: "supabase", json: true });
+      expect(JSON.parse(captured.out)).toMatchObject({ alreadyImported: true });
+      expect(created()).toEqual(["sb1"]);
     });
 
     test("names the fields Clerk won't store", async () => {
@@ -1867,23 +2095,57 @@ describe("run", () => {
   });
 
   describe("per-platform imports", () => {
-    test("supabase transforms, validates and imports its export", async () => {
-      fs.writeFileSync(
-        path.join(workDir, "export.json"),
-        JSON.stringify([
+    /** One realistic record per platform, in that platform's export shape. */
+    const PLATFORMS: [string, unknown, string][] = [
+      [
+        "auth0",
+        [
+          {
+            user_id: "auth0|1",
+            email: "a@x.dev",
+            email_verified: true,
+            given_name: "Ada",
+            family_name: "L",
+          },
+        ],
+        "auth0|1",
+      ],
+      ["authjs", [{ id: "aj1", email: "a@x.dev", email_verified: "2024-01-01T00:00:00Z" }], "aj1"],
+      [
+        "betterauth",
+        [{ user_id: "ba1", email: "a@x.dev", email_verified: true, password_hash: BCRYPT }],
+        "ba1",
+      ],
+      [
+        "supabase",
+        [
           {
             id: "sb1",
             email: "a@x.dev",
             email_confirmed_at: "2024-06-29 20:25:06+00",
             encrypted_password: BCRYPT,
           },
-        ]),
-      );
+        ],
+        "sb1",
+      ],
+      ["workos", [{ id: "user_01ABC", email: "a@x.dev", email_verified: true }], "user_01ABC"],
+    ];
 
-      await run({ ...baseOptions, source: "supabase" });
+    test.each(PLATFORMS)(
+      "%s transforms, validates and imports its export",
+      async (key, records, externalId) => {
+        fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(records));
 
-      expect(created()).toEqual(["sb1"]);
-    });
+        await run({ ...baseOptions, source: key });
+
+        expect(created()).toEqual([externalId]);
+        // Each export's verified email is the one the create sends.
+        const create = requests.find(
+          (request) => request.method === "POST" && new URL(request.url).pathname === "/v1/users",
+        );
+        expect(create?.body).toMatchObject({ email_address: ["a@x.dev"] });
+      },
+    );
 
     test("an unknown source fails before signing in", async () => {
       const { secretKey: _key, ...signedOut } = baseOptions;
@@ -1893,12 +2155,118 @@ describe("run", () => {
       expect(error.message).toContain('Unknown source "nope"');
     });
 
+    test("firebase imports its wrapped export and builds the scrypt digest", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify({
+          users: [
+            {
+              localId: "fb1",
+              email: "a@x.dev",
+              emailVerified: true,
+              passwordHash: "SGFzaA==",
+              salt: "U2FsdA==",
+            },
+          ],
+        }),
+      );
+
+      await run({
+        ...baseOptions,
+        source: "firebase",
+        firebaseSignerKey: "SIGNER",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      });
+
+      const body = requests.find((r) => r.url.endsWith("/v1/users"))?.body as Record<
+        string,
+        unknown
+      >;
+      expect(body).toMatchObject({
+        external_id: "fb1",
+        password_digest: "SGFzaA==$U2FsdA==$SIGNER$Bw==$8$14",
+        password_hasher: "scrypt_firebase",
+      });
+    });
+
+    // The users a run created carry its parameters; the rest must match them.
+    test("a firebase run continues only with the hash parameters it started with", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify({
+          users: ["fb1", "fb2"].map((localId) => ({
+            localId,
+            email: `${localId}@x.dev`,
+            emailVerified: true,
+            passwordHash: "SGFzaA==",
+            salt: "U2FsdA==",
+          })),
+        }),
+      );
+      const flags = {
+        ...baseOptions,
+        source: "firebase",
+        firebaseSignerKey: "SIGNER",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      };
+      stubClerk({ failing: new Set(["fb2"]) });
+      await run(flags);
+      expect(readRun(runsDir(), listRuns(runsDir())[0]!.id)?.firebaseHash).toMatch(
+        /^[0-9a-f]{64}$/,
+      );
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await expect(run({ ...flags, firebaseRounds: 9 })).rejects.toThrow(
+        /different Firebase hash parameters/,
+      );
+      expect(created()).toEqual([]);
+
+      await run(flags);
+      expect(created()).toEqual(["fb2"]);
+    });
+
+    test("the printed command keeps the --firebase-* flags, as placeholders", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify({ users: [{ localId: "fb1", email: "a@x.dev", emailVerified: true }] }),
+      );
+
+      const error = (await run({
+        ...baseOptions,
+        yes: false,
+        source: "firebase",
+        firebaseSignerKey: "SIGNER",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.examples?.[0]?.command).toContain(
+        "--firebase-signer-key SIGNER_KEY --firebase-salt-separator SALT_SEPARATOR --firebase-rounds ROUNDS --firebase-mem-cost MEM_COST",
+      );
+    });
+
+    test("a partial firebase flag set fails before anything is read", async () => {
+      await expect(
+        run({ ...baseOptions, source: "firebase", firebaseSignerKey: "SIGNER" }),
+      ).rejects.toThrow(/--firebase-salt-separator/);
+      expect(requests).toHaveLength(0);
+    });
+
     test("an unknown source fails listing the valid keys", async () => {
       const error = (await run({ ...baseOptions, source: "nope" }).catch(
         (caught: unknown) => caught,
       )) as CliError;
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-      expect(error.message).toContain('Unknown source "nope". Valid sources: clerk, supabase.');
+      expect(error.message).toContain(
+        'Unknown source "nope". Valid sources: clerk, auth0, authjs, betterauth, firebase, supabase, workos.',
+      );
       expect(requests).toHaveLength(0);
     });
   });

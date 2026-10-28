@@ -1,5 +1,6 @@
 import type { Program } from "../../cli-program.ts";
 import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
+import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { setMode } from "../../mode.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
 import { registerMigrateExport } from "./export/index.ts";
@@ -61,7 +62,7 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
   // mode: every prompt in this tree already stands down for an agent, with the
   // usage error naming what to pass instead. An explicit `--mode` still wins.
   migrateCommand.hook("preAction", (_thisCommand, actionCommand) => {
-    // With globals: `export supabase --json` lands on the export group's own
+    // With globals: `export auth0 --json` lands on the export group's own
     // --json, which the subcommand's opts() never sees.
     const opts = actionCommand.optsWithGlobals();
     setAssumeYes(Boolean(opts.yes));
@@ -90,6 +91,24 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     .option(
       "--skip-legal-checks",
       "Import users with no legal acceptance on record into an instance that requires it",
+    )
+    .option(
+      "--firebase-signer-key <key>",
+      "Firebase base64 signer key (overrides the export file), or CLERK_FIREBASE_SIGNER_KEY (does not)",
+    )
+    .option(
+      "--firebase-salt-separator <separator>",
+      "Firebase base64 salt separator, or CLERK_FIREBASE_SALT_SEPARATOR",
+    )
+    .option(
+      "--firebase-rounds <n>",
+      "Firebase scrypt rounds, or CLERK_FIREBASE_ROUNDS",
+      (value: string) => parseIntegerOption(value, "--firebase-rounds", { min: 1 }),
+    )
+    .option(
+      "--firebase-mem-cost <n>",
+      "Firebase scrypt memory cost, or CLERK_FIREBASE_MEM_COST",
+      (value: string) => parseIntegerOption(value, "--firebase-mem-cost", { min: 1 }),
     )
     .option("-y, --yes", "Import without prompting")
     .option("--json", "Output as JSON; never prompts, so pair it with --yes to import")

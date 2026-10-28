@@ -11,7 +11,8 @@ import { capabilityFixture } from "./capability-test-helpers.ts";
 import { useStarterSources } from "./setup-test-helpers.ts";
 import { createIOSFixture, treeDigest } from "./test-helpers.ts";
 import * as coordinator from "./coordinator.ts";
-import { runAppleInit } from "./coordinator.ts";
+import { runAppleInit, type StarterProjectSummary } from "./coordinator.ts";
+import * as xcode from "./xcode.ts";
 import { runIOSDoctorChecks } from "../../doctor/ios.ts";
 import type { DoctorContext } from "../../doctor/types.ts";
 
@@ -496,4 +497,55 @@ test.each([
   expect(
     (await readFile(join(f.root, "MyApp/ContentView.swift"), "utf8")).includes("AuthView()"),
   ).toBe(authView);
+});
+
+const NEW_APP: StarterProjectSummary = {
+  projectName: "MyApp",
+  platform: "ios",
+  projectDir: "/work/MyApp",
+  continuation: "cd MyApp && clerk init --app app_test --json --app-id-prefix TEST123456",
+};
+
+test("a new starter's JSON result names the app and how to continue it", async () => {
+  const f = await fixture(true);
+  await runAppleInit(
+    { root: f.root, agent: true, json: true, starterProject: NEW_APP },
+    "app_test",
+    f.dependencies,
+  );
+  expect(JSON.parse(captured.out)).toMatchObject({ starter: NEW_APP });
+});
+
+test("an error with no status of its own reports the new starter as interrupted", async () => {
+  const f = await fixture(true);
+  spies.push(
+    spyOn(xcode, "inspectSelectedProject").mockRejectedValue(new Error("xcodebuild hung")),
+  );
+  await expect(
+    runAppleInit(
+      { root: f.root, agent: true, json: true, starterProject: NEW_APP },
+      "app_test",
+      f.dependencies,
+    ),
+  ).rejects.toThrow("xcodebuild hung");
+  expect(JSON.parse(captured.out)).toEqual({
+    status: "setup-interrupted",
+    appIntegrationComplete: false,
+    error: "xcodebuild hung",
+    starter: NEW_APP,
+    next: [
+      "Resolve the error, then run `cd MyApp && clerk init --app app_test --json --app-id-prefix TEST123456` to finish setting up the new app. Don't run --starter again.",
+    ],
+  });
+});
+
+test("an existing app's error prints no extra status", async () => {
+  const f = await fixture();
+  spies.push(
+    spyOn(xcode, "inspectSelectedProject").mockRejectedValue(new Error("xcodebuild hung")),
+  );
+  await expect(
+    runAppleInit({ root: f.root, agent: true, json: true }, "app_test", f.dependencies),
+  ).rejects.toThrow("xcodebuild hung");
+  expect(captured.out).toBe("");
 });

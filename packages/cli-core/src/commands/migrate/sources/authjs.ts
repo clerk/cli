@@ -1,0 +1,84 @@
+import type { SourceEntry } from "../types.ts";
+import { parseDate, routeByVerification, splitName } from "./shared.ts";
+
+/**
+ * Whether an Auth.js `emailVerified` value is a verification: a real date.
+ * The epoch, as `0` or as a date string, is a default, not one, and text that
+ * isn't a date is none; digits alone are a stored integer timestamp. The export reads values by
+ * the same rule, so its coverage is what the import does.
+ */
+export function isAuthJsVerified(value: unknown): boolean {
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\d+$/.test(trimmed)) return Number(trimmed) !== 0;
+    const time = parseDate(trimmed).getTime();
+    return !Number.isNaN(time) && time !== 0;
+  }
+  return Boolean(value);
+}
+
+/**
+ * Auth.js (formerly NextAuth) → Clerk transformer.
+ *
+ * Auth.js has no export tool and no fixed user table, so this assumes the
+ * common shape: `SELECT id, name, email, email_verified, created_at FROM users`.
+ * A different schema means editing the mapping below or supplying a custom
+ * transformer file.
+ *
+ * `email_verified` is a nullable timestamp rather than a boolean: any real
+ * date means verified. `0` (the epoch) and a value that isn't a date don't,
+ * as the export reads them; digits alone are a stored integer timestamp.
+ *
+ * No password default: Auth.js core stores no passwords, so users arrive
+ * without a digest and are imported with `skip_password_requirement`. An app
+ * using the Credentials provider keeps its own, which this does not read.
+ *
+ * `providers` is what `export authjs` reads from the account table: each
+ * user's OAuth providers, by Auth.js provider ID. They feed the readiness
+ * check, which offers to turn on any Clerk has off.
+ */
+/** Auth.js provider IDs named differently from Clerk's provider key. */
+const AUTHJS_PROVIDER_KEYS: Record<string, string> = {
+  "azure-ad": "microsoft",
+  "microsoft-entra-id": "microsoft",
+  linkedin: "linkedin_oidc",
+};
+
+const authjsSource = {
+  key: "authjs",
+  label: "Auth.js (NextAuth)",
+  description:
+    "Assumes an export of `SELECT id, name, email, email_verified, created_at FROM users`. `name` is split into firstName and lastName.",
+  carries: {
+    passwords: {
+      level: "no",
+      note: "Auth.js core stores no passwords. An app using the Credentials provider keeps its own, which this does not read: migrate them separately, or have those users reset their password.",
+    },
+    mfa: { level: "no", note: "Auth.js has no MFA of its own." },
+    metadata: {
+      level: "no",
+      note: "Only `id`, `name`, `email`, `email_verified`, `created_at` and the account table's OAuth providers are read.",
+    },
+  },
+  transformer: {
+    id: "userId",
+    email: "email",
+    email_verified: "emailVerified",
+    name: "name",
+    created_at: "createdAt",
+    providers: "socialProviders",
+  },
+  postTransform: (user) => {
+    if (user.emailVerified != null && !isAuthJsVerified(user.emailVerified)) {
+      user.emailVerified = null;
+    }
+    routeByVerification(user, "email", "emailVerified", "timestamp");
+    splitName(user);
+  },
+
+  socialProviders: (user) =>
+    (user.socialProviders ?? []).map((provider) => AUTHJS_PROVIDER_KEYS[provider] ?? provider),
+} satisfies SourceEntry;
+
+export default authjsSource;

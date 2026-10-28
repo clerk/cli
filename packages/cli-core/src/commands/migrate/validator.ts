@@ -75,6 +75,9 @@ export const userSchema = z
     // When a source's ban on this user was due to end (ISO 8601). Clerk's ban
     // has no end, so the checks warn that it stays until lifted. Never sent.
     banEndsAt: z.string().optional(),
+    // The social providers a user signs in with, as the source names them,
+    // for the readiness check (see SourceEntry.socialProviders). Never sent.
+    socialProviders: z.array(z.string()).optional(),
     bypassClientTrust: z.boolean().optional(),
     createOrganizationEnabled: z.boolean().optional(),
     createOrganizationsLimit: z.number().int().optional(),

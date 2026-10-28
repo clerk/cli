@@ -185,6 +185,7 @@ export const configStubs = {
   profileLabel: (profile: { appName?: string; appId: string }) =>
     profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId,
   ensureMachineUuid: async () => "00000000-0000-4000-8000-000000000000",
+  peekMachineUuid: async () => "00000000-0000-4000-8000-000000000000",
   markTelemetryNoticeShown: async () => false,
   getTelemetryNoticeShown: async () => true,
   getTelemetryDisabled: async () => false,
@@ -256,10 +257,12 @@ export const gitStubs = {
  */
 export const libPromptsStubs = {
   confirm: async () => true,
-  multiselect: async () => [],
   text: async () => "",
   password: async () => "",
   editor: async () => "{}",
+  /** Accepts whatever the caller preselected. */
+  multiselect: async <T>(config: { initialValues?: T[] }): Promise<T[]> =>
+    config.initialValues ?? [],
 };
 
 export const promptsStubs = libPromptsStubs;

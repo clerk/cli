@@ -148,6 +148,10 @@ export const keylessCopy = {
       : `--instance is not supported for an unclaimed accountless application: the secret key in ${source} already targets its own instance.\n` +
         "Run `clerk auth login` to claim the application, then target instances by name.",
 
+  securityNeedsClaimedApplication: (): string =>
+    "Security recommendations are only available for a claimed application — the checks read the account-level config document (attack protection, passwords, sessions), which Clerk's Backend API does not expose to an unclaimed accountless application.\n" +
+    "Run `clerk auth login` to claim this application, then re-run `clerk security audit`.",
+
   userDashboardNeedsClaim: (userId: string, access: KeyAccess): string =>
     (access.claimed === false
       ? `The secret key from ${access.source} belongs to an unclaimed accountless application, which has no Dashboard page — a dashboard link needs an application ID, and one is only assigned when the application is claimed.\n` +

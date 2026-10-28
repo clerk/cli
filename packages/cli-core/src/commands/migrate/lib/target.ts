@@ -54,7 +54,24 @@ export const KEY_SOURCE = {
 
 type NamedKeySource = (typeof KEY_SOURCE)[keyof typeof KEY_SOURCE];
 
-type InstanceIdentity = { instanceId: string; env: string };
+type InstanceIdentity = {
+  instanceId: string;
+  env: string;
+  /**
+   * `max_allowed_users`: the user limit Clerk enforces, `null` for none.
+   * Absent when Clerk did not say: an API that predates the field, or a read
+   * that failed.
+   */
+  maxAllowedUsers?: number | null;
+};
+
+/** `max_allowed_users` as {@link InstanceIdentity} carries it. */
+function readUserLimit(value: unknown): { maxAllowedUsers?: number | null } {
+  if (value === null) return { maxAllowedUsers: null };
+  return Number.isInteger(value) && (value as number) >= 0
+    ? { maxAllowedUsers: value as number }
+    : {};
+}
 
 type KeySource = {
   keySource: string;
@@ -171,12 +188,17 @@ export async function fetchInstanceIdentity(secretKey: string): Promise<Instance
     const { body } = await retryOn429(async () =>
       bapiRequest({ method: "GET", path: "/v1/instance", secretKey }),
     );
-    const instance = body as { id?: unknown; environment_type?: unknown };
+    const instance = body as {
+      id?: unknown;
+      environment_type?: unknown;
+      max_allowed_users?: unknown;
+    };
     if (typeof instance.id === "string" && isClerkInstanceId(instance.id)) {
       return {
         instanceId: instance.id,
         env:
           typeof instance.environment_type === "string" ? instance.environment_type : fallbackEnv,
+        ...readUserLimit(instance.max_allowed_users),
       };
     }
   } catch (error) {
@@ -239,9 +261,12 @@ export function assertInstanceFlagMatches(
 }
 
 /** Resolves the key, then names the instance it addresses. */
-export async function resolveClerkTarget(
-  options: TargetOptions,
-): Promise<{ secretKey: string; target: ClerkTarget }> {
+export async function resolveClerkTarget(options: TargetOptions): Promise<{
+  secretKey: string;
+  target: ClerkTarget;
+  /** Kept off the target, which a run records: Clerk can raise it between runs. */
+  maxAllowedUsers?: number | null;
+}> {
   const secretKey = await resolveBapiSecretKey(options);
   const { instance: named, ...source } = await describeKeySource(options);
   const fetched = await fetchInstanceIdentity(secretKey);
@@ -262,6 +287,7 @@ export async function resolveClerkTarget(
       instanceType: detectInstanceType(secretKey),
       ...source,
     },
+    ...("maxAllowedUsers" in fetched ? { maxAllowedUsers: fetched.maxAllowedUsers } : {}),
   };
 }
 

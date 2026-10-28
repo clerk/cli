@@ -14,7 +14,7 @@ import { log } from "../../../lib/log.ts";
 import { withGutter, withSpinner } from "../../../lib/spinner.ts";
 import type { UserLine } from "../lib/run-store.ts";
 import { printTarget } from "../lib/target.ts";
-import type { DbClient } from "../lib/db.ts";
+import { exportValue, type DbClient } from "../lib/db.ts";
 import { finishExport, startExportRun } from "./shared.ts";
 import {
   resolveDbUrl,
@@ -88,7 +88,8 @@ function normalizeRow(row: SupabaseRow): Record<string, unknown> {
     if (value === -Infinity) continue;
     // Postgres returns timestamps as Date objects; the transformer parses
     // strings, and JSON.stringify would otherwise bury the format difference.
-    normalized[key] = value instanceof Date ? value.toISOString() : value;
+    const exported = exportValue(value);
+    if (exported !== undefined) normalized[key] = exported;
   }
 
   return normalized;
@@ -115,10 +116,12 @@ export function buildSupabaseExport(
   for (const row of rows) {
     const userId = String(row.id ?? "");
     try {
-      users.push(normalizeRow(row));
+      const user = normalizeRow(row);
+      users.push(user);
 
       if (row.email) counts.email++;
-      if (row.email_confirmed_at) counts.emailConfirmed++;
+      // From the exported value: a date that holds none is left out of it.
+      if (user.email_confirmed_at) counts.emailConfirmed++;
       if (row.encrypted_password) counts.password++;
       if (row.phone) counts.phone++;
       // The source splits a name it finds in the metadata, so count those too.

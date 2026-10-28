@@ -598,9 +598,13 @@ export async function scaffoldConfigFile<TMissing extends FileAction | null>(
   };
 }
 
+/** Look up an existing auth file that serves the same route at a different path. */
+type FindExistingAuthFile = (kind: AuthKind) => Promise<string | null>;
+
 /**
  * Generic helper for scaffolding an auth page (sign-in or sign-up).
  * Handles the common create-or-skip pattern used by every framework scaffolder.
+ * `findExisting` lets a framework skip when the route already exists elsewhere.
  */
 export async function scaffoldAuthFile(
   cwd: string,
@@ -608,12 +612,22 @@ export async function scaffoldAuthFile(
   content: string,
   kind: AuthKind,
   surface: AuthSurface,
+  findExisting?: FindExistingAuthFile,
 ): Promise<FileAction> {
   const label = `${kind} ${surface}`;
   const capitalizedLabel = `${label[0]!.toUpperCase()}${label.slice(1)}`;
 
   if (await Bun.file(join(cwd, path)).exists()) {
     return { type: "skip", path, skipReason: `${capitalizedLabel} already exists` };
+  }
+
+  const existingPath = await findExisting?.(kind);
+  if (existingPath) {
+    return {
+      type: "skip",
+      path,
+      skipReason: `${capitalizedLabel} already exists at ${existingPath}`,
+    };
   }
 
   const component = authComponentName(kind);
@@ -628,10 +642,11 @@ export async function scaffoldAuthFile(
 export async function scaffoldAuthFiles(
   cwd: string,
   specs: readonly AuthFileSpec[],
+  options: { findExisting?: FindExistingAuthFile } = {},
 ): Promise<FileAction[]> {
   return Promise.all(
     specs.map(async (spec) =>
-      scaffoldAuthFile(cwd, spec.path, spec.content, spec.kind, spec.surface),
+      scaffoldAuthFile(cwd, spec.path, spec.content, spec.kind, spec.surface, options.findExisting),
     ),
   );
 }
