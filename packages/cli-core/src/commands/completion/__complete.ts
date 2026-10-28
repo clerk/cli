@@ -1,4 +1,5 @@
 import type { CommandUnknownOpts, Option } from "@commander-js/extra-typings";
+import { FEEDBACK_OUTCOME_CHOICES } from "../feedback/feedback.ts";
 import { sources } from "../migrate/sources/registry.ts";
 import { CHECKS, findCheck } from "../security/catalog.ts";
 import { KNOWN_DASHBOARD_PATHS } from "../open/dashboard-paths.ts";
@@ -70,6 +71,12 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
     { name: "users", description: "Users only" },
     { name: "orgs,users", description: "Both organizations and users" },
   ],
+  // Kept off `.choices()` so an invalid value gets the handler's usage error
+  // (JSON envelope, exit 2) rather than Commander's plain text and exit 1.
+  "--outcome": FEEDBACK_OUTCOME_CHOICES.map((choice) => ({
+    name: choice.value,
+    description: choice.description,
+  })),
 };
 
 /**
