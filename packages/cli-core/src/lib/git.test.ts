@@ -109,6 +109,7 @@ describe("ensureGitignoreEntry", () => {
     ".clerk/**",
     "/.clerk/  ",
     "/.clerk/\r",
+    "/.clerk/ \r",
   ])("leaves .gitignore unchanged when %p is already listed", async (existing) => {
     const content = `node_modules\n# clerk configuration (can include secrets)\n${existing}\n`;
     await Bun.write(gitignorePath, content);
@@ -132,6 +133,12 @@ describe("ensureGitignoreEntry", () => {
     await Bun.write(gitignorePath, "  /.clerk/\n");
     await ensureGitignoreEntry(tempDir, ".clerk/");
     expect(await Bun.file(gitignorePath).text()).toBe("  /.clerk/\n.clerk/\n");
+  });
+
+  test("does not treat an entry with a trailing tab as listed", async () => {
+    await Bun.write(gitignorePath, "/.clerk/\t\n");
+    await ensureGitignoreEntry(tempDir, ".clerk/");
+    expect(await Bun.file(gitignorePath).text()).toBe("/.clerk/\t\n.clerk/\n");
   });
 
   test("appends the entry when a later negation re-includes the folder", async () => {
