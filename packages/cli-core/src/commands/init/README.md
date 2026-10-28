@@ -346,7 +346,7 @@ In accountless mode, after calling `POST /v1/accountless_applications`, `clerk i
 }
 ```
 
-`.clerk/` is automatically added to `.gitignore` when the breadcrumb is written. The breadcrumb is removed after a successful claim (or when the claim token expires/is already consumed).
+`.clerk/` is automatically added to `.gitignore` when the breadcrumb is written, unless the file already ignores it under an equivalent pattern such as `/.clerk/`, `.clerk`, or `.clerk/*`. The breadcrumb is removed after a successful claim (or when the claim token expires/is already consumed).
 
 ### Re-running init on an already-accountless project
 
