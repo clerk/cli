@@ -346,7 +346,7 @@ In accountless mode, after calling `POST /v1/accountless_applications`, `clerk i
 }
 ```
 
-When `clerk init` writes the breadcrumb, it adds `.clerk/` to `.gitignore` unless an equivalent pattern such as `/.clerk/`, `.clerk`, or `.clerk/*` already ignores the folder. The CLI removes the breadcrumb after a successful claim, or when the claim token expires or was already consumed.
+When `clerk init` writes the breadcrumb, it adds `.clerk/` to `.gitignore` unless an equivalent pattern such as `/.clerk/`, `.clerk`, or `.clerk/*` already ignores the folder. The CLI removes the breadcrumb after a successful claim, or once the claim token expires or another claim uses it.
 
 ### Re-running init on an already-accountless project
 
