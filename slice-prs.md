@@ -7,24 +7,24 @@ Ship `migrate` in small PRs instead of one 20k-line PR. #479 (`ra/integrate-migr
 **The slices never write to #479:**
 
 - No slice branch starts from, cherry-picks from, merges, or rebases `ra/integrate-migration-tool-into-cli`. Code comes over by copying files from the reference commit (see "Reference implementation" below).
-- #479 itself is never retargeted, marked ready, merged, or closed while the slices are in flight. Decide what to do with it after slice 6 merges.
+- #479 itself is never retargeted, marked ready, merged, or closed while the slices are in flight. Decide what to do with it after the final slice merges.
 - #479 can still take fixes. When one lands after the slices are cut, see "When #479 gets another fix" below.
 
 **Don't port these from #479:** `slice-prs.md` (this plan), `.changeset/integrate-migration-tool-into-cli.md` (each slice writes its own), and the `.gitignore` lines for `commands/migrate/logs/` (that folder no longer exists).
 
-**Size:** 6 slices, shipped as 13 PRs. Slice 1 went out as four PRs (1a to 1d), and slice 4 is five, one per provider.
+**Size:** 7 slices, shipped as 14 PRs. Slice 1 went out as four PRs (1a to 1d), slice 4 is five, one per provider, and the gate comes off in a final slice after slice 6.
 
 ## Status
 
-| Slice        | PR                             | State                                       |
-| ------------ | ------------------------------ | ------------------------------------------- |
-| 1 (1a to 1d) | #517, #518, #519, #520         | Merged 2026-10-14. #514 (`slice-1`) closed. |
-| 2            | #515                           | Merged 2026-10-20                           |
-| 3            | #524                           | Merged 2026-10-20                           |
-| 4a Firebase  | #525                           | In review, base `main`                      |
-| 4b to 4e     | #526 (Auth0) to #529 (Auth.js) | Open, stacked on #525                       |
-| 5            | #530                           | Open, stacked on #529                       |
-| 6            | #531                           | Open, stacked on #530                       |
+| Slice        | PR                                     | State                                       |
+| ------------ | -------------------------------------- | ------------------------------------------- |
+| 1 (1a to 1d) | #517, #518, #519, #520                 | Merged 2026-10-14. #514 (`slice-1`) closed. |
+| 2            | #515                                   | Merged 2026-10-20                           |
+| 3            | #524                                   | Merged 2026-10-20                           |
+| 4a to 4e     | #525 (Firebase) to #529 (Auth.js)      | Merged 2026-10-26                           |
+| 5            | #530                                   | In review, base `main`                      |
+| 6            | #531                                   | Open, stacked on #530                       |
+| final        | not opened yet (`migrate/final-slice`) | Stacked on #531                             |
 
 Merged slices take no more changes on their branches. A fix to merged code goes in a small `fix(migrate):` PR off `main` (see "When #479 gets another fix").
 
@@ -32,16 +32,16 @@ Merged slices take no more changes on their branches. A fix to merged code goes 
 
 The PRs are stacked, but they're reviewed and merged one at a time. Slice 1 merges to `main`, then slice 2 gets reviewed and merges, and so on. The stack is never reviewed or merged as a whole.
 
-**The gate stays on until slice 6 merges:**
+**The gate stays on until the final slice merges:**
 
 - Slice 1 adds `CLERK_EXPERIMENTAL=migrate`. Without it, `migrate` doesn't appear in `clerk --help` or completions, and it refuses to run.
-- Slices 2 to 5 each add commands or sources behind that same gate.
-- Slice 6 is the only PR that removes the gate.
+- Slices 2 to 6 each add commands, sources or options behind that same gate.
+- The final slice is the only PR that removes the gate.
 
 **What that means for every PR:**
 
 - **It stands alone on `main`.** Each merge reaches `@canary`, and a release from `main` between slices ships whatever has merged so far, still gated. So every PR passes CI by itself, and its `migrate/README.md` documents only the commands that have merged. `readme.test.ts` enforces this, because it fails on any documented flag the binary rejects.
-- **It has its own changeset.** Create it with the `changesets` skill. Until slice 6, the text says the command is experimental and needs `CLERK_EXPERIMENTAL=migrate`. Slice 6's changeset announces `clerk migrate`.
+- **It has its own changeset.** Create it with the `changesets` skill. Until the final slice, the text says the command is experimental and needs `CLERK_EXPERIMENTAL=migrate`. The final slice's changeset announces `clerk migrate`, and it drops that sentence from any earlier changeset not yet released.
 - **It's tested against `@canary` before the next one is marked ready.** Run `npm i -g clerk@canary` with `CLERK_EXPERIMENTAL=migrate` set, then run that slice's testing process (to be defined).
 
 ## Slice 1: `clerk migrate import <file>` for Clerk and Supabase files
@@ -67,7 +67,10 @@ Import goes first because the risky behavior lives there: writing to production,
 | 3     | The export envelope, `export clerk`, `export supabase`, and importing by export run ID                                  | 1   |
 | 4     | One PR per provider, each with its export and import: Firebase, Auth0, WorkOS, Better Auth, Auth.js                     | 5   |
 | 5     | Custom sources (`--source ./file.ts`) and `migrate sources`                                                             | 1   |
-| 6     | Remove the gate, then the docs and skills written against the final help output                                         | 1   |
+| 6     | Readiness: `--reserve-unverified` and the fixes from review, still behind the gate                                      | 1   |
+| final | Remove the gate, the root README entry, and the changeset that announces `clerk migrate`                                | 1   |
+
+**Slice 6, split (2026-10-28).** Slice 6 first held both the readiness work and the gate removal. It's now two PRs, so the readiness work can merge and reach `@canary` while `migrate` stays gated: #531 (`migrate/slice-6`) is everything but the release, and `migrate/final-slice` takes the four release commits on top of it. `--reserve-unverified` has its own changeset in slice 6, which the final slice stops calling experimental.
 
 **Slice 2, as reviewed (#515).** Review changed some of the plan above; the slice is what shipped, not the row:
 
@@ -83,7 +86,7 @@ Import goes first because the risky behavior lives there: writing to production,
 
 - Slice 3: the `.gitignore` lines for `exports/` and `*service-account*.json`, and the MySQL note in `scripts/check-bun-version.ts`.
 - Slice 4c (WorkOS): the WorkOS entry in `commands/init/scan.ts`.
-- Slice 6: the root `README.md` entry.
+- Final slice: the root `README.md` entry.
 
 **How each slice is proven:**
 
@@ -118,7 +121,8 @@ main
                          └─ migrate/slice-4d   Better Auth
                              └─ migrate/slice-4e   Auth.js
                                  └─ migrate/slice-5    custom sources, `migrate sources`
-                                     └─ migrate/slice-6    remove the gate, docs
+                                     └─ migrate/slice-6    readiness: --reserve-unverified, review fixes
+                                         └─ migrate/final-slice   remove the gate, root README, release changeset
 ```
 
 The provider PRs don't depend on each other, but each one edits `sources/registry.ts`, `export/registry.ts`, `sources.test.ts`, and `README.md`. As siblings, every merge would conflict on those four files. In one line, nothing conflicts, and slice 5 sits on top of every provider.
@@ -742,4 +746,5 @@ Each of these lands in a later slice:
 - The export envelope, importing by export run ID, `export clerk`, and `export supabase` (slice 3)
 - Firebase, Auth0, WorkOS, Better Auth (including Drizzle's snake_case and plural schemas), and Auth.js, including the `--firebase-*` flags and the Firebase hash prompt (slice 4)
 - `--source ./file.ts` and `migrate sources` (slice 5)
-- Removing the gate, the root README entry, and the docs and skills (slice 6)
+- `--reserve-unverified` (slice 6)
+- Removing the gate, the root README entry, and the release changeset (final slice)
