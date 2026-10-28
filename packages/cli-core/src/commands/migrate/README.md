@@ -180,7 +180,9 @@ instance, the hash uses a stand-in for the key instead, so two different keys
 for that instance don't share it. It lives outside the runs folder because
 nothing may be written there before consent. It holds the importing process's
 PID and is removed when the import finishes. One left by a Ctrl-C or a process that died is
-reclaimed by the next import. The refusal names the file, which is safe to
+reclaimed by the next import. Two imports that start together over a stale lock
+can both take it; Clerk still refuses the second create of any email, phone or
+username, so the cost is failed lines, not duplicate users. The refusal names the file, which is safe to
 delete when no `clerk migrate import` is running.
 
 `users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
