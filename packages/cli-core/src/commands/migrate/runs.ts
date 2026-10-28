@@ -9,6 +9,7 @@
 import path from "node:path";
 import { bold, dim, green, red, yellow } from "../../lib/color.ts";
 import { throwUsageError } from "../../lib/errors.ts";
+import { recordMigrateSource, recordMigrateTarget } from "./telemetry.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
 import { tallyError } from "./lib/failures.ts";
@@ -314,6 +315,8 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
   const stored = readRun(runsDir, id);
   if (!stored) throwUsageError(noRunMessage(runsDir, id, carryFlags({ runsDir: options.runsDir })));
   const record = withLiveCounts(runsDir, stored);
+  recordMigrateSource(record.source, { custom: Boolean(record.sourceHash) });
+  recordMigrateTarget(record.target);
 
   // The record says where the import's key came from, and so which flags
   // reach that instance again.

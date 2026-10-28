@@ -111,8 +111,53 @@ export type TelemetryStage =
   | "domain_pending"
   | "oauth_pending"
   | "complete"
+  // `clerk migrate import`. `already_imported`, `dry_run` and
+  // `nothing_to_import` are terminal branches; a partial import still ends at
+  // `done`, and its `outcome` says so.
+  | "migrate_source"
+  | "migrate_target_setup"
+  | "migrate_input"
+  | "migrate_target"
+  | "migrate_resume"
+  | "migrate_already_imported"
+  | "migrate_load"
+  | "migrate_checks"
+  | "migrate_dry_run"
+  | "migrate_nothing_to_import"
+  | "migrate_confirm"
+  | "migrate_import"
+  // `clerk migrate export [platform]`. `pick_platform` only on the bare picker.
+  | "migrate_pick_platform"
+  | "migrate_export_read"
+  | "migrate_export_write"
+  // `clerk migrate undo`, which shares `migrate_target`, `migrate_dry_run` and
+  // `migrate_confirm` with import.
+  | "migrate_run_lookup"
+  | "migrate_inspect"
+  | "migrate_delete"
   // shared terminal marker
   | "done";
+
+/**
+ * Where a migration's users come from: a built-in source or export platform,
+ * or `custom` for a source someone wrote. Closed like {@link TelemetryStage},
+ * so a path to a custom source can never reach the payload.
+ */
+export const MIGRATE_TELEMETRY_SOURCES = [
+  "auth0",
+  "authjs",
+  "betterauth",
+  "clerk",
+  "firebase",
+  "supabase",
+  "workos",
+  "custom",
+] as const;
+
+export type MigrateTelemetrySource = (typeof MIGRATE_TELEMETRY_SOURCES)[number];
+
+/** The Clerk app and instance a command acted on. Only real `app_`/`ins_` IDs are kept. */
+type TelemetryTarget = { appId?: string; instanceId?: string };
 
 /** Structural slice of Commander's Command — avoids its generic types. */
 export type TelemetryCommand = {
@@ -134,6 +179,10 @@ type TelemetryContext = {
   pauseStep: TelemetryPauseStep | null;
   /** Per-component readiness, each field written only by an observation. */
   components: TelemetryComponents;
+  /** What the command acted on — see setTelemetryTarget. Empty when nothing said. */
+  target: TelemetryTarget;
+  /** Where a migration's users come from — see setTelemetryMigrateSource. */
+  migrateSource: MigrateTelemetrySource | null;
 };
 
 /** What a command wants recorded for its soft exit. `deploy status` declares no code: nothing was thrown. */
@@ -246,6 +295,8 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
       softExit: null,
       pauseStep: null,
       components: emptyComponents(),
+      target: {},
+      migrateSource: null,
     };
   } catch (error) {
     log.debug(`telemetry: failed to start context: ${error}`);
@@ -291,6 +342,53 @@ export function setTelemetryDomainComponents(status: {
 /** Record whether every required OAuth provider has production credentials. Leaves the domain components alone. */
 export function setTelemetryOAuthComplete(complete: boolean): void {
   if (context) context.components = { ...context.components, oauth: complete };
+}
+
+/**
+ * The Clerk app and instance the command acted on. Overrides the linked
+ * profile's app. Each call replaces the last, so a resolved target replaces an
+ * early hint from the flags. Anything that is not an `app_`/`ins_` ID — an
+ * `--instance dev` alias, an app label, a `key_` stand-in hashed from a secret
+ * key — is dropped here, so no call site can send one.
+ */
+export function setTelemetryTarget(target: { appId?: string; instanceId?: string }): void {
+  if (!context) return;
+  context.target = {
+    ...(target.appId?.startsWith("app_") ? { appId: target.appId } : {}),
+    ...(target.instanceId?.startsWith("ins_") ? { instanceId: target.instanceId } : {}),
+  };
+}
+
+/** Record where a migration's users come from. Last call wins. */
+export function setTelemetryMigrateSource(source: MigrateTelemetrySource): void {
+  if (context) context.migrateSource = source;
+}
+
+/**
+ * The app and workspace an event names. A command's own target wins; a
+ * key-only target borrows the linked profile's app when the profile owns its
+ * instance; a command that set no target reports the linked profile as
+ * before. The workspace is the profile's only when the app is too, so an
+ * event never pairs one app's workspace with another app's ID.
+ */
+function resolveEventApp(
+  target: TelemetryTarget,
+  profile:
+    | { appId: string; workspaceId: string; instances: Record<string, string | undefined> }
+    | undefined,
+): { appId: string | null; workspaceId: string | null } {
+  const targetSet = target.appId !== undefined || target.instanceId !== undefined;
+  const profileOwnsInstance =
+    target.instanceId !== undefined &&
+    profile !== undefined &&
+    Object.values(profile.instances).includes(target.instanceId);
+  const appId =
+    target.appId ??
+    (profileOwnsInstance ? profile.appId : undefined) ??
+    (targetSet ? undefined : profile?.appId) ??
+    null;
+  const workspaceId = appId !== null && appId === profile?.appId ? profile.workspaceId : null;
+  return { appId, workspaceId };
 }
 
 /**
@@ -427,7 +525,7 @@ async function buildAndSend(
   // The notice tells the user "Nothing has been sent during this run" — honor it.
   if (await showTelemetryNoticeOnce()) return;
 
-  const envelope = await buildTelemetryEnvelope();
+  const envelope = await buildTelemetryEnvelope(current.target);
 
   // The internal post step, not the exported sender: the opt-out was read
   // just above, and this whole job runs under a one-second deadline.
@@ -445,6 +543,9 @@ async function buildAndSend(
         pause_step: current.pauseStep,
         components: current.components,
         duration_ms: Date.now() - current.startedAt,
+        // Migrate's; null on other commands.
+        instance_id: current.target.instanceId ?? null,
+        migrate_source: current.migrateSource,
         ...envelope,
       },
     },
@@ -488,10 +589,14 @@ export type TelemetryEnvelopePreview = Omit<TelemetryEnvelope, "machine_uuid"> &
 /**
  * Read the envelope fields. Creates the machine id on a machine that has
  * none, so a caller that only previews an event still writes the config file;
- * a preview that must not do that uses {@link peekTelemetryEnvelope}.
+ * a preview that must not do that uses {@link peekTelemetryEnvelope}. The
+ * per-run usage event passes the command's target, which decides `app_id` and
+ * `workspace_id`; without one they are the linked project's.
  */
-export async function buildTelemetryEnvelope(): Promise<TelemetryEnvelope> {
-  return envelopeWith(await ensureMachineUuid());
+export async function buildTelemetryEnvelope(
+  target: TelemetryTarget = {},
+): Promise<TelemetryEnvelope> {
+  return envelopeWith(await ensureMachineUuid(), target);
 }
 
 /**
@@ -506,8 +611,10 @@ export async function peekTelemetryEnvelope(): Promise<TelemetryEnvelopePreview>
 
 async function envelopeWith<Id extends string | null>(
   machineUuid: Id,
+  target: TelemetryTarget = {},
 ): Promise<Omit<TelemetryEnvelope, "machine_uuid"> & { machine_uuid: Id }> {
   const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
+  const app = resolveEventApp(target, resolved?.profile);
   return {
     machine_uuid: machineUuid,
     install_method: detectInstallMethod(process.env, process.execPath),
@@ -520,8 +627,8 @@ async function envelopeWith<Id extends string | null>(
     in_tmux: detectInTmux(process.env),
     in_screen: detectInScreen(process.env),
     env: getCurrentEnvName(),
-    workspace_id: resolved?.profile.workspaceId ?? null,
-    app_id: resolved?.profile.appId ?? null,
+    workspace_id: app.workspaceId,
+    app_id: app.appId,
   };
 }
 
@@ -617,9 +724,12 @@ export async function showTelemetryNoticeOnce(
     "The Clerk CLI collects usage telemetry to help improve the CLI: command name, flag names,",
   );
   log.info(
-    "duration, outcome, the step a multi-step command reached, a random machine identifier —",
+    "duration, outcome, the step a multi-step command reached, a random machine identifier,",
   );
-  log.info("and your workspace and app IDs when a project is linked.");
+  log.info(
+    "the platform a migration's users come from, and the workspace, app and instance IDs of the",
+  );
+  log.info("Clerk app a command acts on or the project is linked to.");
   log.info(lastLine);
   log.info("Opt out: `clerk telemetry disable` — details: https://clerk.com/docs/telemetry");
   log.blank();

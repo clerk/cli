@@ -106,6 +106,8 @@ import {
 import { getSource, resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
 import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
+import { recordMigrateSource, recordMigrateTarget } from "./telemetry.ts";
+import { declareSoftExitOutcome, setTelemetryStage } from "../../lib/telemetry.ts";
 import { login } from "../auth/login.ts";
 import { link } from "../link/index.ts";
 
@@ -912,9 +914,13 @@ type ImportLock = { release?: () => void };
 
 async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promise<void> {
   // A mistyped --source fails before any sign-in or link.
+  setTelemetryStage("migrate_source");
   let options = await applySource(rawOptions);
+  recordMigrateSource(options.source, { custom: Boolean(options.sourceHash) });
+  setTelemetryStage("migrate_target_setup");
   await ensureImportTarget(options);
 
+  setTelemetryStage("migrate_input");
   const input = await resolveInput(options);
   options = { ...options, file: input.file };
   // Hashed before the envelope is read: the envelope and the users are read
@@ -936,6 +942,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
   if (!options.source && canPrompt(options) && fileExists(input.file)) {
     options = { ...options, source: await promptForSource() };
   }
+  // The file's own word, or the answer at the prompt.
+  recordMigrateSource(options.source, { custom: Boolean(options.sourceHash) });
 
   const { source, file } = validateRunOptions(options);
   // The flags every suggested command needs to reach this runs folder and instance.
@@ -989,7 +997,10 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
   await withGutter(
     "Migrating users to Clerk",
     async ({ setNextSteps }) => {
+      setTelemetryStage("migrate_target");
       const { secretKey, target, maxAllowedUsers } = await resolveClerkTarget(options);
+      recordMigrateTarget(target);
+      setTelemetryStage("migrate_resume");
       if (!options.json) printTarget(target);
       // Every user is already here, so each would be refused as a duplicate.
       if (input.exportInstanceId && input.exportInstanceId === target.instanceId) {
@@ -1061,6 +1072,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
 
       if (resume.kind === "complete") {
+        setTelemetryStage("migrate_already_imported");
         // Imported by path and named now by its export run ID: the record
         // links the export, so the cleanup names the folder holding the data.
         const record =
@@ -1151,6 +1163,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         }
       }
 
+      setTelemetryStage("migrate_load");
       const loaded = await withSpinner(`Loading users from ${file}...`, async () =>
         loadUsersFromFile(file, source, { context: { firebaseHashConfig } }),
       );
@@ -1189,6 +1202,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         throwChanged(filePath);
       }
 
+      setTelemetryStage("migrate_checks");
       const [settings, existingUsers] = await withSpinner("Checking the instance...", async () =>
         Promise.all([
           fetchInstanceSettings(secretKey),
@@ -1310,13 +1324,17 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       if (!options.json) printChecks(checks);
 
       if (options.dryRun) {
+        setTelemetryStage("migrate_dry_run");
         if (options.json) preview({ dryRun: true });
         else {
           log.blank();
           log.info(dim("Dry run: nothing was written."));
         }
         // The exit code says what the real run would do.
-        if (refused) process.exitCode = 2;
+        if (refused) {
+          process.exitCode = 2;
+          declareSoftExitOutcome("error", "migrate_checks_rejected");
+        }
         return;
       }
 
@@ -1395,6 +1413,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         withoutPassword.length === 0 &&
         attachOnly.length === 0
       ) {
+        setTelemetryStage("migrate_nothing_to_import");
         // Settled, so a continued run is finished rather than left interrupted,
         // and the JSON reports it as finished, as run.json now does.
         // Continued by export run ID, the run records the export it now reads.
@@ -1430,6 +1449,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         attachOnly.length > 0 ? `, attach identifiers to ${plural(attachOnly.length, "user")}` : "";
       const skipping = checks.rejects.length + checks.skipped.length + withoutPassword.length;
       const skips = skipping > 0 ? ` and skip ${plural(skipping, "user")}` : "";
+      setTelemetryStage("migrate_confirm");
       if (!options.yes) {
         if (!canPrompt(options)) {
           if (options.json) preview({ consent: "required" });
@@ -1494,6 +1514,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         });
       }
 
+      setTelemetryStage("migrate_import");
       const summary: ImportSummary =
         checks.importable.length > 0 || attachOnly.length > 0
           ? await withProgress(
@@ -1532,7 +1553,11 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         throwUserAbort();
       }
       const record = run.finish({ notSent: summary.notSent });
-      if (summary.failed > 0) process.exitCode = 1;
+      setTelemetryStage("done");
+      if (summary.failed > 0) {
+        process.exitCode = 1;
+        declareSoftExitOutcome("error", "migrate_import_partial");
+      }
 
       if (options.json) {
         log.data(
