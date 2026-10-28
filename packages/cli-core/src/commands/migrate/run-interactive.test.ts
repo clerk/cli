@@ -22,7 +22,7 @@ import {
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { listageStubs, useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureTelemetryPayload, listageStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockSelect = mock(async () => "clerk" as unknown);
 const mockText = mock(async () => "export.json" as unknown);
@@ -511,5 +511,23 @@ describe("unverified identifiers", () => {
 
     expect(confirmMessages).toEqual(["Import 2 users?"]);
     expect(statuses()).toEqual([undefined, ["verified", "reserved"]]);
+  });
+});
+
+describe("telemetry", () => {
+  test("a source picked at the prompt is recorded", async () => {
+    const { payload } = await captureTelemetryPayload("migrate import", () =>
+      run({ input: "export.json", secretKey: "sk_test_x" }),
+    );
+    expect(mockSelect).toHaveBeenCalledTimes(1);
+    expect(payload).toMatchObject({ migrate_source: "clerk", stage: "done" });
+  });
+
+  test("declining at the confirm prompt is an abort at migrate_confirm", async () => {
+    confirmAnswer = false;
+    const { payload } = await captureTelemetryPayload("migrate import", () => run(importOptions), {
+      captureError: true,
+    });
+    expect(payload).toMatchObject({ outcome: "abort", stage: "migrate_confirm" });
   });
 });
