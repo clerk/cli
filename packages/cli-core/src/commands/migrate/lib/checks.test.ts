@@ -446,6 +446,24 @@ describe("rejects", () => {
   });
 
   // Each reject names that user's providers, not every disabled one in the file.
+  // Counts only: Auth0 users are never rejected for a provider, but the run
+  // still says which providers to enable before they import.
+  test("a source's own provider reading offers the fix, and rejects no one", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings(
+          { email_address: { enabled: true } },
+          { oauth_google: { enabled: true } },
+        ),
+        socialProviders: (u) => (u.userId.startsWith("github|") ? ["github"] : ["google"]),
+        users: [user("github|1"), user("google-oauth2|2")],
+      }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.fixes.map((fix) => fix.label)).toContain("Enable GitHub sign-in");
+    expect(checks.fixes.map((fix) => fix.label)).not.toContain("Enable Google sign-in");
+  });
+
   test("a supabase reject names only that user's own providers", async () => {
     const rows = [
       { id: "discord", raw_app_meta_data: { providers: ["discord"] } },
@@ -593,13 +611,17 @@ describe("rejects", () => {
     }
   });
 
-  test("a user its source asked to skip, with the source's reason", async () => {
+  // Skipped, not rejected: a reject stops the import without --allow-partial,
+  // and nobody is meant to bring these users across.
+  test("a user its source asked to skip is skipped, with the source's reason", async () => {
     const checks = await checkImport(
       input({ users: [user("a", { skipReason: "anonymous Better Auth user" }), user("b")] }),
     );
-    expect(checks.rejects).toEqual([
+    expect(checks.rejects).toEqual([]);
+    expect(checks.skipped).toEqual([
       { sourceId: "a", reason: "anonymous Better Auth user", inFile: true },
     ]);
+    expect(checks.skippedReasons).toEqual([{ reason: "anonymous Better Auth user", count: 1 }]);
     expect(checks.importable.map((entry) => entry.userId)).toEqual(["b"]);
   });
 
@@ -1177,7 +1199,10 @@ describe("hashShapeProblem", () => {
   test.each([
     [BCRYPT, "bcrypt"],
     ["hash$salt$signer$sep$8$14", "scrypt_firebase"],
+    // A project with no salt separator.
+    ["hash$salt$signer$$8$14", "scrypt_firebase"],
     ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2i$v=19$m=1048576,t=20,p=16$c2FsdA$aGFzaA", "argon2i"],
     [`scrypt:16384:16:1$${"a".repeat(32)}$${"b".repeat(128)}`, "scrypt_werkzeug"],
     // Not checked: a bad digest there fails only at sign-in.
     ["anything", "pbkdf2_sha256"],
@@ -1191,7 +1216,22 @@ describe("hashShapeProblem", () => {
     ["$2a$03$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy", "bcrypt"],
     ["hash$salt$signer$sep$eight$14", "scrypt_firebase"],
     ["hash$salt", "scrypt_firebase"],
+    ["hash$$signer$sep$8$14", "scrypt_firebase"],
+    // Clerk decodes every segment as base64.
+    ["not base64!$salt$signer$sep$8$14", "scrypt_firebase"],
+    ["hash$sa=lt$signer$sep$8$14", "scrypt_firebase"],
     ["argon2id$...", "argon2id"],
+    // Shapes clerk_go's argon2.DecodeHash refuses, or argon2 cannot run.
+    ["$argon2id$v=19$m=65536,t=3,p=4$notreal", "argon2id"],
+    ["$argon2id$v=16$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdA==$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=3,p=4$c2FsdB$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=2097152,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=21,p=4$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=3,p=17$c2FsdA$aGFzaA", "argon2id"],
+    ["$argon2id$v=19$m=65536,t=0,p=4$c2FsdA$aGFzaA", "argon2id"],
+    // The variant has to match the hasher.
+    ["$argon2i$v=19$m=65536,t=3,p=4$c2FsdA$aGFzaA", "argon2id"],
     ["scrypt:16384:16:1$salt$not-hex!", "scrypt_werkzeug"],
   ])("rejects %s as %s", (password, hasher) => {
     expect(hashShapeProblem(password, hasher)).toBeDefined();

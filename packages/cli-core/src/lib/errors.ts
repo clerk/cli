@@ -111,6 +111,13 @@ export const ERROR_CODE = {
   /** Production instance was created but came back without a domain. */
   DEPLOY_DOMAIN_MISSING: "deploy_domain_missing",
   /**
+   * `clerk deploy --domain` found a production instance whose domain Clerk
+   * hasn't returned yet, so the requested domain couldn't be checked against it.
+   * Unlike `production_instance_exists`, the domain may be the right one: the
+   * next step is to wait for it, not to ask the user.
+   */
+  DEPLOY_DOMAIN_UNCHECKED: "deploy_domain_unchecked",
+  /**
    * `clerk deploy` stopped with the deploy unfinished and something left for
    * the user to do: they skipped an OAuth provider. (Skipping the DNS check is
    * not a pause — the run carries on and ends as a success.) The three codes
@@ -122,7 +129,10 @@ export const ERROR_CODE = {
   DEPLOY_CANCELLED: "deploy_cancelled",
   /** Every DNS component verified; Clerk had not finished provisioning yet. Nobody is waiting on the user. */
   DEPLOY_FINALIZING: "deploy_finalizing",
-  /** `clerk deploy` could not resolve the production instance it was about to write to. */
+  /**
+   * The production instance exists, but `clerk deploy` could not resolve it, or
+   * Clerk could not return its domain's status yet (a 404 on the domain).
+   */
   DEPLOY_INSTANCE_UNRESOLVED: "deploy_instance_unresolved",
   /** Local publishable key and secret key address different applications. */
   KEY_PAIR_MISMATCH: "key_pair_mismatch",
@@ -204,6 +214,13 @@ interface BillingErrorOptions extends CliErrorOptions {
   reason: BillingErrorReason;
 }
 
+/** In agent mode a Clerk docs link points at its raw markdown (`.md`) variant. */
+export function agentDocsUrl(url: string): string {
+  return isAgent() && url.startsWith("https://clerk.com/docs/") && !url.endsWith(".md")
+    ? `${url}.md`
+    : url;
+}
+
 /**
  * General-purpose CLI error for user-facing messages.
  *
@@ -236,19 +253,7 @@ export class CliError extends Error {
     this.exitCode = options?.exitCode ?? EXIT_CODE.GENERAL;
     this.examples = options?.examples;
 
-    if (options?.docsUrl) {
-      this.docsUrl = options.docsUrl;
-
-      // If we're running in agent mode and the docs URL is a Clerk docs link
-      // without a .md extension, add .md to get the raw markdown URL.
-      if (
-        isAgent() &&
-        this.docsUrl.startsWith("https://clerk.com/docs/") &&
-        !this.docsUrl.endsWith(".md")
-      ) {
-        this.docsUrl += ".md";
-      }
-    }
+    if (options?.docsUrl) this.docsUrl = agentDocsUrl(options.docsUrl);
   }
 }
 

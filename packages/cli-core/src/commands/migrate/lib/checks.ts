@@ -25,6 +25,8 @@ import { isEnabled, isRequired, type AttributeName } from "../../users/interacti
 import { splitIdentifiers } from "../import-users.ts";
 import type { User } from "../types.ts";
 import { analyzeFields, hasValue } from "./analysis.ts";
+import { argon2Variant } from "../sources/shared.ts";
+import { decodesLikeClerk } from "./firebase-hash.ts";
 import {
   clerkOffersProvider,
   enabledSocialProviders,
@@ -84,6 +86,13 @@ export type ImportChecks = {
   /** Users that do not, each with the first reason that applies to them. */
   rejects: Reject[];
   rejectReasons: ReasonCount[];
+  /**
+   * Users their source asked to skip (a soft-deleted or anonymous account),
+   * with its reason. Left out like a reject, but never a reason to stop the
+   * import: nobody is meant to bring them across.
+   */
+  skipped: Reject[];
+  skippedReasons: ReasonCount[];
   warnings: string[];
   fixes: Fix[];
   quota?: Quota;
@@ -98,6 +107,8 @@ export type CheckInput = {
   unknownFields?: Record<string, number>;
   /** The raw Supabase rows, for the provider checks. Absent for any other source. */
   supabaseRows?: Record<string, unknown>[];
+  /** Another source's reading of each user's social providers, for the readiness check. */
+  socialProviders?: (user: User) => string[];
   settings: UserSettingsJSON | null;
   /** Users already in the instance, for the quota. Development instances only. */
   existingUsers?: number | null;
@@ -145,7 +156,10 @@ export function hashShapeProblem(password: string, hasher: string): string | und
       const parts = password.split("$");
       const numeric = (value: string | undefined) => /^\d+$/.test(value ?? "");
       return parts.length === 6 &&
-        parts.slice(0, 4).every(Boolean) &&
+        // The salt separator (parts[3]) may be empty.
+        parts.slice(0, 3).every(Boolean) &&
+        // Clerk decodes all four as base64 (`Validate` in pkg/hash/scrypt.go).
+        parts.slice(0, 4).every(decodesLikeClerk) &&
         numeric(parts[4]) &&
         numeric(parts[5])
         ? undefined
@@ -153,7 +167,9 @@ export function hashShapeProblem(password: string, hasher: string): string | und
     }
     case "argon2i":
     case "argon2id":
-      return password.startsWith("$argon2") ? undefined : "password is not an argon2 hash";
+      return argon2Variant(password) === hasher
+        ? undefined
+        : `password is not an ${hasher} hash Clerk can verify ($${hasher}$v=19$m=…,t=…,p=…$salt$hash)`;
     case "scrypt_werkzeug":
       return /^scrypt:\d+:\d+:\d+\$[^$]+\$[0-9a-f]+$/i.test(password)
         ? undefined
@@ -733,6 +749,18 @@ function rowsFor(input: CheckInput, users: User[]): Record<string, unknown>[] {
   return input.supabaseRows.filter((row) => ids.has(String(row.id)));
 }
 
+/** Users per social provider, from Supabase's rows or the source's own reading. */
+function socialCounts(input: CheckInput, users: User[]): Record<string, number> {
+  if (input.supabaseRows) return countSocialProviders(rowsFor(input, users));
+  const counts: Record<string, number> = {};
+  for (const user of users) {
+    for (const provider of input.socialProviders?.(user) ?? []) {
+      counts[provider] = (counts[provider] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
 /** Each readiness row's field, with its article: "an email", not "a email". */
 const FIELD_NOUNS: Record<string, string> = {
   email_address: "an email",
@@ -749,7 +777,7 @@ function buildWarnings(input: CheckInput, importable: User[]): string[] {
     const report = buildReadinessReport({
       analysis: analyzeFields(importable),
       settings: input.settings,
-      providerCounts: countSocialProviders(rowsFor(input, importable)),
+      providerCounts: socialCounts(input, importable),
     });
     for (const item of report.blocking) {
       if (item.consequence === "stored") {
@@ -829,7 +857,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   const report = buildReadinessReport({
     analysis: analyzeFields(users),
     settings: input.settings,
-    providerCounts: countSocialProviders(rowsFor(input, users)),
+    providerCounts: socialCounts(input, users),
   });
 
   // An unverified email does not satisfy a required one, so a file of only
@@ -985,6 +1013,7 @@ function placeholderWarning(count: number): string[] {
 export const ALREADY_IMPORTED = "already in the instance, with this source ID";
 
 export async function checkImport(input: CheckInput): Promise<ImportChecks> {
+  const skipped: Reject[] = [];
   const rejects: Reject[] = input.failures.map((failure) => ({
     sourceId: failure.userId,
     reason: `invalid: ${failure.error}`,
@@ -1060,9 +1089,10 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         usernameProblem(user, input.settings, loosePhones) ??
         hashProblem ??
         disabledProviders.get(user.userId));
-    if (reason) {
-      const inFile =
-        reason === original.skipReason || reason === refusedOnly || reason === hashProblem;
+    if (reason && reason === original.skipReason) {
+      skipped.push({ sourceId: user.userId, reason, inFile: true });
+    } else if (reason) {
+      const inFile = reason === refusedOnly || reason === hashProblem;
       rejects.push({ sourceId: user.userId, reason, ...(inFile ? { inFile: true as const } : {}) });
     } else {
       passed.push(sent);
@@ -1156,6 +1186,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     ),
     rejects,
     rejectReasons: countReasons(rejects),
+    skipped,
+    skippedReasons: countReasons(skipped),
     warnings: [
       ...buildWarnings(
         input,

@@ -77,7 +77,7 @@ Commands:
   auth                                            Manage authentication
   completion       [shell]                        Generate shell autocompletion script
   config                                          Manage instance configuration
-  deploy                                          Deploy a Clerk application to production
+  deploy           [options]                      Deploy a Clerk application to production
   disable                                         Disable Clerk features on the linked instance
   doctor           [options]                      Check your project's Clerk integration health
   enable                                          Enable Clerk features on the linked instance
@@ -89,6 +89,7 @@ Commands:
   link             [options]                      Link this project to a Clerk application
   mcp                                             Manage the Clerk remote MCP server connection for AI editors and CLIs
   open                                            Open Clerk resources in your browser
+  security                                        Audit an instance against Clerk's security recommendations
   telemetry                                       Control CLI usage telemetry (status, disable, enable)
   unlink           [options]                      Unlink this project from its Clerk application
   update           [options]                      Update the Clerk CLI to the latest version

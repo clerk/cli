@@ -78,6 +78,32 @@ connection. It never edits the project, resolves packages, or writes to Clerk.
 Without Xcode (another OS, or a Mac with only the Command Line Tools) these checks become one warning and the env-file check stays, matching `clerk init`'s fallback. If Clerk can't
 be reached, the local checks still run and a warning says so.
 
+`clerk init` sets up only the development instance, so doctor also checks the
+non-Debug configurations it inspected (Release by default) against the
+production instance. Each warning carries its own remedy rather than pointing
+back at `clerk init`:
+
+| Check                                 | Passes when                                                                                                                                                                                               |
+| ------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Production native registration        | Release's Bundle ID is registered on production with the app's App ID Prefix, and Native API is enabled there                                                                                             |
+| Production associated domain: Release | The entitlements file Release signs with (resolved by Xcode, including `[sdk=…]` conditions) lists `webcredentials:<production Frontend API host>`, with `$(…)` build settings expanded as Xcode signs it |
+| Production publishable key: Release   | Release passes the production instance's publishable key to `Clerk.configure`                                                                                                                             |
+
+The publishable key is read without building, and only when the argument to
+`Clerk.configure` is a string literal or an Info.plist read
+(`Bundle.main.object(forInfoDictionaryKey:)` or `infoDictionary[…]`) whose
+entry is a literal or a `$(BUILD_SETTING)`, so xcconfig values per
+configuration count. Only the selected target's Swift files count (its
+compile-sources files and synchronized folders less their membership
+exceptions, or its `target-membership` entries in a `.xcproj`), less the
+configuration's `EXCLUDED_SOURCE_FILE_NAMES`. Anything else is reported as
+"Not verified" with the reason: a constant, a call inside `#if`, a fallback
+(`?? "pk_…"`), the environment, a bundled file, a build script, or CI. Keys are compared, never printed.
+
+Without a production instance these become one passing note, since production
+is optional (the Instances check already mentions it). Selecting only Debug with
+`--xcode-configuration Debug` skips them the same way. Without the flag, doctor inspects only configurations named Debug and Release, so when a target's release configuration has another name (such as Production), it warns that nothing was checked and names the configuration to pass.
+
 ## Auto-Fix (`--fix`)
 
 When `--fix` is passed in human mode, the command prompts to fix each
@@ -149,3 +175,11 @@ drift apart.
 | `GET`  | `/oauth/userinfo`                   | Validates the stored auth token                                     |
 | `GET`  | `/v1/platform/applications/{appId}` | Verifies the linked app and its instances exist                     |
 | `GET`  | `/v1/instance`                      | Names the accountless application (best-effort, via its secret key) |
+
+Xcode projects also read, for the development and (when present) production
+instances:
+
+| Method | Endpoint                                                                           | Description                        |
+| ------ | ---------------------------------------------------------------------------------- | ---------------------------------- |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_settings`         | Whether Native API is enabled      |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_applications/ios` | Registered Bundle IDs and prefixes |

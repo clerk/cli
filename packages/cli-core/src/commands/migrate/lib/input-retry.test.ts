@@ -42,9 +42,9 @@ const { setAssumeYes } = await import("./assume-yes.ts");
 const captured = useCaptureLog();
 
 const CONFIG = {
-  platform: "supabase",
-  envVar: "SUPABASE_DB_URL",
-  prompt: "Supabase Postgres connection string",
+  platform: "authjs",
+  envVar: "AUTHJS_DB_URL",
+  prompt: "Auth.js database connection string",
 } as const;
 
 const FIRST = "libsql://typo.turso.io?authToken=t";
@@ -245,7 +245,7 @@ describe("withInputRetry", () => {
   // Another credential would not fix an outage, a 429 or a refused connection.
   test.each([
     ["a refused connection", new CliError("Could not reach x")],
-    ["a 503", new CliError("The server returned 503 listing users")],
+    ["a 503", new CliError("Auth0 returned 503 listing users")],
   ])("does not ask again after %s", async (_label, failure) => {
     let attempts = 0;
 

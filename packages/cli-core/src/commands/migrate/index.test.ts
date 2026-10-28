@@ -54,6 +54,10 @@ describe("registerMigrate", () => {
       "--new-run",
       "--require-password",
       "--skip-legal-checks",
+      "--firebase-signer-key",
+      "--firebase-salt-separator",
+      "--firebase-rounds",
+      "--firebase-mem-cost",
       "--yes",
       "--json",
       "--secret-key",
@@ -64,9 +68,12 @@ describe("registerMigrate", () => {
   });
 
   test("registers an export subcommand per registered platform", () => {
-    expect(findCommand(["migrate", "export"])?.commands.map((cmd) => cmd.name())).toEqual(
-      exportPlatformKeys(),
-    );
+    // Help order is not registry order, so compare as sets.
+    expect(
+      findCommand(["migrate", "export"])
+        ?.commands.map((cmd) => cmd.name())
+        .sort(),
+    ).toEqual(exportPlatformKeys().sort());
   });
 
   // Bare `migrate export` runs the picker rather than defaulting to a
@@ -91,10 +98,48 @@ describe("registerMigrate", () => {
     ).toEqual(["--output", "--yes", "--runs-dir", "--json", "--secret-key", "--app", "--instance"]);
   });
 
-  test("migrate export supabase takes exactly its flags", () => {
+  test("migrate export auth0 takes exactly its flags", () => {
     expect(
-      findCommand(["migrate", "export", "supabase"])?.options.map((option) => option.long),
-    ).toEqual(["--db-url", "--output", "--yes", "--runs-dir", "--json"]);
+      findCommand(["migrate", "export", "auth0"])?.options.map((option) => option.long),
+    ).toEqual([
+      "--domain",
+      "--client-id",
+      "--client-secret",
+      "--output",
+      "--yes",
+      "--runs-dir",
+      "--json",
+    ]);
+  });
+
+  test.each([
+    ["supabase", []],
+    ["authjs", ["--trust-oauth-emails"]],
+    ["betterauth", []],
+  ])("migrate export %s takes exactly its flags", (platform, own) => {
+    expect(
+      findCommand(["migrate", "export", platform])?.options.map((option) => option.long),
+    ).toEqual(["--db-url", "--output", "--yes", "--runs-dir", "--json", ...own]);
+  });
+
+  test("migrate export firebase takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "firebase"])?.options.map((option) => option.long),
+    ).toEqual(["--service-account", "--output", "--yes", "--runs-dir", "--json"]);
+  });
+
+  test("migrate export workos takes exactly its flags", () => {
+    expect(
+      findCommand(["migrate", "export", "workos"])?.options.map((option) => option.long),
+    ).toEqual([
+      "--api-key",
+      "--with-identities",
+      "--no-with-identities",
+      "--output",
+      "--yes",
+      "--runs-dir",
+      "--json",
+    ]);
   });
 
   test.each(exportPlatformKeys())(

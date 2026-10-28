@@ -91,6 +91,12 @@ Partially updates instance configuration using a PATCH request. Only the fields 
 
 Input can be provided via `--json` (inline), `--file` (path to a JSON file), or piped to stdin. When running interactively, the command shows the payload and prompts for confirmation before sending.
 
+The diff printed before a `patch` or `put`, the response it prints to stdout afterwards (including a server-side `--dry-run`'s), and that response in the `--verbose` log of the config writer the `orgs` and `billing` commands use all show string values under keys named like a secret (`*secret*`, `*private_key*`) as `[REDACTED]`, so credentials do not end up in terminal scrollback or captured output. `--verbose` still logs the raw body of a failed request (the shared request logger), so `--verbose` output is not guaranteed free of secrets.
+
+`patch` and `put` refuse, before any config read or write (dry runs included), a payload whose `connection_oauth_*` entry still holds a placeholder from `clerk deploy`'s `oauth.setup`: the value `<key>` under that same key, e.g. `<client_secret>` under `client_secret`. The error names each such field and exits 2. Only that exact value under that key counts, so no real credential is refused.
+
+They also refuse, at the same point, a payload that holds the exact text `[REDACTED]` under a key the redaction covers (`*secret*`, `*private_key*`): that is their own output fed back in, and saved it would replace the real secret. The error names each such field and exits 2.
+
 ```sh
 clerk config patch --json '{"session":{"lifetime":3600}}'
 clerk config patch --app app_123 --json '{"session":{"lifetime":3600}}'

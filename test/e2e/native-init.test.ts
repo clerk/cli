@@ -297,38 +297,48 @@ test.each(PLATFORMS.filter((item) => item.fixture !== "ios" || process.platform 
         ).toBe(true);
         await iosPlatformStub!.stop(true);
         iosPlatformStub = startIOSPlatformStub("app_native_relinked");
-        const relink = Bun.spawn(
-          [
-            process.execPath,
-            CLI_PATH,
-            // Agent mode relinks to a different --app without asking, as it does for every framework.
-            "--mode",
-            "agent",
-            "init",
-            "--json",
-            "--app",
-            "app_native_relinked",
-          ],
-          {
-            cwd: projectDir,
-            env: {
-              CLERK_CONFIG_DIR: configDir,
-              CLERK_PLATFORM_API_KEY: platformAPIKey,
-              CLERK_PLATFORM_API_URL: iosPlatformStub.url.origin,
-              CLERK_TELEMETRY_DISABLED: "1",
+        const platformApiUrl = iosPlatformStub.url.origin;
+        const runRelink = async (confirmed: boolean) => {
+          const relink = Bun.spawn(
+            [
+              process.execPath,
+              CLI_PATH,
+              "--mode",
+              "agent",
+              "init",
+              "--json",
+              "--app",
+              "app_native_relinked",
+              ...(confirmed ? ["--relink"] : []),
+            ],
+            {
+              cwd: projectDir,
+              env: {
+                CLERK_CONFIG_DIR: configDir,
+                CLERK_PLATFORM_API_KEY: platformAPIKey,
+                CLERK_PLATFORM_API_URL: platformApiUrl,
+                CLERK_TELEMETRY_DISABLED: "1",
+              },
+              stdout: "pipe",
+              stderr: "pipe",
+              timeout: 30_000,
             },
-            stdout: "pipe",
-            stderr: "pipe",
-            timeout: 30_000,
-          },
-        );
-        const [json, , exitCode] = await Promise.all([
-          new Response(relink.stdout).text(),
-          new Response(relink.stderr).text(),
-          relink.exited,
-        ]);
-        expect(exitCode).toBe(0);
-        expect(JSON.parse(json).remote).toBe("verified");
+          );
+          const [json, , exitCode] = await Promise.all([
+            new Response(relink.stdout).text(),
+            new Response(relink.stderr).text(),
+            relink.exited,
+          ]);
+          return { result: JSON.parse(json), exitCode };
+        };
+        const stopped = await runRelink(false);
+        expect(stopped.exitCode).toBe(2);
+        expect(stopped.result.status).toBe("input-required");
+        expect(stopped.result.link.flag).toBe("--relink");
+        expect(stopped.result.link.current.appId).toBe("app_native_fixture");
+        const confirmed = await runRelink(true);
+        expect(confirmed.exitCode).toBe(0);
+        expect(confirmed.result.remote).toBe("verified");
       } else expect(entries.sort()).toEqual([...expectedGitEntries].sort());
     } finally {
       if (iosPlatformStub) await iosPlatformStub.stop(true);

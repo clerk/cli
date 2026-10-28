@@ -188,7 +188,7 @@ describe("env pull", () => {
   });
 
   async function runEnvPull(
-    options: { app?: string; instance?: string; file?: string; cwd?: string } = {},
+    options: { app?: string; instance?: string; file?: string; cwd?: string; print?: boolean } = {},
   ) {
     const { pull } = await import("./pull.ts");
     return pull(options);
@@ -678,6 +678,80 @@ describe("env pull", () => {
     expect(content).not.toContain("CLERK_SECRET_KEY");
   });
 
+  test("--print writes KEY=value lines to stdout and no env file", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev", production: "ins_prod" },
+    });
+
+    await runEnvPull({ instance: "prod", print: true });
+
+    expect(captured.out.trim()).toBe(
+      "CLERK_PUBLISHABLE_KEY=pk_live_abc123\nCLERK_SECRET_KEY=sk_live_xyz789",
+    );
+    expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
+  });
+
+  test("--print includes the secret key for native frameworks", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+    await rm(join(tempDir, "package.json"), { force: true });
+    await mkdir(join(tempDir, "MyApp.xcodeproj"), { recursive: true });
+
+    await runEnvPull({ print: true });
+
+    expect(captured.out).toContain("CLERK_PUBLISHABLE_KEY=pk_test_abc123");
+    expect(captured.out).toContain("CLERK_SECRET_KEY=sk_test_xyz789");
+    expect(await Bun.file(join(tempDir, ".env")).exists()).toBe(false);
+  });
+
+  // A host handed only the publishable key keeps whatever secret key it
+  // already has, usually development's, and the pair no longer matches.
+  test("--print fails and prints nothing when the API returns no secret key", async () => {
+    stubFetch(
+      async () =>
+        new Response(
+          JSON.stringify({
+            application_id: "app_1",
+            instances: [
+              {
+                instance_id: "ins_prod",
+                environment_type: "production",
+                publishable_key: "pk_live_abc123",
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+    );
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev", production: "ins_prod" },
+    });
+
+    await expect(runEnvPull({ instance: "prod", print: true })).rejects.toMatchObject({
+      code: "no_secret_key",
+    });
+    expect(captured.out).toBe("");
+  });
+
+  test("--print and --file cannot be combined", async () => {
+    await setProfile(tempDir, {
+      workspaceId: "org_1",
+      appId: "app_1",
+      instances: { development: "ins_dev" },
+    });
+
+    await expect(runEnvPull({ file: ".env", print: true })).rejects.toThrow(
+      "--print and --file cannot be combined",
+    );
+  });
+
   describe("keyless", () => {
     // Encodes `<host>.clerk.accounts.dev$` the way a real publishable key
     // would, so `decodePublishableKey` (used by the pairing check) sees the
@@ -717,6 +791,17 @@ describe("env pull", () => {
       const content = await Bun.file(join(tempDir, ".env.local")).text();
       expect(content).toContain("CLERK_SECRET_KEY=sk_test_keyless");
       expect(content).toContain(`CLERK_PUBLISHABLE_KEY=${MATCHING_PK}`);
+    });
+
+    test("--print prints the local pair and writes nothing", async () => {
+      process.env.CLERK_PUBLISHABLE_KEY = MATCHING_PK;
+      stubDomains("https://match.clerk.accounts.dev");
+
+      await runEnvPull({ print: true });
+
+      expect(captured.out).toContain("CLERK_SECRET_KEY=sk_test_keyless");
+      expect(captured.out).toContain(`CLERK_PUBLISHABLE_KEY=${MATCHING_PK}`);
+      expect(await Bun.file(join(tempDir, ".env.local")).exists()).toBe(false);
     });
 
     test("refuses to write a publishable key that addresses a different application", async () => {

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buildOAuthProviderDescriptors,
+  hasProviderRequiredCredentials,
   inspectNativeAppleConfiguration,
   providerFields,
   providerLabel,
@@ -307,6 +308,46 @@ describe("deploy OAuth provider descriptors", () => {
       "Client ID",
       "Client Secret",
     ]);
+  });
+
+  describe("required credentials", () => {
+    const google = () =>
+      descriptorByProvider(
+        buildOAuthProviderDescriptors(
+          ["google"],
+          schemaResponse({ connection_oauth_google: basicOAuthSchema }),
+        ).supported,
+        "google",
+      );
+
+    test("real values count as configured", () => {
+      expect(
+        hasProviderRequiredCredentials(
+          {
+            connection_oauth_google: {
+              enabled: true,
+              client_id: "client.apps.googleusercontent.com",
+              client_secret: "fake-client-secret",
+            },
+          },
+          google(),
+        ),
+      ).toBe(true);
+    });
+
+    // `oauth.setup`'s payload holds `<key>` under each credential key for the
+    // user to replace. A file saved before they did must not read as done.
+    test.each([
+      { client_id: "<client_id>", client_secret: "fake-client-secret" },
+      { client_id: "client.apps.googleusercontent.com", client_secret: "<client_secret>" },
+    ])("an oauth.setup placeholder does not count as configured (%o)", (credentials) => {
+      expect(
+        hasProviderRequiredCredentials(
+          { connection_oauth_google: { enabled: true, ...credentials } },
+          google(),
+        ),
+      ).toBe(false);
+    });
   });
 
   test("providerLabel falls back to title-cased unknown slugs", () => {

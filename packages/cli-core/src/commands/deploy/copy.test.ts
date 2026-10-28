@@ -160,16 +160,29 @@ describe("nextStepsBody", () => {
     expect(output).toContain("https://dashboard.clerk.com/apps/app_123/instances/ins_456/domains");
   });
 
-  test("says the pulled keys go on the host alongside the other Clerk variables", () => {
-    // `env pull --instance prod` writes only the two keys. The routing
-    // variables `init` wrote have to be carried over by hand, or sign-in
-    // silently falls back to the hosted Account Portal.
+  test("says the printed keys go on the host alongside the other Clerk variables", () => {
+    // `env pull --print` prints only the two keys. The routing variables
+    // `init` wrote have to be carried over by hand, or sign-in silently
+    // falls back to the hosted Account Portal.
     const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
 
-    expect(output).toContain("- Add the same pk_live_/sk_live_ values there.");
+    expect(output).toContain("- Add the printed pk_live_/sk_live_ values there.");
     expect(output).toContain("- Also copy the other Clerk variables from your env file");
     expect(output).toContain("NEXT_PUBLIC_CLERK_SIGN_IN_URL");
-    expect(output).toContain("writes only the two keys");
+    expect(output).toContain("prints only the two keys");
+  });
+
+  // A bare `env pull` writes the production keys over the development ones
+  // in the local env file, which breaks localhost.
+  test("prints the production keys instead of writing them to the env file", () => {
+    const output = nextStepsBody("app_123", "ins_456", "example.com", "verified");
+
+    expect(output).toContain("clerk env pull --instance ins_456 --print");
+    expect(flat(output)).toContain(
+      "writes no file, so your env file keeps its pk_test_... and sk_test_... keys",
+    );
+    expect(output).not.toContain("clerk env pull --instance prod");
+    expect(output).not.toContain("replace your pk_test_");
   });
 
   test("ends with a real sign-up on the production domain", () => {
@@ -191,6 +204,24 @@ describe("nextStepsBody", () => {
     expect(output).toContain("sign up at https://example.com to confirm it works");
     expect(output).not.toContain("3. Redeploy your app");
   });
+});
+
+describe("nextStepsBody for an iOS or macOS app", () => {
+  test.each([
+    { appleProject: true, doctor: true },
+    { appleProject: false, doctor: false },
+  ])(
+    "points at clerk doctor only in an Apple project: $appleProject",
+    ({ appleProject, doctor }) => {
+      const output = stripAnsi(
+        nextStepsBody("app_123", "ins_456", "example.com", "verified", appleProject),
+      );
+      expect(output.includes("7. Check the iOS or macOS app's Release build")).toBe(doctor);
+      expect(output.includes("clerk doctor")).toBe(doctor);
+      // The web steps stay as they are either way.
+      expect(output).toContain("clerk env pull --instance ins_456 --print");
+    },
+  );
 });
 
 describe("productionSummary", () => {

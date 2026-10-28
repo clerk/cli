@@ -13,3 +13,14 @@
 import { MCP_CLIENT_ENV_VARS } from "./lib/mcp-client-env.ts";
 
 for (const key of MCP_CLIENT_ENV_VARS) delete process.env[key];
+
+// `clerk migrate import --source firebase` falls back to these when a flag is
+// missing, so a developer's own would leak into tests that pass only some.
+for (const key of [
+  "CLERK_FIREBASE_SIGNER_KEY",
+  "CLERK_FIREBASE_SALT_SEPARATOR",
+  "CLERK_FIREBASE_ROUNDS",
+  "CLERK_FIREBASE_MEM_COST",
+]) {
+  delete process.env[key];
+}

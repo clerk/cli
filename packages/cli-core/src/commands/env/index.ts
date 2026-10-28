@@ -10,6 +10,10 @@ export function registerEnv(program: Program): void {
       { command: "clerk env pull --instance prod", description: "Pull production keys" },
       { command: "clerk env pull --file .env", description: "Write to a specific file" },
       { command: "clerk env pull --app app_abc123", description: "Target a specific application" },
+      {
+        command: "clerk env pull --instance prod --print",
+        description: "Print production keys to pipe into a hosting provider",
+      },
     ]);
 
   env
@@ -18,11 +22,16 @@ export function registerEnv(program: Program): void {
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .option("--file <path>", "Target env file (default: auto-detect)")
+    .option("--print", "Print KEY=value lines to stdout instead of writing an env file")
     .setExamples([
       { command: "clerk env pull", description: "Pull dev keys to .env.local" },
       { command: "clerk env pull --instance prod", description: "Pull production keys" },
       { command: "clerk env pull --file .env", description: "Write to a specific file" },
       { command: "clerk env pull --app app_abc123", description: "Target a specific application" },
+      {
+        command: "clerk env pull --instance prod --print",
+        description: "Print production keys to pipe into a hosting provider",
+      },
     ])
     .action(pull);
 }

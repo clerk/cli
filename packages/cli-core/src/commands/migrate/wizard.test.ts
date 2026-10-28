@@ -13,6 +13,7 @@ type SelectPrompt = Prompt & { choices: { name: string; value: string }[] };
 // This file is the only consumer of the mocked prompt modules.
 const mockSelect = mock(async (_config: SelectPrompt) => undefined as unknown);
 const mockText = mock(async (_config: Prompt) => "" as unknown);
+const mockPassword = mock(async (_config: Prompt) => "" as unknown);
 
 mock.module("../../lib/listage.ts", () => ({
   ...listageStubs,
@@ -22,11 +23,11 @@ mock.module("../../lib/listage.ts", () => ({
 mock.module("../../lib/prompts.ts", () => ({
   confirm: async () => true,
   text: (config: Prompt) => mockText(config),
-  password: async () => "",
+  password: (config: Prompt) => mockPassword(config),
   editor: async () => "{}",
 }));
 
-const { promptForFile, promptForSource } = await import("./wizard.ts");
+const { promptForFile, promptForFirebaseHashConfig, promptForSource } = await import("./wizard.ts");
 
 let workDir: string;
 let originalCwd: string;
@@ -48,6 +49,7 @@ afterAll(() => {
 beforeEach(() => {
   mockSelect.mockReset();
   mockText.mockReset();
+  mockPassword.mockReset();
 });
 
 /** The config object passed to the Nth `text`/`select` prompt. */
@@ -56,16 +58,24 @@ const selectCall = (index: number): SelectPrompt | undefined => mockSelect.mock.
 
 describe("promptForSource", () => {
   test("is built from the registry, so every platform appears", async () => {
-    mockSelect.mockResolvedValue("supabase");
+    mockSelect.mockResolvedValue("auth0");
 
-    expect(await promptForSource()).toBe("supabase");
-    expect(selectCall(0)?.choices.map((choice) => choice.value)).toEqual(["clerk", "supabase"]);
+    expect(await promptForSource()).toBe("auth0");
+    expect(selectCall(0)?.choices.map((choice) => choice.value)).toEqual([
+      "clerk",
+      "auth0",
+      "authjs",
+      "betterauth",
+      "firebase",
+      "supabase",
+      "workos",
+    ]);
   });
 
   test("labels each choice with the source's display name", async () => {
     mockSelect.mockResolvedValue("clerk");
     await promptForSource();
-    expect(selectCall(0)?.choices.map((choice) => choice.name)).toContain("Supabase");
+    expect(selectCall(0)?.choices.map((choice) => choice.name)).toContain("Better Auth");
   });
 });
 
@@ -94,5 +104,42 @@ describe("promptForFile", () => {
   ])("rejects %p", async (value, message) => {
     const check = await validate();
     expect(check(value)).toMatch(message);
+  });
+});
+
+describe("promptForFirebaseHashConfig", () => {
+  test("collects all four parameters as a set, the signer key masked", async () => {
+    mockPassword.mockResolvedValueOnce("SIGNER");
+    mockText.mockResolvedValueOnce("Bw==").mockResolvedValueOnce("8").mockResolvedValueOnce("14");
+
+    expect(await promptForFirebaseHashConfig()).toEqual({
+      base64_signer_key: "SIGNER",
+      base64_salt_separator: "Bw==",
+      rounds: 8,
+      mem_cost: 14,
+    });
+  });
+
+  // An export with no password hashes needs none of them.
+  test("stops when the signer key is left blank", async () => {
+    mockPassword.mockResolvedValueOnce("");
+
+    expect(await promptForFirebaseHashConfig()).toBeUndefined();
+    expect(mockText).toHaveBeenCalledTimes(0);
+  });
+
+  // Clerk refuses a cost above 16: the prompt says so, not the run afterwards.
+  test.each([
+    ["17", "from 1 to 16"],
+    ["0", "from 1 to 16"],
+    ["16", undefined],
+  ])("a cost of %s is checked at its prompt", async (value, message) => {
+    mockPassword.mockResolvedValueOnce("SIGNER");
+    mockText.mockResolvedValueOnce("Bw==").mockResolvedValueOnce("8").mockResolvedValueOnce("14");
+    await promptForFirebaseHashConfig();
+    const rounds = mockText.mock.calls.find(([config]) => config.message === "rounds")?.[0];
+    const result = rounds?.validate?.(value);
+    if (message) expect(result).toContain(message);
+    else expect(result).toBeUndefined();
   });
 });
