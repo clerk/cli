@@ -22,6 +22,8 @@ import { BapiError, CliError, throwUsageError, throwUserAbort } from "../../lib/
 import { log } from "../../lib/log.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { confirm } from "../../lib/prompts.ts";
+import { declareSoftExitOutcome, setTelemetryStage } from "../../lib/telemetry.ts";
+import { recordMigrateSource, recordMigrateTarget } from "./telemetry.ts";
 import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import { failureOf, tallyError } from "./lib/failures.ts";
 import { carryFlags, runsCommand, undoCommand } from "./lib/carry-flags.ts";
@@ -332,14 +334,20 @@ type UndoOutcome =
 export async function undo(runId: string, options: UndoOptions = {}): Promise<void> {
   const runsDir = await resolveRunsDir(options.runsDir);
   const runsCarry = carryFlags({ runsDir: options.runsDir });
+  setTelemetryStage("migrate_run_lookup");
   const record = readImportRun(runsDir, runId, runsCarry);
+  recordMigrateSource(record.source, { custom: Boolean(record.sourceHash) });
+  // Before resolution, so a failed one still names the run's instance.
+  recordMigrateTarget(record.target);
   const importLines = readUserLines(runsDir, record.id).length;
   // The flags that found this run and instance, for a refusal's command, run
   // again straight away in the same shell.
   const carry = carryFlags(options);
   const undoAgain = undoCommand(record.id, carry);
 
+  setTelemetryStage("migrate_target");
   const { secretKey, target } = await resolveClerkTarget(options);
+  recordMigrateTarget(target);
   // After a partial undo, run later, maybe without the key exported: from the target.
   const undoLater = undoCommand(record.id, laterCarry(options.runsDir, target));
   if (!options.json) printTarget(target);
@@ -360,6 +368,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       schedule,
     })),
   ];
+  setTelemetryStage("migrate_inspect");
   const { present, gone, signedIn } =
     users.length > 0
       ? await withSpinner("Checking the imported users...", async (spinner) =>
@@ -399,6 +408,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
   };
 
   if (options.dryRun) {
+    setTelemetryStage("migrate_dry_run");
     printJson({ dryRun: true });
     if (!options.json) {
       log.blank();
@@ -410,6 +420,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
 
   // Rule 1: nothing is deleted without consent — `--yes`, or a yes at a
   // prompt. `--json` never prompts.
+  setTelemetryStage("migrate_confirm");
   if (!nothingLeft && !options.yes) {
     // Every user already gone: the undo only records the import as undone.
     const what =
@@ -560,6 +571,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
         run.append({ ...user, status: "deleted", reason: "not found in the instance" });
       }
 
+      setTelemetryStage("migrate_delete");
       summary =
         present.length > 0
           ? await withProgress({ total: present.length, verb: "deleted" }, async (progress) =>
@@ -575,6 +587,7 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
         throwUserAbort();
       }
       undoRecord = run.finish();
+      setTelemetryStage("done");
       if (undoRecord.status === "complete") {
         importRecord =
           patchRun(runsDir, record.id, { status: "undone", undoneBy: undoRecord.id }) ?? record;
@@ -611,7 +624,10 @@ export async function undo(runId: string, options: UndoOptions = {}): Promise<vo
       }
     }
 
-    if (undoRecord.status !== "complete") process.exitCode = 1;
+    if (undoRecord.status !== "complete") {
+      process.exitCode = 1;
+      declareSoftExitOutcome("error", "migrate_undo_incomplete");
+    }
   }
 }
 

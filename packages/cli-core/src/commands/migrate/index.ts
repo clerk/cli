@@ -3,6 +3,7 @@ import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.t
 import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { setMode } from "../../mode.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
+import { recordMigrateTarget } from "./telemetry.ts";
 import { registerMigrateExport } from "./export/index.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
 import { run } from "./run.ts";
@@ -70,6 +71,12 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     const opts = actionCommand.optsWithGlobals();
     setAssumeYes(Boolean(opts.yes));
     if (opts.json && !opts.mode) setMode("agent");
+    // A hint, so a run that fails before its target resolves still names it.
+    // Aliases like `--instance dev` and app labels are dropped.
+    recordMigrateTarget({
+      appId: typeof opts.app === "string" ? opts.app : undefined,
+      instanceId: typeof opts.instance === "string" ? opts.instance : undefined,
+    });
   });
 
   // Named, not `isDefault`. `import` and `export` are the two directions this

@@ -12,6 +12,8 @@ import { exportWorkOs } from "./workos.ts";
 import type { DbExportOptions } from "./db-options.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "../lib/run-store.ts";
 import { exportPlatformKeys, exportPlatforms, getExportPlatform } from "./registry.ts";
+import { setTelemetryStage } from "../../../lib/telemetry.ts";
+import { recordMigrateSource } from "../telemetry.ts";
 
 /**
  * Bare `clerk migrate export` — pick a platform, then run its export.
@@ -33,6 +35,7 @@ export async function exportPicker(options: Record<string, unknown> = {}): Promi
     );
   }
 
+  setTelemetryStage("migrate_pick_platform");
   const platform = await select<string>({
     message: "Which platform are you exporting from?",
     choices: exportPlatforms.map((entry) => ({
@@ -46,6 +49,8 @@ export async function exportPicker(options: Record<string, unknown> = {}): Promi
   // Unreachable via the picker; a guard so a registry edit cannot silently
   // produce a choice with nothing behind it.
   if (!entry) throwUsageError(`Unknown export platform "${platform}".`);
+  recordMigrateSource(platform);
+  setTelemetryStage("migrate_export_read");
 
   await entry.run(options);
 }
@@ -118,6 +123,11 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
   // extension: an envelope written to users.ndjson could not be imported by
   // run ID. Checked before anything is read.
   exportCommand.hook("preAction", (_thisCommand, actionCommand) => {
+    // The bare picker records both once a platform is chosen.
+    if (actionCommand !== exportCommand) {
+      recordMigrateSource(actionCommand.name());
+      setTelemetryStage("migrate_export_read");
+    }
     const { output } = actionCommand.opts() as { output?: unknown };
     if (typeof output === "string" && !output.toLowerCase().endsWith(".json")) {
       throwUsageError(

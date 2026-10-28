@@ -2,7 +2,12 @@ import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
+import {
+  _setConfigDir,
+  markTelemetryNoticeShown,
+  setProfile,
+  setTelemetryDisabled,
+} from "./config.ts";
 import * as config from "./config.ts";
 import {
   declareSoftExitError,
@@ -13,8 +18,10 @@ import {
   showTelemetryNoticeOnce,
   setTelemetryPauseStep,
   setTelemetryDomainComponents,
+  setTelemetryMigrateSource,
   setTelemetryOAuthComplete,
   setTelemetryStage,
+  setTelemetryTarget,
   startCommandTelemetry,
   telemetryEnabled,
   telemetryResultForError,
@@ -795,7 +802,9 @@ describe("finalizeAndSendTelemetry", () => {
           "in_screen",
           "in_tmux",
           "install_method",
+          "instance_id",
           "machine_uuid",
+          "migrate_source",
           "mode",
           "os",
           "outcome",
@@ -814,6 +823,100 @@ describe("finalizeAndSendTelemetry", () => {
       const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
       expect(payload.pause_step).toBeNull();
       expect(payload.components).toEqual({ dns: null, ssl: null, mail: null, oauth: null });
+    });
+
+    test("instance_id and migrate_source are present and null on a command that never sets them", async () => {
+      const payload = await sendAndCapturePayload(() => {}, { outcome: "success", exitCode: 0 });
+      expect(payload.instance_id).toBeNull();
+      expect(payload.migrate_source).toBeNull();
+    });
+  });
+
+  describe("target and migrate source", () => {
+    const linked = {
+      workspaceId: "ws_linked",
+      appId: "app_linked",
+      instances: { development: "ins_linked_dev", production: "ins_linked_prod" },
+    };
+    const ok = { outcome: "success", exitCode: 0 } as const;
+
+    test("a command that sets no target reports the linked profile, as before", async () => {
+      await setProfile(process.cwd(), linked);
+      const payload = await sendAndCapturePayload(() => {}, ok);
+      expect(payload.app_id).toBe("app_linked");
+      expect(payload.workspace_id).toBe("ws_linked");
+      expect(payload.instance_id).toBeNull();
+    });
+
+    test("the target's app overrides the linked profile, and drops its workspace", async () => {
+      await setProfile(process.cwd(), linked);
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryTarget({ appId: "app_other", instanceId: "ins_other" }),
+        ok,
+      );
+      expect(payload.app_id).toBe("app_other");
+      expect(payload.instance_id).toBe("ins_other");
+      expect(payload.workspace_id).toBeNull();
+    });
+
+    test("a key-only target borrows the profile's app when the profile owns the instance", async () => {
+      await setProfile(process.cwd(), linked);
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryTarget({ instanceId: "ins_linked_prod" }),
+        ok,
+      );
+      expect(payload.app_id).toBe("app_linked");
+      expect(payload.workspace_id).toBe("ws_linked");
+      expect(payload.instance_id).toBe("ins_linked_prod");
+    });
+
+    test("a key-only target for another instance names no app", async () => {
+      await setProfile(process.cwd(), linked);
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryTarget({ instanceId: "ins_elsewhere" }),
+        ok,
+      );
+      expect(payload.app_id).toBeNull();
+      expect(payload.workspace_id).toBeNull();
+      expect(payload.instance_id).toBe("ins_elsewhere");
+    });
+
+    // A `key_` stand-in is a hash of the secret key; an alias or label is not an ID.
+    test("drops anything that is not an app_ or ins_ ID", async () => {
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryTarget({ appId: "My App", instanceId: "key_0123456789abcdef" }),
+        ok,
+      );
+      expect(payload.app_id).toBeNull();
+      expect(payload.instance_id).toBeNull();
+      expect(JSON.stringify(payload)).not.toContain("key_0123456789abcdef");
+    });
+
+    test("an alias-only hint counts as no target", async () => {
+      await setProfile(process.cwd(), linked);
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryTarget({ instanceId: "dev" }),
+        ok,
+      );
+      expect(payload.app_id).toBe("app_linked");
+      expect(payload.instance_id).toBeNull();
+    });
+
+    test("a later target replaces an earlier one whole", async () => {
+      const payload = await sendAndCapturePayload(() => {
+        setTelemetryTarget({ appId: "app_hint", instanceId: "ins_hint" });
+        setTelemetryTarget({ instanceId: "ins_resolved" });
+      }, ok);
+      expect(payload.app_id).toBeNull();
+      expect(payload.instance_id).toBe("ins_resolved");
+    });
+
+    test("the last migrate source set is the one sent", async () => {
+      const payload = await sendAndCapturePayload(() => {
+        setTelemetryMigrateSource("auth0");
+        setTelemetryMigrateSource("custom");
+      }, ok);
+      expect(payload.migrate_source).toBe("custom");
     });
   });
 
