@@ -1199,8 +1199,11 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),
-          // A source you wrote without its own counts the export platform's.
-          socialProviders: getSource(source).socialProviders ?? getSource(platform).socialProviders,
+          // A source you wrote without its own counts the export platform's,
+          // when this CLI knows the platform: yours may map one it doesn't.
+          socialProviders:
+            getSource(source).socialProviders ??
+            (sourceKeys().includes(platform) ? getSource(platform).socialProviders : undefined),
           settings,
           existingUsers,
           maxAllowedUsers,
