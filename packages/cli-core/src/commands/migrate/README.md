@@ -175,9 +175,10 @@ checks and prompts: `clerk-migrate-import-<hash>.lock` in the temp directory
 (`os.tmpdir()`, usually `$TMPDIR` or `/tmp`). The hash covers the file's sha256
 and the instance, not the source, so a second import of the same file into the
 same instance is refused with exit 2 even before either has written a run,
-whichever source and `--runs-dir` each uses. When Clerk doesn't confirm the
-instance, the hash uses a stand-in for the key instead, so two different keys
-for that instance don't share it. It lives outside the runs folder because
+whichever source and `--runs-dir` each uses. It also takes a lock under its
+key, for when Clerk can't name the instance. When nothing names it (Clerk,
+`--app` or the linked profile), that's the only lock it holds, so an import
+with a second key for that instance doesn't meet it. It lives outside the runs folder because
 nothing may be written there before consent. It holds the importing process's
 PID and is removed when the import finishes. One left by a Ctrl-C or a process that died is
 reclaimed by the next import. Two imports that start together over a stale lock
