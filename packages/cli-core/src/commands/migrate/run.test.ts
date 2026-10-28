@@ -821,6 +821,16 @@ describe("run", () => {
       expect(captured.err).toContain("1 user signed in with Google, which is not enabled in Clerk");
     });
 
+    // A file from a newer CLI names a platform this one doesn't know; yours maps it.
+    test("a source you wrote maps an export from a platform this CLI doesn't know", async () => {
+      const { record } = exportRun("okta", auth0Rows);
+
+      await run({ ...noSource, source: ownAuth0Source(), input: record.id });
+
+      const created = requests.filter((r) => r.url.endsWith("/v1/users"));
+      expect(created).toHaveLength(1);
+    });
+
     test("the printed command keeps a source you wrote in place of the envelope's", async () => {
       const { record } = exportRun("auth0", auth0Rows);
       const own = ownAuth0Source();
