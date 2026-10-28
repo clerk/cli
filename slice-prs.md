@@ -16,15 +16,15 @@ Ship `migrate` in small PRs instead of one 20k-line PR. #479 (`ra/integrate-migr
 
 ## Status
 
-| Slice        | PR                                     | State                                       |
-| ------------ | -------------------------------------- | ------------------------------------------- |
-| 1 (1a to 1d) | #517, #518, #519, #520                 | Merged 2026-10-14. #514 (`slice-1`) closed. |
-| 2            | #515                                   | Merged 2026-10-20                           |
-| 3            | #524                                   | Merged 2026-10-20                           |
-| 4a to 4e     | #525 (Firebase) to #529 (Auth.js)      | Merged 2026-10-26                           |
-| 5            | #530                                   | In review, base `main`                      |
-| 6            | #531                                   | Open, stacked on #530                       |
-| final        | not opened yet (`migrate/final-slice`) | Stacked on #531                             |
+| Slice        | PR                                | State                                       |
+| ------------ | --------------------------------- | ------------------------------------------- |
+| 1 (1a to 1d) | #517, #518, #519, #520            | Merged 2026-10-14. #514 (`slice-1`) closed. |
+| 2            | #515                              | Merged 2026-10-20                           |
+| 3            | #524                              | Merged 2026-10-20                           |
+| 4a to 4e     | #525 (Firebase) to #529 (Auth.js) | Merged 2026-10-26                           |
+| 5            | #530                              | In review, base `main`                      |
+| 6            | #531                              | Open, stacked on #530                       |
+| final        | #594 (`migrate/final-slice`)      | Draft, stacked on #531                      |
 
 Merged slices take no more changes on their branches. A fix to merged code goes in a small `fix(migrate):` PR off `main` (see "When #479 gets another fix").
 
@@ -70,7 +70,7 @@ Import goes first because the risky behavior lives there: writing to production,
 | 6     | Readiness: `--reserve-unverified` and the fixes from review, still behind the gate                                      | 1   |
 | final | Remove the gate, the root README entry, and the changeset that announces `clerk migrate`                                | 1   |
 
-**Slice 6, split (2026-10-28).** Slice 6 first held both the readiness work and the gate removal. It's now two PRs, so the readiness work can merge and reach `@canary` while `migrate` stays gated: #531 (`migrate/slice-6`) is everything but the release, and `migrate/final-slice` takes the four release commits on top of it. `--reserve-unverified` has its own changeset in slice 6, which the final slice stops calling experimental.
+**Slice 6, split (2026-10-28).** Slice 6 first held both the readiness work and the gate removal. It's now two PRs, so the readiness work can merge and reach `@canary` while `migrate` stays gated: #531 (`migrate/slice-6`) is everything but the release, and #594 (`migrate/final-slice`) takes the four release commits on top of it. `--reserve-unverified` has its own changeset in slice 6, which the final slice stops calling experimental.
 
 **Slice 2, as reviewed (#515).** Review changed some of the plan above; the slice is what shipped, not the row:
 
