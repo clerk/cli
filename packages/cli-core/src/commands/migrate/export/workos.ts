@@ -60,7 +60,7 @@ const USER_PROGRESS_EVERY_PAGES = 10;
 const NO_PROVIDER_LABEL = "no OAuth provider";
 const NOT_READABLE_LABEL = "not readable";
 
-const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/overview";
+const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/workos";
 
 export type ExportWorkOsOptions = {
   apiKey?: string;
