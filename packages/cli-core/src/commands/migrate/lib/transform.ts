@@ -467,7 +467,13 @@ async function readUsersFromFile(
   // An export's envelope already holds the users in the source's own shape,
   // so there is nothing left for a pre-transform to unwrap.
   if (type === "application/json") {
-    const parsed = readJsonFile(filePath);
+    let parsed: unknown;
+    try {
+      parsed = readJsonFile(filePath);
+    } catch (error) {
+      // Not JSON this CLI reads, and so no envelope: a pre-transform may parse it.
+      if (!transformer.preTransform) throw error;
+    }
     if (isEnvelope(parsed)) return assertUserRows(parsed.users, file);
     if (!transformer.preTransform) return assertUserRows(parsed, file);
   }
