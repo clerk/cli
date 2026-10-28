@@ -1221,6 +1221,7 @@ export default {
   description: "Exports from My Platform's admin console.",
   transformer: {
     account_ref: "userId", // required: becomes the Clerk user's external_id
+    // Created verified: map an address the source never confirmed to "unverifiedEmailAddresses".
     contact_email: "email",
     pw_bcrypt: "password",
     // full_name is left unmapped: postTransform splits it below.
