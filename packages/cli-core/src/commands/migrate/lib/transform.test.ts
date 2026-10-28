@@ -392,6 +392,31 @@ describe("loadUsersFromFile", () => {
     }
   });
 
+  // The hook runs before the file is read: JSON this CLI can't parse is its to parse.
+  test("a custom preTransform parses a JSON file the CLI can't", async () => {
+    registerCustomSource({
+      ...clerkSource,
+      key: "json-with-comments",
+      preTransform: (filePath) => ({
+        filePath,
+        data: JSON.parse(fs.readFileSync(filePath, "utf-8").replace(/^\s*\/\/.*$/gm, "")) as Record<
+          string,
+          unknown
+        >[],
+      }),
+    });
+    try {
+      fs.writeFileSync(
+        path.join(workDir, "commented.json"),
+        '// exported 2026-10-28\n[{ "id": "c1", "primary_email_address": "c@x.dev" }]\n',
+      );
+      const { users } = await loadUsersFromFile("commented.json", "json-with-comments");
+      expect(users.map((user) => user.userId)).toEqual(["c1"]);
+    } finally {
+      __resetCustomSourcesForTesting();
+    }
+  });
+
   test("rejects a JSON file that is not an array of users", async () => {
     fs.writeFileSync(path.join(workDir, "wrapped.json"), JSON.stringify({ users: [] }));
     await expect(loadUsersFromFile("wrapped.json", "clerk")).rejects.toThrow(CliError);
