@@ -1386,11 +1386,11 @@ refused a phone and the retry went out without the reserved phones, that line
 lists them as `pending`, and a continue that adopts the user attaches them,
 unverified (one Clerk refuses again fails with a note).
 
-Reserved, an unverified identifier is checked for duplicates like a verified
-one, because it goes on the user's create: one that an instance user or an
-earlier record in the file that passes the checks already holds rejects the
-whole user, where without reserving only that address would fail to attach, with
-a note. If that rejects users you want, import without reserving.
+A reserved identifier is checked for duplicates like a verified one, since it
+goes on the user's create. If an instance user, or an earlier record in the
+file that passes the checks, already holds it, the whole user is rejected.
+Without reserving, only that address fails to attach, with a note. If that
+rejects users you want, import without reserving.
 
 ### Firebase hash parameters
 
