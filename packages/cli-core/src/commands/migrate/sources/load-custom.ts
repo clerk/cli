@@ -23,9 +23,9 @@ import path from "node:path";
 import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import type { CarryLevel, SourceEntry } from "../types.ts";
 
-/** How to write a source. The README ships nowhere, so link the published copy. */
+/** How to write a source: the custom-source migration guide. */
 export const CUSTOM_SOURCES_URL =
-  "https://github.com/clerk/cli/blob/main/packages/cli-core/src/commands/migrate/README.md#custom-sources";
+  "https://clerk.com/docs/guides/development/migrating/custom-source";
 
 const LEVELS: readonly CarryLevel[] = ["yes", "no", "partial"];
 
