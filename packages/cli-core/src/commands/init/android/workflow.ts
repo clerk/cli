@@ -25,6 +25,7 @@ import {
   type IdentityDiscovery,
 } from "./identity.ts";
 import { planAndroidSetup, writes, type AndroidPlan } from "./plan.ts";
+import { planStarter, type StarterPlan } from "./starter.ts";
 import { inspectAndroidProject, type Inspection, type InspectOptions } from "./project.ts";
 import {
   applyRemote,
@@ -55,6 +56,10 @@ export interface SetupOptions extends InspectOptions {
   fingerprints?: string[];
   /** Whether to read the debug keystore; a dry run or doctor without keytool leaves it out. */
   readDebugKeystore?: boolean;
+  /** Replace the unchanged Compose starter's MainActivity with the prebuilt sign-in screen. */
+  signInUI?: boolean;
+  /** Whether the starter recipe may be planned at all; doctor turns it off. */
+  starter?: boolean;
   inspectOnly?: boolean;
   progress?: (message: string) => void;
   /** An inspection of the same project taken earlier (say, before prompting). */
@@ -77,6 +82,8 @@ export interface SetupPreview {
   kotlinCheck: Check;
   /** The development publishable key the plan writes, once an application is chosen. */
   publishableKey?: string;
+  starter?: StarterPlan;
+  signInUIRequested: boolean;
 }
 
 /** The files a plan may rewrite, as inspected. */
@@ -136,8 +143,19 @@ export async function prepareSetup(
     instance?.publishableKey,
     sdkCheck.status === "fail" ? { skipDependencies: sdkCheck.message } : {},
   );
+  if (options.signInUI && options.sdk !== "ui")
+    throw setupError(
+      "The prebuilt sign-in screen requires clerk-android-ui; use --android-sdk ui.",
+    );
+  const starter =
+    options.starter !== false && !options.inspectOnly
+      ? await planStarter(inspection, options.signInUI === true)
+      : undefined;
+  if (starter) local.actions.push(...starter.actions);
+  if (starter?.reason && options.signInUI) local.postInstructions.push(starter.reason);
   const { root } = inspection.selection;
-  for (const snapshot of planSnapshots(inspection)) await assertUnchanged(root, snapshot);
+  for (const snapshot of [...planSnapshots(inspection), ...(starter?.snapshots ?? [])])
+    await assertUnchanged(root, snapshot);
   const dirtyFiles = (
     await Promise.all(
       local.actions
@@ -165,6 +183,8 @@ export async function prepareSetup(
     sdkCheck,
     kotlinCheck,
     publishableKey: instance?.publishableKey,
+    starter,
+    signInUIRequested: options.signInUI === true,
   };
 }
 
@@ -194,9 +214,11 @@ export function describePreview(preview: SetupPreview) {
     },
     appIntegrationComplete: false,
     identity: preview.identity ? describeIdentity(preview.identity) : undefined,
-    sourceIntegration: preview.local.initializes
-      ? "Clerk is initialized in the Application subclass"
-      : "Complete the source-integration handoff",
+    sourceIntegration: preview.starter?.tasks.length
+      ? "Apply or verify the unchanged Compose starter recipe"
+      : preview.local.initializes
+        ? "Clerk is initialized in the Application subclass"
+        : "Complete the source-integration handoff",
     files: preview.local.actions.map((action) =>
       action.type === "skip"
         ? { path: action.path, status: action.skipReason }
@@ -243,7 +265,7 @@ export async function applySetup(
 ): Promise<ApplyResult> {
   signal?.throwIfAborted();
   const { root } = preview.inspection.selection;
-  const snapshots = planSnapshots(preview.inspection);
+  const snapshots = [...planSnapshots(preview.inspection), ...(preview.starter?.snapshots ?? [])];
   for (const snapshot of snapshots) await assertUnchanged(root, snapshot);
   const api = dependencies.api ?? nativeAPI;
   if (preview.remote) await revalidateRemote(preview.remote, api);
@@ -313,6 +335,13 @@ export async function applySetup(
       remaining.push({ id: "sdk-version", detail: preview.sdkCheck.message });
     if (preview.kotlinCheck.status !== "pass")
       remaining.push({ id: "kotlin-version", detail: preview.kotlinCheck.message });
+    if (result.local !== "incomplete")
+      for (const id of preview.starter?.tasks ?? [])
+        completed.push({
+          id,
+          detail:
+            "Applied or verified the starter recipe in MainActivity; compilation remains unverified.",
+        });
     const incomplete = [result.local, result.remote].includes("incomplete");
     result.status = incomplete
       ? "incomplete"
@@ -332,6 +361,7 @@ export async function applySetup(
         completed,
         remaining,
         changedFiles: result.changedFiles,
+        signInUIRequested: preview.signInUIRequested,
       },
     );
     return result;

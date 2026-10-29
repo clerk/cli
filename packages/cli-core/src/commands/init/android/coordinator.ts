@@ -9,6 +9,8 @@ import { stopNativeProgress, withNativeSpinner } from "../native/progress.ts";
 import { SelectionNeeded } from "./discovery.ts";
 import { describeIdentity, IdentityRequired } from "./identity.ts";
 import { inspectAndroidProject } from "./project.ts";
+import { isUnchangedStarter } from "./starter.ts";
+import { setupInterrupted, type StarterProjectSummary } from "../native/status.ts";
 import { ARTIFACTS, CLERK_ANDROID_MINIMUM_VERSION, sdkInstalled } from "./sdk.ts";
 import { ANDROID_QUICKSTART, type AndroidSdk } from "./types.ts";
 import {
@@ -23,8 +25,14 @@ import {
 
 export { CLERK_ANDROID_MINIMUM_VERSION, ANDROID_QUICKSTART };
 
-export function setupNextSteps(result: ApplyResult): string[] {
+export function setupNextSteps(result: ApplyResult, starter?: StarterProjectSummary): string[] {
   const initialized = result.handoff.completed.some((item) => item.id === "initialize-clerk");
+  if (starter && initialized)
+    return [
+      `Open ${starter.projectName} in Android Studio, or run \`./gradlew :app:assembleDebug\` there.`,
+      "Run the app on an emulator or device and test your sign-in flow.",
+      `Quickstart: ${ANDROID_QUICKSTART}`,
+    ];
   return [
     initialized
       ? "Sync Gradle, build your app, and connect your sign-in flow using the quickstart."
@@ -71,22 +79,25 @@ export function printSetupPreview(preview: SetupPreview): void {
   if (preview.dirtyFiles.length) log.info("  Existing edits will be preserved in backups.");
   if (!preview.local.initializes)
     log.info("  Kotlin integration remains: initialize Clerk in the Application subclass.");
+  else if (!preview.starter?.tasks.length && preview.inspection.sdk === "ui")
+    log.info("  Kotlin integration remains: connect your sign-in flow using the quickstart.");
 }
 
-export function printSetupResult(result: ApplyResult): void {
+export function printSetupResult(result: ApplyResult, starter?: StarterProjectSummary): void {
   if (result.message) log.warn(result.message);
   const completed = result.handoff.completed;
   const summary = [
     completed.some((item) => item.id === "sdk-dependency") && "SDK dependency declared",
     completed.some((item) => item.id === "initialize-clerk") && "Clerk initialized",
     result.remote === "verified" && "native registration verified",
+    completed.some((item) => item.id === "optional-sign-in-ui") && "sign-in screen added",
   ].filter(Boolean);
   if (summary.length) log.success(summary.join(" · "));
   for (const item of result.handoff.remaining) log.warn(item.detail);
   if (result.recovery?.needsReview.length)
     log.warn(`Review interrupted edits: ${result.recovery.needsReview.join(", ")}`);
   log.info("\nNext steps:");
-  for (const step of setupNextSteps(result)) log.info(`  • ${step}`);
+  for (const step of setupNextSteps(result, starter)) log.info(`  • ${step}`);
 }
 
 /** The Android-specific `clerk init` options, as Commander names them. */
@@ -100,6 +111,10 @@ export interface AndroidInitOptions {
   androidPackage?: string;
   androidFingerprint?: string[];
   androidSdk?: AndroidSdk;
+  /** Add Clerk's prebuilt sign-in screen to an unchanged Compose starter. */
+  prebuiltAuthUi?: boolean;
+  /** The app `clerk init --starter` just created, which needs no confirmation before setup. */
+  starterProject?: StarterProjectSummary;
 }
 
 /**
@@ -116,18 +131,21 @@ export async function runAndroidInit(
   // As elsewhere in init, agent mode implies --yes.
   const interactive = !options.agent && !options.yes;
   const signal = interruptSignal();
+  const newApp = options.starterProject;
   let reported = false;
   const report = (status: object, indent?: number) => {
     reported = true;
-    log.data(JSON.stringify(status, null, indent));
+    log.data(JSON.stringify({ ...status, ...(newApp && { starter: newApp }) }, null, indent));
   };
   const setup: SetupOptions = {
     root: options.root,
     module: options.androidModule,
     applicationId: options.androidPackage,
-    sdk: options.androidSdk ?? "core",
+    // A new starter has no screens of its own yet, so it gets the UI artifact by default.
+    sdk: options.androidSdk ?? (newApp ? "ui" : "core"),
     minimumVersion: CLERK_ANDROID_MINIMUM_VERSION,
     fingerprints: options.androidFingerprint,
+    signInUI: options.prebuiltAuthUi,
     inspectOnly: options.dryRun,
     signal,
     chooseModule:
@@ -159,6 +177,7 @@ export async function runAndroidInit(
     );
     stopNativeProgress();
     setup.inspection = inspection;
+    const starter = await isUnchangedStarter(inspection);
     // An SDK the project already declares decides the products, as on iOS.
     if (!options.androidSdk)
       for (const sdk of ["ui", "core"] as const)
@@ -166,15 +185,33 @@ export async function runAndroidInit(
           setup.sdk = sdk;
           break;
         }
+    // A new starter has no screens of its own yet, so its sign-in screen defaults to on: --yes
+    // takes that default as the prompt below offers it. An agent still needs the user to ask for
+    // UI changes (see the handoff).
+    if (
+      newApp &&
+      starter &&
+      !interactive &&
+      !options.agent &&
+      options.prebuiltAuthUi == null &&
+      setup.sdk === "ui"
+    )
+      setup.signInUI = true;
     if (interactive) {
       log.success(`Found Android app: ${inspection.selection.applicationId}`);
-      if (!options.androidSdk && !inspection.dependencies.length)
+      if (!options.androidSdk && !inspection.dependencies.length && !starter)
         setup.sdk = await select({
           message: "Which Clerk SDK artifact should this app use?",
           choices: [
             { name: `${ARTIFACTS.core} (custom authentication UI)`, value: "core" as const },
             { name: `${ARTIFACTS.ui} (prebuilt authentication UI)`, value: "ui" as const },
           ],
+        });
+      if (options.prebuiltAuthUi == null && starter && setup.sdk === "ui")
+        setup.signInUI = await confirm({
+          message: "Add Clerk’s prebuilt sign-in screen?",
+          // A new starter has no screens of its own yet.
+          default: newApp != null,
         });
     }
     if (setup.sdk !== inspection.sdk) setup.inspection = { ...inspection, sdk: setup.sdk };
@@ -185,13 +222,13 @@ export async function runAndroidInit(
     );
     stopNativeProgress();
     if (!json) printSetupPreview(preview);
-    if (interactive && !(await confirm({ message: "Apply this setup?", default: true })))
+    if (interactive && !newApp && !(await confirm({ message: "Apply this setup?", default: true })))
       throwUserAbort();
     setTelemetryStage("android_apply");
     const result = await applySetup(preview, dependencies, signal);
     stopNativeProgress();
     if (json) report(result, 2);
-    else printSetupResult(result);
+    else printSetupResult(result, newApp);
     if (result.status === "incomplete")
       throw new CliError(
         result.message ??
@@ -224,6 +261,7 @@ export async function runAndroidInit(
         choices: error.choices,
         appIntegrationComplete: false,
       });
+    else if (json && newApp && !reported) report(setupInterrupted(newApp, error), 2);
     throw error;
   }
 }
