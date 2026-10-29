@@ -1343,7 +1343,7 @@ export function registerInit(program: Program): void {
     .option("--sign-in-with-apple", "Enable native Sign in with Apple")
     .option(
       "--prebuilt-auth-ui",
-      "Add ClerkKitUI's prebuilt sign-in screen to an unchanged SwiftUI starter",
+      "Add Clerk's prebuilt sign-in screen to an unchanged SwiftUI (ClerkKitUI) or Compose (clerk-android-ui) starter",
     )
     .option(
       "--android-module <path>",
