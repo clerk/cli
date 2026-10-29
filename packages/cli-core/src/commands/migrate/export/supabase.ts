@@ -1,0 +1,179 @@
+/**
+ * `clerk migrate export supabase` — read users straight out of `auth.users`.
+ *
+ * Ported from the standalone migration-tool's `src/export/supabase.ts`, on
+ * `Bun.sql` instead of `pg`.
+ *
+ * The database rather than the Admin API because **`encrypted_password` only
+ * exists here**. Supabase's API does not return password hashes, so an
+ * API-based export forces every user to reset their password; this one carries
+ * the bcrypt digests across.
+ */
+
+import { log } from "../../../lib/log.ts";
+import { withGutter, withSpinner } from "../../../lib/spinner.ts";
+import type { UserLine } from "../lib/run-store.ts";
+import { printTarget } from "../lib/target.ts";
+import { exportValue, type DbClient } from "../lib/db.ts";
+import { finishExport, startExportRun } from "./shared.ts";
+import {
+  resolveDbUrl,
+  withDbConnection,
+  type DbExportOptions,
+  type ResolveConfig,
+} from "./db-options.ts";
+
+/**
+ * Only the metadata's own `first_name` and `last_name` are pulled out as
+ * columns. A `display_name`, `full_name` or OAuth `name` stays in
+ * `raw_user_meta_data` for the Supabase source to split, which it does only
+ * when `first_name` is empty: coalescing them in here would keep "Jane Doe"
+ * as one first name, and let a display name outrank a real first name.
+ */
+const EXPORT_QUERY = `
+  SELECT
+    id,
+    email,
+    email_confirmed_at,
+    encrypted_password,
+    phone,
+    phone_confirmed_at,
+    raw_user_meta_data->>'first_name' AS first_name,
+    raw_user_meta_data->>'last_name' AS last_name,
+    raw_user_meta_data,
+    raw_app_meta_data,
+    banned_until,
+    -- Through to_jsonb so an older auth.users without the column still reads.
+    to_jsonb(u)->>'deleted_at' AS deleted_at,
+    -- The Supabase source skips an anonymous user: it has nothing to sign in with.
+    (to_jsonb(u)->>'is_anonymous')::boolean AS is_anonymous,
+    created_at
+  FROM auth.users u
+  ORDER BY created_at
+`;
+
+type SupabaseRow = Record<string, unknown> & {
+  id?: unknown;
+  email?: string | null;
+  encrypted_password?: string | null;
+  raw_app_meta_data?: unknown;
+};
+
+/**
+ * The words of a display name in the user's metadata, as the Supabase source
+ * splits it into first and last name; empty when there is none.
+ */
+function metadataName(meta: unknown): string[] {
+  if (!meta || typeof meta !== "object") return [];
+  const { display_name, full_name, name } = meta as Record<string, unknown>;
+  const value = display_name ?? full_name ?? name;
+  return typeof value === "string" ? value.trim().split(/\s+/).filter(Boolean) : [];
+}
+
+/** How a ban Postgres stores as `'infinity'` is written: the last date JSON can hold. */
+const FOREVER = "9999-12-31T23:59:59.999Z";
+
+/** Serializes values the JSON export cannot carry as-is. */
+function normalizeRow(row: SupabaseRow): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(row)) {
+    if (value === null || value === undefined) continue;
+    // Bun.SQL returns a timestamp of 'infinity' as the number Infinity, which
+    // JSON writes as null: a ban set by hand to last forever would be lost.
+    if (value === Infinity) {
+      normalized[key] = FOREVER;
+      continue;
+    }
+    if (value === -Infinity) continue;
+    // Postgres returns timestamps as Date objects; the transformer parses
+    // strings, and JSON.stringify would otherwise bury the format difference.
+    const exported = exportValue(value);
+    if (exported !== undefined) normalized[key] = exported;
+  }
+
+  return normalized;
+}
+
+/**
+ * Every `auth.users` row, at once.
+ *
+ * ponytail: the whole table in memory, then the whole envelope. The import
+ * reads the file whole too, so streaming this side alone would buy nothing;
+ * page both (keyset on `created_at, id`) if a project's users outgrow memory.
+ */
+export async function fetchSupabaseUsers(client: DbClient): Promise<SupabaseRow[]> {
+  return client.query<SupabaseRow>(EXPORT_QUERY);
+}
+
+export function buildSupabaseExport(
+  rows: SupabaseRow[],
+  record: (line: UserLine) => void = () => {},
+) {
+  const users: Record<string, unknown>[] = [];
+  const counts = { email: 0, emailConfirmed: 0, password: 0, phone: 0, firstName: 0, lastName: 0 };
+
+  for (const row of rows) {
+    const userId = String(row.id ?? "");
+    try {
+      const user = normalizeRow(row);
+      users.push(user);
+
+      if (row.email) counts.email++;
+      // From the exported value: a date that holds none is left out of it.
+      if (user.email_confirmed_at) counts.emailConfirmed++;
+      if (row.encrypted_password) counts.password++;
+      if (row.phone) counts.phone++;
+      // The source splits a name it finds in the metadata, so count those too.
+      const [first, ...rest] = metadataName(row.raw_user_meta_data);
+      if (row.first_name || first) counts.firstName++;
+      if (row.last_name || rest.length > 0) counts.lastName++;
+
+      record({ sourceId: userId, status: "exported" });
+    } catch (error) {
+      record({ sourceId: userId, status: "skipped", error: (error as Error).message });
+    }
+  }
+
+  return {
+    users,
+    coverage: [
+      { label: "have an email address", count: counts.email },
+      { label: "have a confirmed email", count: counts.emailConfirmed },
+      { label: "have a password hash", count: counts.password },
+      { label: "have a phone number", count: counts.phone },
+      { label: "have a first name", count: counts.firstName },
+      { label: "have a last name", count: counts.lastName },
+    ],
+  };
+}
+
+export const SUPABASE_DB = {
+  platform: "supabase",
+  envVar: "SUPABASE_DB_URL",
+  prompt: "Supabase Postgres connection string",
+  hint: "Dashboard → Connect → Session pooler. Direct connections need the IPv4 add-on.",
+  // The query reads `auth.users` with Postgres syntax.
+  dialect: "postgres",
+} as const satisfies ResolveConfig;
+
+export async function exportSupabase(options: DbExportOptions): Promise<void> {
+  const dbUrl = await resolveDbUrl(options, SUPABASE_DB);
+
+  await withGutter("Exporting users from Supabase", async () => {
+    if (!options.json) printTarget({ platform: "supabase" });
+    const rows = await withDbConnection(dbUrl, SUPABASE_DB, options, async (client) =>
+      withSpinner("Reading auth.users...", async () => fetchSupabaseUsers(client)),
+    );
+
+    const run = await startExportRun(options, { platform: "supabase" });
+    const { users, coverage } = buildSupabaseExport(rows, run.append);
+    finishExport({ run, options, users, coverage });
+
+    if (users.length > 0) {
+      log.info(
+        "Password hashes are included — this is why the export reads the database rather than the Admin API.",
+      );
+    }
+  });
+}

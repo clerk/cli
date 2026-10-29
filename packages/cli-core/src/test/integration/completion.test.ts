@@ -33,9 +33,18 @@ describe("generateCompletions", () => {
       expect(names).toContain("completion");
       expect(names).toContain("env");
       expect(names).toContain("doctor");
+      expect(names).toContain("feedback");
       // Options are also included
       expect(names).toContain("--verbose");
       expect(names).toContain("--mode");
+    });
+
+    test("completes the feedback outcomes without `.choices()` (so an invalid value gets the handler's usage error)", () => {
+      expect(completionNames("feedback", "--outcome", "")).toEqual([
+        "blocked",
+        "worked_around",
+        "succeeded_with_friction",
+      ]);
     });
 
     test("completes partial subcommand name", () => {
@@ -76,6 +85,12 @@ describe("generateCompletions", () => {
 
     test("completes deploy subcommands", () => {
       expect(completionNames("deploy", "")).toContain("status");
+    });
+
+    test("completes security subcommands", () => {
+      expect(completionNames("")).toContain("security");
+      const names = completionNames("security", "");
+      expect(names).toEqual(expect.arrayContaining(["audit", "fix", "checks"]));
     });
   });
 
@@ -230,7 +245,15 @@ describe("generateCompletions", () => {
           "--source",
           "",
         ]).completions.map((c) => c.name);
-        expect(names).toEqual(["clerk", "supabase"]);
+        expect(names).toEqual([
+          "clerk",
+          "auth0",
+          "authjs",
+          "betterauth",
+          "firebase",
+          "supabase",
+          "workos",
+        ]);
       } finally {
         if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
         else process.env.CLERK_EXPERIMENTAL = saved;
@@ -280,6 +303,28 @@ describe("generateCompletions", () => {
     test("still shows options with -- prefix after positional args", () => {
       const names = completionNames("api", "/users", "--");
       expect(names).toContain("--method");
+    });
+
+    test("security fix: hints --factors values and --strategy choices", () => {
+      expect(completionNames("security", "fix", "--factors", "")).toEqual(
+        expect.arrayContaining(["authenticator", "backup-code", "sms"]),
+      );
+      expect(completionNames("security", "fix", "--strategy", "")).toEqual(
+        expect.arrayContaining(["email-code", "email-link", "phone-code", "passkey"]),
+      );
+    });
+
+    test("security fix: keeps completing ids after the first one", () => {
+      const names = completionNames("security", "fix", "user-lockout", "");
+      expect(names).toContain("device-trust");
+      expect(names).toContain("--all");
+    });
+
+    test("security fix: suggests check ids", () => {
+      const names = completionNames("security", "fix", "");
+      expect(names).toContain("user-lockout");
+      expect(names).toContain("mfa-required");
+      expect(names).toContain("--all");
     });
 
     test("open dashboard: suggests known subpaths", () => {

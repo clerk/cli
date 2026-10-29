@@ -130,6 +130,9 @@ export type SourceCarries = { passwords: Carry; mfa: Carry; metadata: Carry };
  * @property preTransform - Runs before field mapping.
  * @property postTransform - Mutates a user after field mapping, given the
  *   run's {@link TransformContext}.
+ * @property socialProviders - The social providers a user signs in with, as
+ *   Clerk provider keys (`google`, `github`), for the readiness check.
+ *   Supabase's come from its raw rows instead.
  */
 export type SourceEntry = {
   key: string;
@@ -144,4 +147,5 @@ export type SourceEntry = {
     fileType: string,
   ) => PreTransformResult | Promise<PreTransformResult>;
   postTransform?: (user: Record<string, unknown>, context: TransformContext) => void;
+  socialProviders?: (user: User) => string[];
 };

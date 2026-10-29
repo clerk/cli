@@ -129,6 +129,49 @@ export function capabilityXML(source: string, domain?: string, apple = false, ma
   );
 }
 
+/** The entitlements file one configuration signs with, or undefined when it has none. Throws when it can't be read. */
+export async function readEntitlements(
+  context: Inspection["contexts"][number],
+): Promise<string | undefined> {
+  const path = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+  if (!path) return undefined;
+  const sourceRoot =
+    context.settings.SRCROOT ?? resolve(context.selection.root, dirname(context.selection.project));
+  return (await snapshotFile(context.selection.root, resolve(sourceRoot, path))).source;
+}
+
+/** Whether entitlements already grant a web-credentials domain and/or Sign in with Apple. Throws on XML it can't read. */
+export function hasCapabilities(source: string, domain?: string, apple = false): boolean {
+  return capabilityXML(source, domain, apple) === source;
+}
+
+/**
+ * Capabilities already in an entitlements file that a Personal Team can't sign: Sign in with
+ * Apple anywhere, and Associated Domains on macOS. Setup never removes entitlements, so these
+ * stay until someone removes them in Xcode. Throws on XML it can't read.
+ */
+export function personalTeamConflicts(source: string, mac: boolean): string[] {
+  const document = new DOMParser({
+    errorHandler: () => {
+      throw new Error("Invalid entitlements XML.");
+    },
+  }).parseFromString(source, "text/xml");
+  const [dictionary] = elements(document.documentElement);
+  const keys = new Set(
+    (dictionary ? elements(dictionary) : [])
+      .filter((node) => node.tagName === "key")
+      .map((node) => node.textContent ?? ""),
+  );
+  return [
+    ...(keys.has(APPLE) ? ["Sign in with Apple"] : []),
+    ...(mac && keys.has(DOMAIN) ? ["Associated Domains"] : []),
+  ];
+}
+
+export function personalTeamConflictNote(file: string, conflicts: string[]): string {
+  return `${file} still has ${conflicts.join(" and ")}, which a Personal Team can't sign, so the app won't sign. Remove ${conflicts.length > 1 ? "them" : "it"} in Xcode's Signing & Capabilities, or choose a paid Apple Developer Program team.`;
+}
+
 interface CapabilityPlan {
   status: "planned" | "satisfied" | "manual";
   scope: string;
@@ -145,6 +188,7 @@ async function planCapabilities(
   frontendHost?: string,
   apple = false,
   overlay: Map<string, FileAction> = new Map(),
+  associatedDomain = true,
 ): Promise<CapabilityPlan> {
   const { selection, managedBy, projectFormat } = inspection.input;
   const scope = `${selection.targetName}, ${selection.configuration}, ${selection.sdk}; an existing entitlement file also affects every context that uses that file`;
@@ -166,8 +210,8 @@ async function planCapabilities(
       inspection.settings.SRCROOT ?? resolve(selection.root, dirname(selection.project));
     const mac = selection.sdk === "macosx";
     // Passkeys and credential AutoFill need the web-credentials domain on macOS too.
-    const domain = frontendHost ? `webcredentials:${frontendHost}` : undefined;
-    if (!frontendHost)
+    const domain = frontendHost && associatedDomain ? `webcredentials:${frontendHost}` : undefined;
+    if (!frontendHost && associatedDomain)
       return manual("Link the intended Clerk instance before adding its Associated Domain.");
     let changedProject = false;
     // Xcode's native setting adds the outgoing-network entitlement during signing.
@@ -288,6 +332,8 @@ export async function planAllCapabilities(
   projectSource: string,
   frontendHost?: string,
   apple = false,
+  /** False to leave the web-credentials domain out, for a signing team that can't provision it. */
+  associatedDomain = true,
 ) {
   const actions = new Map<string, FileAction>();
   const snapshots = new Map<string, FileSnapshot>();
@@ -310,6 +356,7 @@ export async function planAllCapabilities(
       frontendHost,
       apple,
       actions,
+      associatedDomain,
     );
     source = plan.projectSource;
     for (const action of plan.actions) actions.set(action.path, action);

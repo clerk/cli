@@ -47,6 +47,15 @@ test("usage_error code for invalid mode flag", async () => {
   expect(error.code).toBe("usage_error");
 });
 
+test.each([
+  [["--file", "--verbose"], "option '--file <path>' argument missing"],
+  [["--file", "--verbose", "--instance", "dev"], "too many arguments for 'pull'"],
+])("a root flag right after --file is not taken as its value: %j", async (args, message) => {
+  const result = await clerk.raw("env", "pull", ...args);
+  expect(result.exitCode).toBe(1);
+  expect(result.stderr).toContain(message);
+});
+
 test("human mode still shows plain text errors (no JSON)", async () => {
   const result = await clerk.raw("--mode", "human", "env", "pull");
   expect(result.exitCode).toBe(1);

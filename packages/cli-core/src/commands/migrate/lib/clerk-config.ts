@@ -177,9 +177,9 @@ export async function fetchEnabledSocialProviders(secretKey: string): Promise<st
 /**
  * How many users the destination instance already holds.
  *
- * The closest thing to a live quota check the CLI has: `max_allowed_users` is
- * not exposed by any public API, so headroom on a development instance can
- * only be estimated from the count and {@link DEV_USER_LIMIT}.
+ * Measured against the instance's user limit for the headroom: unfiltered,
+ * this is the count Clerk's own quota check reads, though from a replica, so
+ * it can trail creates made a moment ago.
  *
  * @returns `null` when the count could not be read — an unknown count must not
  *   be reported as zero.

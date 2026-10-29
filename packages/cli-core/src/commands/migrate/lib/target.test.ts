@@ -1,8 +1,17 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  spyOn,
+  test,
+} from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { _setConfigDir } from "../../../lib/config.ts";
+import { _setConfigDir, setProfile } from "../../../lib/config.ts";
 import { _resetMode, setMode } from "../../../mode.ts";
 import { EXIT_CODE, type CliError } from "../../../lib/errors.ts";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
@@ -14,6 +23,7 @@ import {
 } from "./target.ts";
 
 const captured = useCaptureLog();
+const plapiModule = await import("../../../lib/plapi.ts");
 
 describe("printTarget", () => {
   test.each([
@@ -99,6 +109,29 @@ describe("fetchInstanceIdentity", () => {
     expect(await fetchInstanceIdentity("sk_live_x")).toEqual({
       instanceId: "ins_7",
       env: "production",
+    });
+  });
+
+  // Absent means Clerk did not say (an API that predates the field), which is
+  // not the same as `null`, no limit.
+  test.each([
+    [100, { maxAllowedUsers: 100 }],
+    [null, { maxAllowedUsers: null }],
+    [undefined, {}],
+    ["100", {}],
+    [-1, {}],
+  ])("reads max_allowed_users %p", async (maxAllowedUsers, expected) => {
+    globalThis.fetch = (async () =>
+      Response.json({
+        id: "ins_7",
+        environment_type: "development",
+        ...(maxAllowedUsers === undefined ? {} : { max_allowed_users: maxAllowedUsers }),
+      })) as unknown as typeof fetch;
+
+    expect(await fetchInstanceIdentity("sk_test_x")).toEqual({
+      instanceId: "ins_7",
+      env: "development",
+      ...expected,
     });
   });
 
@@ -236,5 +269,89 @@ describe("resolveClerkTarget key source", () => {
       keySource: "accountless app (.clerk/.tmp/keyless.json)",
       appLabel: "accountless app",
     });
+  });
+
+  // The profile names the instance; a stand-in would leave `runs` nothing it
+  // can pass back with `--instance`.
+  describe("a linked profile while GET /v1/instance fails", () => {
+    let fetchApplication: ReturnType<typeof spyOn>;
+
+    beforeEach(async () => {
+      await setProfile(workDir, {
+        workspaceId: "org_1",
+        appId: "app_1",
+        appName: "My App",
+        instances: { development: "ins_dev", production: "ins_prod" },
+      });
+      fetchApplication = spyOn(plapiModule, "fetchApplication").mockResolvedValue({
+        application_id: "app_1",
+        name: "My App",
+        instances: [
+          {
+            instance_id: "ins_prod",
+            environment_type: "production",
+            publishable_key: "pk_live_x",
+            secret_key: "sk_live_x",
+          },
+        ],
+      } as never);
+      globalThis.fetch = (async () =>
+        new Response("nope", { status: 500 })) as unknown as typeof fetch;
+    });
+
+    afterEach(() => {
+      fetchApplication.mockRestore();
+    });
+
+    test("records the profile's instance", async () => {
+      const { target } = await resolveClerkTarget({ instance: "prod" });
+      expect(target).toMatchObject({
+        instanceId: "ins_prod",
+        env: "production",
+        keySource: "linked profile",
+      });
+    });
+
+    // The profile labels a literal ID with itself, which is no environment,
+    // and the key prefix would only guess one: a staging key is `sk_live_`.
+    test("records the environment as unknown for a literal --instance", async () => {
+      const { target } = await resolveClerkTarget({ instance: "ins_prod" });
+      expect(target).toMatchObject({ instanceId: "ins_prod", env: "unknown" });
+    });
+  });
+});
+
+// A stand-in is no ID `--app --instance` can resolve again, so a run recorded
+// under one would suggest commands that fail, or reach another instance.
+describe("resolveClerkTarget --app", () => {
+  let originalFetch: typeof globalThis.fetch;
+  let fetchApplication: ReturnType<typeof spyOn>;
+
+  beforeEach(() => {
+    originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response("nope", { status: 500 })) as unknown as typeof fetch;
+    fetchApplication = spyOn(plapiModule, "fetchApplication").mockResolvedValue({
+      application_id: "app_123",
+      name: "My App",
+      instances: [
+        {
+          instance_id: "ins_staging",
+          environment_type: "staging",
+          publishable_key: "pk_test_x",
+          secret_key: "sk_test_x",
+        },
+      ],
+    } as never);
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    fetchApplication.mockRestore();
+  });
+
+  test("records the instance the Platform API named when GET /v1/instance fails", async () => {
+    const { target } = await resolveClerkTarget({ app: "app_123", instance: "ins_staging" });
+    expect(target).toMatchObject({ instanceId: "ins_staging", env: "staging", keySource: "--app" });
   });
 });

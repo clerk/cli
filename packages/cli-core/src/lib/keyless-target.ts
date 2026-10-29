@@ -15,6 +15,7 @@ import { parseEnvFile } from "./dotenv.ts";
 import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { decodePublishableKey } from "./fapi.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
+import { keylessCopy, type KeyAccess } from "./copy.ts";
 import { log } from "./log.ts";
 
 export interface KeylessTarget {
@@ -82,6 +83,9 @@ interface LocatedKey {
   source: string;
 }
 
+/** How an exported variable is named as a key's source: `NUXT_CLERK_SECRET_KEY env var`. */
+export const ENV_VAR_SOURCE_SUFFIX = " env var";
+
 /**
  * Looks for a key under any of `names`, in the order the app itself would
  * resolve one: the environment first, then env files with a later file
@@ -90,7 +94,7 @@ interface LocatedKey {
 async function findKeyInProject(cwd: string, names: string[]): Promise<LocatedKey | undefined> {
   for (const name of new Set(names)) {
     const value = process.env[name];
-    if (value) return { value, source: `${name} env var` };
+    if (value) return { value, source: `${name}${ENV_VAR_SOURCE_SUFFIX}` };
   }
 
   // Priority is by name, not by position: the framework-specific name beats
@@ -202,6 +206,33 @@ export async function hasKeyPairMismatch(
 }
 
 /**
+ * Whether Clerk says the key's application belongs to an account: GET
+ * /v1/instance's `workspace_id` is null until it is claimed. Any `sk_` key
+ * takes the secret-key path, claimed or not, so a refusal asks this before
+ * calling the application unclaimed. `undefined` when Clerk can't be asked, or
+ * doesn't say; callers keep the accountless wording then.
+ */
+export async function isClaimedKeylessTarget(target: KeylessTarget): Promise<boolean | undefined> {
+  try {
+    const { body } = await bapiRequest({
+      method: "GET",
+      path: "/v1/instance",
+      secretKey: target.secretKey,
+    });
+    const workspaceId = (body as { workspace_id?: unknown } | undefined)?.workspace_id;
+    if (workspaceId === undefined) return undefined;
+    return typeof workspaceId === "string" && workspaceId.length > 0;
+  } catch {
+    return undefined;
+  }
+}
+
+/** What a refusal needs to word itself for this key: see `KeyAccess`. */
+export async function keyAccess(target: KeylessTarget): Promise<KeyAccess> {
+  return { claimed: await isClaimedKeylessTarget(target), source: target.source };
+}
+
+/**
  * Resolves the keyless target for a command, or `undefined` when the
  * account-authenticated path applies.
  *
@@ -234,10 +265,7 @@ export async function resolveKeylessTarget(options: {
   // The secret key addresses exactly one instance — its own — so there is no
   // instance to choose between.
   if (options.instance) {
-    throwUsageError(
-      `--instance is not supported for an unclaimed accountless application: the secret key in ${target.source} already targets its own instance.\n` +
-        "Run `clerk auth login` to claim the application, then target instances by name.",
-    );
+    throwUsageError(keylessCopy.instanceFlagWithKey(target.source, await keyAccess(target)));
   }
 
   return target;

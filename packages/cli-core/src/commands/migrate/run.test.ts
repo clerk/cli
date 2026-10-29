@@ -1,17 +1,38 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  mock,
+  spyOn,
+  test,
+} from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { _setConfigDir } from "../../lib/config.ts";
 import { type CliError, EXIT_CODE } from "../../lib/errors.ts";
+import * as plapi from "../../lib/plapi.ts";
 import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
 
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
 mock.module("../../lib/credential-store.ts", () => credentialStoreStubs);
-import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
-import { latestUserLines, readRun, type RunRecord } from "./lib/run-store.ts";
+import { importFlags } from "./lib/carry-flags.ts";
+import {
+  latestUserLines,
+  listRuns,
+  patchRun,
+  readRun,
+  sha256File,
+  startRun,
+} from "./lib/run-store.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
+// After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
+// macro here, and the file fails to load.
+import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
 
 /** A real-shaped bcrypt digest: the checks reject anything that is not. */
 const BCRYPT = "$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
@@ -22,13 +43,6 @@ let originalCwd: string;
 
 /** Where runs land for a project rooted at `workDir`. */
 const runsDir = () => path.join(workDir, ".clerk", "migrate");
-
-/** The runs in `dir`, newest first. */
-const runsIn = (dir: string): RunRecord[] =>
-  (fs.existsSync(dir) ? fs.readdirSync(dir) : [])
-    .map((id) => readRun(dir, id))
-    .filter((record): record is RunRecord => record !== undefined)
-    .sort((a, b) => b.id.localeCompare(a.id));
 
 beforeAll(() => {
   originalCwd = process.cwd();
@@ -82,12 +96,17 @@ type Stub = {
     id: string;
     external_id?: string;
     username?: string;
+    private_metadata?: Record<string, unknown>;
     email_addresses?: { email_address: string }[];
   }[];
   /** `GET /v1/users/count`. */
   count?: number;
   /** Source IDs whose `POST /v1/users` fails with a 422. */
   failing?: Set<string>;
+  /** `GET /v1/instance` fails, so the target falls back to the key's stand-in ID. */
+  instanceDown?: boolean;
+  /** `max_allowed_users` on `GET /v1/instance`; left out when undefined, as an older API does. */
+  maxAllowedUsers?: number | null;
 };
 
 describe("run", () => {
@@ -113,8 +132,18 @@ describe("run", () => {
       const body = init?.body ? (JSON.parse(init.body as string) as Record<string, unknown>) : null;
       requests.push({ method, url: url.toString(), body });
 
+      if (url.pathname === "/v1/instance" && stub.instanceDown) {
+        return new Response("unavailable", { status: 503 });
+      }
       if (url.pathname === "/v1/instance") {
-        return Response.json({ object: "instance", id: "ins_1", environment_type: "development" });
+        return Response.json({
+          object: "instance",
+          id: "ins_1",
+          environment_type: "development",
+          ...(stub.maxAllowedUsers === undefined
+            ? {}
+            : { max_allowed_users: stub.maxAllowedUsers }),
+        });
       }
       if (url.pathname === "/v1/domains") {
         if (!stub.settings) return new Response("nope", { status: 500 });
@@ -251,7 +280,7 @@ describe("run", () => {
   test("records the run in the project's run store", async () => {
     await run(baseOptions);
 
-    const [record, ...rest] = runsIn(runsDir());
+    const [record, ...rest] = listRuns(runsDir());
     expect(rest).toHaveLength(0);
     expect(record).toMatchObject({
       kind: "import",
@@ -270,6 +299,491 @@ describe("run", () => {
     ]);
   });
 
+  // A complete import leaves the export's user data behind; say how to remove it.
+  test("names the folders a complete import no longer needs", async () => {
+    await run(baseOptions);
+    const [record] = listRuns(runsDir());
+    expect(captured.err).toContain(`rm -rf ${path.join(runsDir(), record!.id)}`);
+  });
+
+  // Pasted unquoted, `rm -rf …/app copy/…` deletes `…/app`.
+  test("quotes the cleanup paths", async () => {
+    const spaced = path.join(workDir, "app copy");
+    await run({ ...baseOptions, runsDir: spaced });
+
+    const [record] = listRuns(spaced);
+    expect(captured.err).toContain(`rm -rf '${path.join(spaced, record!.id)}'`);
+  });
+
+  describe("export envelopes", () => {
+    /** An export run whose envelope holds `users`, as `clerk migrate export` writes it. */
+    function exportRun(source: string, rows: unknown[], extra: Record<string, unknown> = {}) {
+      const run = startRun(runsDir(), { kind: "export", target: { platform: source }, source });
+      const file = path.join(run.dir, "export.json");
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          clerkMigrate: 1,
+          source,
+          exportedAt: "2026-09-01T00:00:00.000Z",
+          runId: run.record.id,
+          users: rows,
+          ...extra,
+        }),
+      );
+      run.update({ file: { path: file, sha256: sha256File(file) } });
+      return { record: run.finish(), file };
+    }
+
+    const { source: _source, input: _input, ...noSource } = baseOptions;
+
+    test("refuses a file whose source this CLI does not know, before any request", async () => {
+      const { record } = exportRun("okta", export2);
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /exported from "okta", which this version of the CLI does not know\. Valid sources: /,
+      );
+      expect(requests).toHaveLength(0);
+    });
+
+    test("an export run that never wrote its file says so", async () => {
+      const unfinished = startRun(runsDir(), {
+        kind: "export",
+        target: { platform: "clerk" },
+        source: "clerk",
+      });
+      unfinished.release();
+
+      await expect(run({ ...noSource, input: unfinished.record.id })).rejects.toThrow(
+        /never wrote its file: it was interrupted, or the write failed/,
+      );
+    });
+
+    // The run ID stands for the file that run wrote: a later export or an edit
+    // at the same path must not import under the old run's name.
+    test("refuses an export file that changed since its run wrote it", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+      fs.writeFileSync(file, JSON.stringify({ ...envelope, users: [envelope.users[0]] }));
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /has changed since it was exported/,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    // A shared --output path can be overwritten after the run-ID check, while
+    // the import is still naming its target.
+    test("refuses an export file overwritten after the run ID was checked", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const served = globalThis.fetch;
+      let overwritten = false;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        if (!overwritten && new URL(input.toString()).pathname === "/v1/instance") {
+          overwritten = true;
+          const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+          fs.writeFileSync(file, JSON.stringify({ ...envelope, users: [envelope.users[0]] }));
+        }
+        return served(input, init);
+      }) as typeof fetch;
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /has changed since it was exported/,
+      );
+      expect(overwritten).toBe(true);
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("refuses an export file another run's export overwrote", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const envelope = JSON.parse(fs.readFileSync(file, "utf-8"));
+      fs.writeFileSync(file, JSON.stringify({ ...envelope, runId: "20260101-000000-abcd" }));
+      patchRun(runsDir(), record.id, { file: { path: file, sha256: sha256File(file) } });
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /has changed since it was exported/,
+      );
+    });
+
+    test("refuses an export run whose file is gone", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      fs.rmSync(file);
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(/is gone/);
+    });
+
+    test("warns that a truncated export run is not every user", async () => {
+      const { record } = exportRun("clerk", export2);
+      patchRun(runsDir(), record.id, { truncated: true });
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`Export run ${record.id} did not get every user`);
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
+    // An agent reads stdout: the warning has to be in the JSON, not only stderr.
+    test("carries a truncated export run's warning in --json", async () => {
+      const { record } = exportRun("clerk", export2);
+      patchRun(runsDir(), record.id, { truncated: true });
+
+      await run({ ...noSource, input: record.id, dryRun: true, json: true });
+
+      expect(JSON.parse(captured.out).checks.warnings).toContainEqual(
+        expect.stringContaining(`Export run ${record.id} did not get every user`),
+      );
+    });
+
+    test("names an --output export file outside the run folder for deletion too", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const outside = path.join(workDir, `users-${record.id}.json`);
+      fs.renameSync(file, outside);
+      patchRun(runsDir(), record.id, { file: { path: outside, sha256: sha256File(outside) } });
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`rm ${outside}`);
+    });
+
+    // Started from a copy, continued by the export's ID: the run kept the
+    // copy's path, but the export's own file outside its folder must go too.
+    test("names the export's own file, and the copy the import read, when they differ", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const exported = path.join(workDir, `users-${record.id}.json`);
+      fs.renameSync(file, exported);
+      patchRun(runsDir(), record.id, { file: { path: exported, sha256: sha256File(exported) } });
+      const copy = path.join(workDir, "copy.json");
+      fs.copyFileSync(exported, copy);
+      stubClerk({ failing: new Set(["u2"]) });
+      await run({ ...noSource, input: copy });
+
+      stubClerk();
+      process.exitCode = 0;
+      captured.clear();
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`rm -rf ${path.join(runsDir(), record.id)}`);
+      expect(captured.err).toContain(`rm ${exported}`);
+      expect(captured.err).toContain("The file this import read holds the same data:");
+      expect(captured.err).toContain(`rm ${copy}`);
+    });
+
+    test("names one file once when the import read the export's own", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const exported = path.join(workDir, `users-${record.id}.json`);
+      fs.renameSync(file, exported);
+      patchRun(runsDir(), record.id, { file: { path: exported, sha256: sha256File(exported) } });
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err.split(`rm ${exported}`)).toHaveLength(2);
+      expect(captured.err).not.toContain("The file this import read");
+    });
+
+    test("names no file inside the export's folder, which the folder's rm covers", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).not.toMatch(/\n\s*rm (?!-rf)/);
+    });
+
+    // The copy is still named, but not as the export.
+    test("names the copy on its own when the export's record is gone", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      const copy = path.join(workDir, "copy.json");
+      fs.copyFileSync(file, copy);
+      stubClerk({ failing: new Set(["u2"]) });
+      await run({ ...noSource, input: copy });
+      stubClerk();
+      process.exitCode = 0;
+      await run({ ...noSource, input: record.id });
+      fs.rmSync(path.join(runsDir(), record.id, "run.json"));
+      const [imported] = listRuns(runsDir());
+      captured.clear();
+
+      // The cleanup reads the export's record as it prints, so print it again.
+      expect(imported?.fromExport).toBe(record.id);
+      const { cleanupLines } = await import("./run.ts");
+      const lines = cleanupLines(runsDir(), imported!).join("\n");
+      expect(lines).toContain("The file this import read holds the same data:");
+      expect(lines).toContain(`rm ${copy}`);
+    });
+
+    test("imports by export run ID, with the source the envelope names", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await run({ ...noSource, input: record.id });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+      const imported = listRuns(runsDir()).find((candidate) => candidate.kind === "import");
+      expect(imported).toMatchObject({ source: "clerk", fromExport: record.id });
+      // The export holds password hashes and PII, so the cleanup names it too.
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
+    // Started by path, continued by run ID: the run still names its export.
+    test("a continue by export run ID links the run to the export", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      stubClerk({ failing: new Set(["u2"]) });
+      await run({ ...noSource, input: file });
+      expect(listRuns(runsDir()).find((c) => c.kind === "import")?.fromExport).toBeUndefined();
+
+      stubClerk();
+      process.exitCode = 0;
+      await run({ ...noSource, input: record.id });
+
+      const imported = listRuns(runsDir()).filter((c) => c.kind === "import");
+      expect(imported).toHaveLength(1);
+      expect(imported[0]).toMatchObject({ fromExport: record.id });
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
+    // Stopped after its last create, the run has nothing left, but the
+    // continue by export run ID still links it and names the export.
+    test("a continue by export run ID with nothing left links the run to the export", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      await run({ ...noSource, input: file });
+      const imported = listRuns(runsDir()).find((c) => c.kind === "import")!;
+      // A crash after the last create writes no finish time.
+      const crashed = readRun(runsDir(), imported.id)!;
+      delete crashed.finishedAt;
+      fs.writeFileSync(
+        path.join(runsDir(), imported.id, "run.json"),
+        JSON.stringify({ ...crashed, status: "running" }),
+      );
+      captured.clear();
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain("No users left to import.");
+      expect(readRun(runsDir(), imported.id)).toMatchObject({
+        status: "complete",
+        fromExport: record.id,
+      });
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
+    // Finished by path, the run is complete: re-run by export run ID, it is
+    // already imported, but still links the export and names it for cleanup.
+    test("a complete run re-run by export run ID links the run to the export", async () => {
+      const { record, file } = exportRun("clerk", export2);
+      await run({ ...noSource, input: file });
+      const imported = listRuns(runsDir()).find((c) => c.kind === "import")!;
+      expect(imported).toMatchObject({ status: "complete" });
+      expect(imported.fromExport).toBeUndefined();
+      captured.clear();
+
+      await run({ ...noSource, input: record.id });
+
+      expect(captured.err).toContain(`Already imported in run ${imported.id}`);
+      expect(readRun(runsDir(), imported.id)?.fromExport).toBe(record.id);
+      expect(captured.err).toContain(`The export in run ${record.id} holds your users' data`);
+    });
+
+    test("imports an envelope file with no source named", async () => {
+      const { file } = exportRun("clerk", export2);
+
+      await run({ ...noSource, input: file });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
+    test("refuses a source that contradicts the envelope", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await expect(run({ ...noSource, source: "auth0", input: record.id })).rejects.toThrow(
+        /exported from clerk, but --source names auth0/,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    /** Records which instance an export run read, as `export clerk` does. */
+    const exportedFrom = (id: string, instanceId: string) => {
+      const record = readRun(runsDir(), id)!;
+      fs.writeFileSync(
+        path.join(runsDir(), id, "run.json"),
+        JSON.stringify({ ...record, target: { ...record.target, instanceId } }),
+      );
+    };
+
+    // Every user is already there; each would come back a duplicate.
+    test("refuses to import an export into the instance it came from", async () => {
+      const { record } = exportRun("clerk", export2);
+      exportedFrom(record.id, "ins_1");
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /exported this instance's own users/,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("imports an export of another instance", async () => {
+      const { record } = exportRun("clerk", export2);
+      exportedFrom(record.id, "ins_other");
+
+      await run({ ...noSource, input: record.id });
+
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
+    test("refuses a run ID that is not an export", async () => {
+      await run(baseOptions);
+      const [imported] = listRuns(runsDir());
+
+      await expect(run({ ...noSource, input: imported!.id })).rejects.toThrow(
+        /is an import run, which has no file to import/,
+      );
+    });
+
+    test("refuses a run ID with no run behind it", async () => {
+      await expect(run({ ...noSource, input: "20260101-000000-abcd" })).rejects.toThrow(
+        /No run `20260101-000000-abcd`/,
+      );
+      expect(requests).toHaveLength(0);
+    });
+
+    test("reads Firebase's hash parameters from the envelope", async () => {
+      const firebase = {
+        base64_signer_key: "SIGNER",
+        base64_salt_separator: "Bw==",
+        rounds: 8,
+        mem_cost: 14,
+      };
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        { firebase },
+      );
+
+      await run({ ...noSource, input: record.id });
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect(created?.body).toMatchObject({
+        password_hasher: "scrypt_firebase",
+        password_digest: "HASH$SALT$SIGNER$Bw==$8$14",
+      });
+    });
+
+    // Each goes into every digest: a bad one would cost every password.
+    test("refuses Firebase hash parameters Clerk would reject, from the envelope or the flags", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "SIGNER",
+            base64_salt_separator: "Bw==",
+            rounds: 0,
+            mem_cost: 14,
+          },
+        },
+      );
+
+      await expect(run({ ...noSource, input: record.id })).rejects.toThrow(
+        /from the export file won't work: rounds must be a whole number from 1 to 16/,
+      );
+      await expect(
+        run({
+          ...noSource,
+          input: record.id,
+          firebaseSignerKey: "SIGNER",
+          firebaseSaltSeparator: "Bw==",
+          firebaseRounds: 8,
+          firebaseMemCost: 17,
+        }),
+      ).rejects.toThrow(/from the --firebase-\* flags won't work: memory cost/);
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+
+    test("lets the --firebase-* flags override the envelope", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "OLD",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+
+      await run({
+        ...noSource,
+        input: record.id,
+        firebaseSignerKey: "NEW",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      });
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect((created!.body as { password_digest: string }).password_digest).toContain("$NEW$");
+    });
+
+    // Variables left over from another project would hash every password wrongly.
+    test("keeps the envelope's parameters over the CLERK_FIREBASE_* variables", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "FILE",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+      const env = {
+        CLERK_FIREBASE_SIGNER_KEY: "STALE",
+        CLERK_FIREBASE_SALT_SEPARATOR: "Bw==",
+        CLERK_FIREBASE_ROUNDS: "8",
+        CLERK_FIREBASE_MEM_COST: "14",
+      };
+      Object.assign(process.env, env);
+      try {
+        await run({ ...noSource, input: record.id });
+      } finally {
+        for (const key of Object.keys(env)) delete process.env[key];
+      }
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect((created!.body as { password_digest: string }).password_digest).toContain("$FILE$");
+    });
+
+    test("does not complete a partial flag set from the variables when the envelope has parameters", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", salt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "FILE",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+      const env = {
+        CLERK_FIREBASE_SALT_SEPARATOR: "Bw==",
+        CLERK_FIREBASE_ROUNDS: "8",
+        CLERK_FIREBASE_MEM_COST: "14",
+      };
+      Object.assign(process.env, env);
+      try {
+        await expect(
+          run({ ...noSource, input: record.id, firebaseSignerKey: "NEW" }),
+        ).rejects.toThrow(/must be supplied together/);
+      } finally {
+        for (const key of Object.keys(env)) delete process.env[key];
+      }
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+    });
+  });
+
   test("gitignores the project's .clerk folder before writing a run", async () => {
     await run(baseOptions);
     expect(fs.readFileSync(path.join(workDir, ".gitignore"), "utf-8")).toContain(".clerk/");
@@ -285,8 +799,8 @@ describe("run", () => {
 
   test("--runs-dir puts the run somewhere else", async () => {
     await run({ ...baseOptions, runsDir: "elsewhere" });
-    expect(runsIn(path.join(workDir, "elsewhere"))).toHaveLength(1);
-    expect(runsIn(runsDir())).toHaveLength(0);
+    expect(listRuns(path.join(workDir, "elsewhere"))).toHaveLength(1);
+    expect(listRuns(runsDir())).toHaveLength(0);
   });
 
   test("--require-password leaves out the users without one", async () => {
@@ -294,12 +808,244 @@ describe("run", () => {
 
     expect(created()).toEqual(["u1"]);
     expect(captured.err).toContain("leaving out 1 user without a password");
-    const [record] = runsIn(runsDir());
+    const [record] = listRuns(runsDir());
     expect(latestUserLines(runsDir(), record!.id).get("u2")).toMatchObject({
       status: "skipped",
       reason: "no password (--require-password)",
+      code: "no_password",
     });
     expect(record?.status).toBe("partial");
+    // So a continue would still leave them out.
+    expect(importFlags(record?.flags ?? {})).toEqual(["--require-password"]);
+    // ...which is why none is offered: following it would print it again.
+    const err = Bun.stripANSI(captured.err);
+    expect(err).not.toContain("to retry them");
+    expect(err).toContain("to see what happened to each user");
+  });
+
+  // The README's way to import them: the same import without the flag.
+  test("the same import without --require-password continues the run and creates them", async () => {
+    await run({ ...baseOptions, requirePassword: true });
+    const [first] = listRuns(runsDir());
+    requests = [];
+
+    await run(baseOptions);
+
+    expect(created()).toEqual(["u2"]);
+    expect(listRuns(runsDir())).toHaveLength(1);
+    expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+  });
+
+  // --new-run refuses the users the run created; it names the same file as such.
+  test("--new-run on the same file names it as this file, not an earlier version", async () => {
+    await run({ ...baseOptions, requirePassword: true });
+    const [first] = listRuns(runsDir());
+    captured.clear();
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain(`created by run ${first!.id}, from this file.`);
+    // Dropping --new-run continues that run, so the refusal offers it first.
+    expect(error.message).toContain(`Drop --new-run to continue run ${first!.id}.`);
+    expect(error.examples?.[0]?.command).not.toContain("--new-run");
+    expect(error.examples?.[0]?.description).toBe(`Continue run ${first!.id}`);
+  });
+
+  // A complete run has nothing to continue: without --new-run it is already imported.
+  test("--new-run on the same file doesn't offer to continue a complete run", async () => {
+    await run(baseOptions);
+    captured.clear();
+    stubClerk({
+      existing: [
+        { id: "user_u1", external_id: "u1" },
+        { id: "user_u2", external_id: "u2" },
+      ],
+    });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain("from this file.");
+    expect(error.message).not.toContain("Drop --new-run");
+  });
+
+  // findResume continues the newest run of the file, so the refusal offers the
+  // continue only when that is the run that created the users.
+  test("--new-run doesn't offer to continue a run a newer one would take over", async () => {
+    stubClerk({ failing: new Set(["u2"]) });
+    await run(baseOptions);
+    stubClerk({ failing: new Set(["u2"]), existing: [{ id: "user_u1", external_id: "u1" }] });
+    await run({ ...baseOptions, newRun: true, allowPartial: true });
+    expect(listRuns(runsDir())).toHaveLength(2);
+    captured.clear();
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain("from this file.");
+    expect(error.message).not.toContain("Drop --new-run");
+  });
+
+  // Without --new-run the import refuses over the unfinished undo.
+  test("--new-run doesn't offer to continue a run with an unfinished undo", async () => {
+    await run({ ...baseOptions, requirePassword: true });
+    const [first] = listRuns(runsDir());
+    const undoRun = startRun(runsDir(), {
+      kind: "undo",
+      target: { instanceId: "ins_1" },
+      undoes: first!.id,
+    });
+    undoRun.append({ sourceId: "u1", status: "failed", clerkId: "user_u1" });
+    undoRun.finish();
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`created by run ${first!.id}, from this file.`);
+    expect(error.message).not.toContain("Drop --new-run");
+  });
+
+  // Stopped before finish(), a run has no lines for the users it never sent.
+  test("--new-run --require-password offers to continue an interrupted run", async () => {
+    const both = export2.map((user) => ({
+      ...user,
+      password_digest: BCRYPT,
+      password_hasher: "bcrypt",
+    }));
+    fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(both));
+    await run(baseOptions);
+    const [first] = listRuns(runsDir());
+    // As a Ctrl-C after u1 leaves it: no finish time, the opening counts, one line.
+    const record = readRun(runsDir(), first!.id)!;
+    delete record.finishedAt;
+    fs.writeFileSync(
+      path.join(runsDir(), first!.id, "run.json"),
+      JSON.stringify({ ...record, status: "running", counts: { total: 0 } }),
+    );
+    fs.writeFileSync(
+      path.join(runsDir(), first!.id, "users.ndjson"),
+      `${JSON.stringify({ sourceId: "u1", clerkId: "user_u1", status: "created" })}\n`,
+    );
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true, requirePassword: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`Drop --new-run to continue run ${first!.id}.`);
+  });
+
+  // The same file rejects it again, so a continue would only loop.
+  test("a run left partial only by the file's own bad data offers no retry, nor a continue", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([...export2, { id: "u3", primary_email_address: "not-an-email" }]),
+    );
+    await run({ ...baseOptions, allowPartial: true });
+    const [first] = listRuns(runsDir());
+    expect(first).toMatchObject({ status: "partial" });
+    expect(latestUserLines(runsDir(), first!.id).get("u3")).toMatchObject({
+      status: "skipped",
+      code: "in_file",
+    });
+    expect(Bun.stripANSI(captured.err)).not.toContain("to retry them");
+
+    captured.clear();
+    stubClerk({
+      existing: [
+        { id: "user_u1", external_id: "u1" },
+        { id: "user_u2", external_id: "u2" },
+      ],
+    });
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+    expect(error.message).not.toContain("Drop --new-run");
+  });
+
+  // Without the flag that got the earlier run past its checks, its continue
+  // would refuse the same users again.
+  test("--new-run's continue carries the --allow-partial the earlier run needed", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([...export2, { id: "u3", primary_email_address: "not-an-email" }]),
+    );
+    stubClerk({ failing: new Set(["u2"]) });
+    await run({ ...baseOptions, allowPartial: true });
+    const [first] = listRuns(runsDir());
+    captured.clear();
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`Drop --new-run to continue run ${first!.id}.`);
+    expect(error.examples?.[0]?.command).toContain("--allow-partial");
+    expect(error.examples?.[0]?.command).not.toContain("--new-run");
+  });
+
+  // --allow-partial would start a run that imports nobody.
+  test("--new-run with every user rejected offers the undo, not --allow-partial", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([...export2, { id: "u3", primary_email_address: "not-an-email" }]),
+    );
+    await run({ ...baseOptions, allowPartial: true });
+    const [first] = listRuns(runsDir());
+    captured.clear();
+    stubClerk({
+      existing: [
+        { id: "user_u1", external_id: "u1" },
+        { id: "user_u2", external_id: "u2" },
+      ],
+    });
+
+    const error = (await run({ ...baseOptions, newRun: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`Undo run ${first!.id} first (`);
+    expect(error.message).not.toContain("import the rest into a new run");
+    expect(error.examples?.map((example) => example.description)).toEqual([
+      `Undo run ${first!.id} first`,
+    ]);
+  });
+
+  test("a refusal of a file where no user passes doesn't offer --allow-partial", async () => {
+    fs.writeFileSync(
+      path.join(workDir, "export.json"),
+      JSON.stringify([{ id: "u3", primary_email_address: "not-an-email" }]),
+    );
+
+    const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+
+    expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(error.message).toContain(
+      "with every user rejected, --allow-partial would import nobody",
+    );
+    expect(error.examples ?? []).toEqual([]);
+  });
+
+  // The continue would carry --require-password and leave the same users out.
+  test("--new-run --require-password doesn't offer a continue that imports nobody", async () => {
+    await run({ ...baseOptions, requirePassword: true });
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true, requirePassword: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain("from this file.");
+    expect(error.message).not.toContain("Drop --new-run");
   });
 
   // They never reach the checks, so the preview has to count them itself.
@@ -339,14 +1085,50 @@ describe("run", () => {
     await run(baseOptions);
 
     expect(process.exitCode).toBe(1);
-    expect(runsIn(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
+    expect(listRuns(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
+  });
+
+  // Run later, the key may no longer be exported: the steps name it as a
+  // placeholder, as `runs <id>` does, rather than nothing.
+  test("after failures with an exported key, the retry and undo name the key", async () => {
+    stubClerk({ failing: new Set(["u2"]) });
+    const previous = process.env.CLERK_SECRET_KEY;
+    process.env.CLERK_SECRET_KEY = "sk_test_x";
+    try {
+      await run({ source: "clerk", input: "export.json", yes: true });
+    } finally {
+      if (previous === undefined) delete process.env.CLERK_SECRET_KEY;
+      else process.env.CLERK_SECRET_KEY = previous;
+    }
+
+    const [record] = listRuns(runsDir());
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain("--source clerk --secret-key <key> --yes` to retry them");
+    expect(err).toContain(`\`clerk migrate undo ${record!.id} --secret-key <key>\``);
+  });
+
+  // `runs` reads only a runs folder; the retry is the same import, which
+  // continues this run, so it drops --new-run.
+  test("after failures, names the runs listing and the import that retries them", async () => {
+    stubClerk({ failing: new Set(["u2"]) });
+    const dir = path.join(workDir, "runs");
+
+    await run({ ...baseOptions, runsDir: dir, newRun: true });
+
+    const [record] = listRuns(dir);
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(`\`clerk migrate runs ${record!.id} --runs-dir ${dir}\``);
+    expect(err).toContain(
+      `\`clerk migrate import export.json --source clerk --secret-key <key> --runs-dir ${dir} --yes\` to retry them`,
+    );
+    expect(err).not.toContain("--new-run");
   });
 
   // Tests run non-TTY, the same signal an agent gives.
   describe("without a file or a source", () => {
     test("names what to pass rather than prompting for the file", async () => {
       await expect(run({ source: "clerk", yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
-        /needs the file to import, and cannot prompt here/,
+        /needs the file to import, or the export run that wrote it, and cannot prompt here/,
       );
       expect(requests).toHaveLength(0);
     });
@@ -373,7 +1155,7 @@ describe("run", () => {
       expect(error.message).toMatch(/nothing was imported\. Reason: .+\. Fix them/);
       expect(error.examples?.[0]?.command).toContain("--allow-partial --yes");
       expect(created()).toHaveLength(0);
-      expect(runsIn(runsDir())).toHaveLength(0);
+      expect(listRuns(runsDir())).toHaveLength(0);
     });
 
     test("with several reasons, names the most common and points --json at the rest", async () => {
@@ -419,7 +1201,7 @@ describe("run", () => {
       await run({ ...baseOptions, allowPartial: true });
 
       expect(created()).toEqual(["u1", "u2"]);
-      const [record] = runsIn(runsDir());
+      const [record] = listRuns(runsDir());
       expect(record).toMatchObject({ status: "partial", counts: { created: 2, skipped: 1 } });
       expect(latestUserLines(runsDir(), record!.id).get("u3")).toMatchObject({
         status: "skipped",
@@ -438,7 +1220,7 @@ describe("run", () => {
       await run({ ...baseOptions, dryRun: true });
 
       expect(created()).toHaveLength(0);
-      expect(runsIn(runsDir())).toHaveLength(0);
+      expect(listRuns(runsDir())).toHaveLength(0);
       expect(captured.err).toContain("Dry run: nothing was written.");
       expect(process.exitCode).toBe(2);
     });
@@ -520,8 +1302,21 @@ describe("run", () => {
 
       await run({ ...baseOptions, allowPartial: true });
       expect(created()).toEqual(["u1"]);
-      const [record] = runsIn(runsDir());
+      const [record] = listRuns(runsDir());
       expect(latestUserLines(runsDir(), record!.id).get("u2")?.reason).toContain("100-user limit");
+    });
+
+    // Clerk enforces the limit it reports, so it binds a production key too,
+    // and the count is read to measure the headroom against it.
+    test("holds the import to the limit the instance reports, and says where it came from", async () => {
+      stubClerk({ count: 1, maxAllowedUsers: 2 });
+
+      await run({ ...baseOptions, secretKey: "sk_live_x", dryRun: true, json: true });
+
+      expect(JSON.parse(captured.out)).toMatchObject({
+        checks: { quota: { existing: 1, limit: 2, limitSource: "instance", headroom: 1, over: 1 } },
+      });
+      expect(requests.some((r) => r.url.endsWith("/v1/users/count"))).toBe(true);
     });
 
     test("supabase users whose only provider is disabled are rejected", async () => {
@@ -557,6 +1352,49 @@ describe("run", () => {
       expect(captured.err).toContain(
         "1 user signed in with Discord, which is not enabled in Clerk",
       );
+    });
+
+    // A user the source skips is nobody to bring across: without
+    // --allow-partial the rest still import, and the run says who was left out.
+    test("imports the rest past a user the source skips, and records the skip", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "sb1", email: "a@x.dev", email_confirmed_at: "2024-01-01 00:00:00+00" },
+          {
+            id: "sb2",
+            email: "b@x.dev",
+            email_confirmed_at: "2024-01-01 00:00:00+00",
+            deleted_at: "2026-01-01 00:00:00+00",
+          },
+        ]),
+      );
+
+      await run({ ...baseOptions, source: "supabase", json: true });
+
+      expect(created()).toEqual(["sb1"]);
+      const out = JSON.parse(captured.out);
+      expect(out.checks.rejects).toEqual([]);
+      expect(out.checks.skipped).toEqual([
+        { sourceId: "sb2", reason: "deleted in Supabase", inFile: true },
+      ]);
+      expect(out.result.skipped).toBe(1);
+      const [record] = listRuns(runsDir());
+      expect(latestUserLines(runsDir(), record!.id).get("sb2")).toMatchObject({
+        status: "skipped",
+        reason: "deleted in Supabase",
+        code: "source_skip",
+      });
+      // Everyone meant to come across did: nothing makes the run partial.
+      expect(record?.status).toBe("complete");
+      // Unset or 0: either is a clean exit, whichever test ran before.
+      expect(process.exitCode ?? 0).toBe(0);
+
+      // So the same import again has nothing to continue.
+      captured.clear();
+      await run({ ...baseOptions, source: "supabase", json: true });
+      expect(JSON.parse(captured.out)).toMatchObject({ alreadyImported: true });
+      expect(created()).toEqual(["sb1"]);
     });
 
     test("names the fields Clerk won't store", async () => {
@@ -657,7 +1495,7 @@ describe("run", () => {
         delete process.env.CLERK_MIGRATE_CONCURRENCY_LIMIT;
       }
 
-      const [record] = runsIn(runsDir());
+      const [record] = listRuns(runsDir());
       // The run folder is the only record of who was created.
       expect(captured.err).toContain(`Run ${record?.id}: `);
       expect(record?.finishedAt).toBeUndefined();
@@ -726,7 +1564,7 @@ describe("run", () => {
       const err = Bun.stripANSI(captured.err);
       expect(err).toContain("Not sent: 1");
       expect(err).toContain(
-        "No more users were sent. Once the limit is raised, run the import again with `--allow-partial --yes` to send them.",
+        "No more users were sent. Once the limit is raised, run the import again to send them.",
       );
     });
   });
@@ -784,43 +1622,530 @@ describe("run", () => {
     });
   });
 
-  describe("re-running", () => {
-    // Slice 1 has no continuing: the second run sees the first run's users in
-    // the instance, and refuses until --allow-partial.
-    test("a second import of the same file rejects the users the first created", async () => {
+  describe("continuing an earlier run", () => {
+    test("a complete run is not imported again", async () => {
       await run(baseOptions);
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toHaveLength(0);
+      expect(captured.err).toContain("Already imported in run");
+      expect(listRuns(runsDir())).toHaveLength(1);
+    });
+
+    test("--new-run imports it again as a new run", async () => {
+      await run(baseOptions);
+      requests = [];
+
+      await run({ ...baseOptions, newRun: true });
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
+    test("a dry run says what it would start or continue", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run({ ...baseOptions, dryRun: true });
+      expect(captured.err).toContain("Would start a new run.");
+      expect(captured.err).not.toContain("Starting a new run.");
+
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      process.exitCode = 0;
+      captured.clear();
+      await run({ ...baseOptions, dryRun: true });
+      expect(captured.err).toContain(`Would continue run ${first!.id}, which finished partial`);
+      expect(captured.err).not.toContain("Continuing run");
+    });
+
+    // The steps are run later: they need the key this attempt used, not the
+    // first one's `.env`, which may not be there.
+    test("a continue records its own key source, which its next steps carry", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      patchRun(runsDir(), first!.id, { target: { ...first!.target, keySource: ".env" } });
+
+      process.exitCode = 0;
+      captured.clear();
+      await run(baseOptions);
+
+      expect(readRun(runsDir(), first!.id)?.target.keySource).toBe("--secret-key");
+      expect(Bun.stripANSI(captured.err)).toContain("--secret-key <key> --yes` to retry them");
+    });
+
+    // The run stays under the first attempt's stand-in, which no `--instance`
+    // resolves, and a bare `--app` resolves development: the key reaches it.
+    test("a stand-in run continued with --app carries the key, not a bare --app", async () => {
+      const application = spyOn(plapi, "fetchApplication").mockResolvedValue({
+        application_id: "app_1",
+        instances: [
+          { instance_id: "ins_dev", environment_type: "development", secret_key: "sk_test_dev" },
+          { instance_id: "ins_1", environment_type: "production", secret_key: "sk_live_x" },
+        ],
+      } as never);
+      process.env.CLERK_PLATFORM_API_KEY = "ak_x";
+      try {
+        stubClerk({ failing: new Set(["u2"]), instanceDown: true });
+        await run({ ...baseOptions, secretKey: "sk_live_x" });
+        const [first] = listRuns(runsDir());
+
+        process.exitCode = 0;
+        captured.clear();
+        stubClerk({ failing: new Set(["u2"]) });
+        await run({
+          source: "clerk",
+          input: "export.json",
+          yes: true,
+          app: "app_1",
+          instance: "prod",
+        });
+
+        expect(listRuns(runsDir())).toHaveLength(1);
+        expect(readRun(runsDir(), first!.id)?.target.keySource).toBe("--app");
+        const err = Bun.stripANSI(captured.err);
+        expect(err).toContain("--secret-key <key> --yes` to retry them");
+        expect(err).not.toContain("--app app_1");
+      } finally {
+        application.mockRestore();
+        delete process.env.CLERK_PLATFORM_API_KEY;
+      }
+    });
+
+    // Created, but its second email never attached: the run is partial, and
+    // the import says so and offers the continue that attaches it.
+    test("an attach with no answer is reported, with the continue", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev", unverified_email_addresses: "b@x.dev" },
+        ]),
+      );
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+        new URL(input.toString()).pathname === "/v1/email_addresses"
+          ? new Response("boom", { status: 503 })
+          : clerk(input, init)) as typeof fetch;
+
+      await run(baseOptions);
+
+      expect(listRuns(runsDir())[0]).toMatchObject({ status: "partial", counts: { pending: 1 } });
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain("Identifiers left to attach: 1 user");
+      expect(err).toContain("--secret-key <key> --yes` to retry them");
+
+      // Without --yes, the consent names the attach, not just "0 users".
+      globalThis.fetch = clerk;
+      const error = (await run({ ...baseOptions, yes: false }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+      expect(error.message).toContain("will create 0 users, attach identifiers to 1 user.");
+
+      // The --json refusal counts them too, as it counts --require-password's.
+      captured.clear();
+      await run({ ...baseOptions, yes: false, json: true }).catch(() => undefined);
+      expect(JSON.parse(captured.out)).toMatchObject({ consent: "required", attachOnly: 1 });
+    });
+
+    // A skip the checks named a fix for imports once the setting changes: the
+    // import offers the same continue `runs <id>` does, and it finishes the run.
+    test("a run left partial only by skips offers the continue, which finishes it", async () => {
+      const settings = (required: boolean) => ({
+        attributes: { email_address: { enabled: true, required } },
+        enterprise_sso: { enabled: true },
+      });
+      stubClerk({ settings: settings(true) });
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", unverified_email_addresses: "b@x.dev" },
+        ]),
+      );
+      await run({ ...baseOptions, allowPartial: true });
+      const [first] = listRuns(runsDir());
+      expect(first).toMatchObject({ status: "partial", counts: { created: 1, skipped: 1 } });
+      expect(Bun.stripANSI(captured.err)).toContain("--secret-key <key> --yes` to retry them");
+
+      requests = [];
+      stubClerk({ settings: settings(false) });
+      await run({ ...baseOptions, allowPartial: true });
+
+      expect(created()).toEqual(["u2"]);
+      expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
+    test("a partial run retries only the users that did not make it, in the same run", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u2"]);
+      expect(captured.err).toContain(`Continuing run ${first!.id}, which finished partial`);
+      const runs = listRuns(runsDir());
+      expect(runs).toHaveLength(1);
+      expect(runs[0]).toMatchObject({ id: first!.id, status: "complete", counts: { created: 2 } });
+    });
+
+    test("an interrupted run skips the users it already created", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      // A crash never writes a finish time.
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u2"]);
+      expect(captured.err).toContain("which was interrupted");
+    });
+
+    /** Rewrites a finished run as one a crash stopped: no finish time. */
+    const interrupt = (id: string, patch: Record<string, unknown> = {}) => {
+      const record = readRun(runsDir(), id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(
+        path.join(runsDir(), id, "run.json"),
+        JSON.stringify({ ...record, ...patch }),
+      );
+    };
+
+    // The create went out and the run stopped before the answer came back.
+    test("an interrupted run adopts a user Clerk created with no ID on record", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
       stubClerk({
         existing: [
-          { id: "user_u1", external_id: "u1" },
-          { id: "user_u2", external_id: "u2" },
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
         ],
       });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(captured.err).toContain("1 user whose create was cut off is already in the instance");
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
+      expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
+    // A reject would stop a create; an adopted user needs none. Rejected, it
+    // stayed `creating` and the run could never finish.
+    test("an adopted user a check would reject still finishes the run", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        // Legal consent turned on since: u2 has no acceptance on record.
+        settings: {
+          attributes: { email_address: { enabled: true } },
+          sign_up: { legal_consent_enabled: true },
+          enterprise_sso: { enabled: true },
+        },
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
+      expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
+    // Same source ID, but no marker from this run: an app or another tool's
+    // user, so it is never adopted.
+    test("an interrupted run does not adopt a match without its marker", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        existing: [{ id: "user_theirs", external_id: "u2", private_metadata: {} }],
+      });
+      await run({ ...baseOptions, allowPartial: true });
+
+      expect(created()).toEqual([]);
+      expect(captured.err).not.toContain("whose create was cut off");
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "skipped",
+        reason: "already in the instance, with this source ID",
+      });
+    });
+
+    test("an interrupted run creates a user whose in-flight create never landed", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating" })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u2"]);
+    });
+
+    test("a continued run with nothing left to do is finished", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      interrupt(first!.id);
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(captured.err).toContain("No users left to import");
+      expect(readRun(runsDir(), first!.id)).toMatchObject({ status: "complete" });
+      expect(readRun(runsDir(), first!.id)?.finishedAt).toBeDefined();
+    });
+
+    // `runs <id>`'s undo is built from the key the settling attempt used.
+    test("a continued run with nothing left to do records its own key source", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      interrupt(first!.id);
+      patchRun(runsDir(), first!.id, { target: { ...first!.target, keySource: ".env" } });
+
+      await run(baseOptions);
+
+      expect(readRun(runsDir(), first!.id)?.target.keySource).toBe("--secret-key");
+    });
+
+    // Automation reads the status from the JSON, not run.json.
+    test("--json reports a continued run with nothing left as finished", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      // A crash leaves the record as it was while running.
+      interrupt(first!.id, { status: "running" });
+      requests = [];
+      captured.clear();
+
+      await run({ ...baseOptions, json: true });
+
+      expect(JSON.parse(captured.out)).toMatchObject({
+        nothingToImport: true,
+        run: { id: first!.id, status: "complete", finishedAt: expect.any(String) },
+      });
+    });
+
+    // "Interrupted, so undo it and start over": the undo marks the run undone
+    // but leaves it with no finish time.
+    test("an interrupted run that was then undone is imported again as a new run", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      interrupt(first!.id, { status: "undone" });
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir()).filter((record) => record.kind === "import")).toHaveLength(2);
+    });
+
+    test("a run with an undo that did not finish refuses with exit 2", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const undoRun = startRun(runsDir(), {
+        kind: "undo",
+        target: { instanceId: "ins_1" },
+        undoes: first!.id,
+      });
+      undoRun.append({ sourceId: "u1", status: "deleted", clerkId: "user_u1" });
+      undoRun.append({ sourceId: "u2", status: "failed", clerkId: "user_u2" });
+      undoRun.finish();
+      requests = [];
+
+      const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      // With the key it was given, or it reaches whatever key it finds next.
+      expect(error.message).toContain(`clerk migrate undo ${first!.id} --secret-key <key>`);
+      expect(created()).toEqual([]);
+    });
+
+    test("an undone run is imported again as a new run", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      fs.writeFileSync(
+        path.join(runsDir(), first!.id, "run.json"),
+        JSON.stringify({ ...record, status: "undone" }),
+      );
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
+    test("a run another live process holds refuses with exit 2", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+      // PID 1 is always alive, and never this test.
+      fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
 
       expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
-      expect(captured.err).toContain("already in the instance, with this source ID");
-      expect(created()).toEqual(["u1", "u2"]);
-      expect(runsIn(runsDir())).toHaveLength(1);
+    });
+
+    // An edited file is a different job.
+    // Rate limiting right after a large import is when this lookup fails, and
+    // that is when someone re-runs after an interruption.
+    test("refuses to start over when Clerk can't name the instance a run of this file was in", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({ instanceDown: true });
+      await expect(run(baseOptions)).rejects.toThrow(/did not confirm which instance/);
+      expect(created()).toEqual([]);
+      expect(listRuns(runsDir())).toHaveLength(1);
+
+      await run({ ...baseOptions, newRun: true, allowPartial: true });
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
+    // Fixing the row a partial run skipped changes the file, so its run meets
+    // the users the first one created: the refusal says which run that was.
+    test("a changed file's refusal names the earlier run that created the users it rejects", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([export2[0], { ...export2[1], primary_email_address: "fixed@x.dev" }]),
+      );
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+      const error = (await run(baseOptions).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(
+        `1 of them was created by run ${first!.id}, from an earlier version of this file.`,
+      );
+      expect(error.examples?.map((example) => example.command)).toContain(
+        `clerk migrate undo ${first!.id} --secret-key <key>`,
+      );
+      expect(created()).toEqual([]);
+    });
+
+    test("a changed file is a new run", async () => {
+      await run(baseOptions);
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3", primary_email_address: "c@x.dev" }]),
+      );
+      requests = [];
+
+      await run(baseOptions);
+
+      expect(listRuns(runsDir())).toHaveLength(2);
     });
   });
 
   describe("per-platform imports", () => {
-    test("supabase transforms, validates and imports its export", async () => {
-      fs.writeFileSync(
-        path.join(workDir, "export.json"),
-        JSON.stringify([
+    /** One realistic record per platform, in that platform's export shape. */
+    const PLATFORMS: [string, unknown, string][] = [
+      [
+        "auth0",
+        [
+          {
+            user_id: "auth0|1",
+            email: "a@x.dev",
+            email_verified: true,
+            given_name: "Ada",
+            family_name: "L",
+          },
+        ],
+        "auth0|1",
+      ],
+      ["authjs", [{ id: "aj1", email: "a@x.dev", email_verified: "2024-01-01T00:00:00Z" }], "aj1"],
+      [
+        "betterauth",
+        [{ user_id: "ba1", email: "a@x.dev", email_verified: true, password_hash: BCRYPT }],
+        "ba1",
+      ],
+      [
+        "supabase",
+        [
           {
             id: "sb1",
             email: "a@x.dev",
             email_confirmed_at: "2024-06-29 20:25:06+00",
             encrypted_password: BCRYPT,
           },
-        ]),
-      );
+        ],
+        "sb1",
+      ],
+      ["workos", [{ id: "user_01ABC", email: "a@x.dev", email_verified: true }], "user_01ABC"],
+    ];
 
-      await run({ ...baseOptions, source: "supabase" });
+    test.each(PLATFORMS)(
+      "%s transforms, validates and imports its export",
+      async (key, records, externalId) => {
+        fs.writeFileSync(path.join(workDir, "export.json"), JSON.stringify(records));
 
-      expect(created()).toEqual(["sb1"]);
-    });
+        await run({ ...baseOptions, source: key });
+
+        expect(created()).toEqual([externalId]);
+        // Each export's verified email is the one the create sends.
+        const create = requests.find(
+          (request) => request.method === "POST" && new URL(request.url).pathname === "/v1/users",
+        );
+        expect(create?.body).toMatchObject({ email_address: ["a@x.dev"] });
+      },
+    );
 
     test("an unknown source fails before signing in", async () => {
       const { secretKey: _key, ...signedOut } = baseOptions;
@@ -830,12 +2155,118 @@ describe("run", () => {
       expect(error.message).toContain('Unknown source "nope"');
     });
 
+    test("firebase imports its wrapped export and builds the scrypt digest", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify({
+          users: [
+            {
+              localId: "fb1",
+              email: "a@x.dev",
+              emailVerified: true,
+              passwordHash: "SGFzaA==",
+              salt: "U2FsdA==",
+            },
+          ],
+        }),
+      );
+
+      await run({
+        ...baseOptions,
+        source: "firebase",
+        firebaseSignerKey: "SIGNER",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      });
+
+      const body = requests.find((r) => r.url.endsWith("/v1/users"))?.body as Record<
+        string,
+        unknown
+      >;
+      expect(body).toMatchObject({
+        external_id: "fb1",
+        password_digest: "SGFzaA==$U2FsdA==$SIGNER$Bw==$8$14",
+        password_hasher: "scrypt_firebase",
+      });
+    });
+
+    // The users a run created carry its parameters; the rest must match them.
+    test("a firebase run continues only with the hash parameters it started with", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify({
+          users: ["fb1", "fb2"].map((localId) => ({
+            localId,
+            email: `${localId}@x.dev`,
+            emailVerified: true,
+            passwordHash: "SGFzaA==",
+            salt: "U2FsdA==",
+          })),
+        }),
+      );
+      const flags = {
+        ...baseOptions,
+        source: "firebase",
+        firebaseSignerKey: "SIGNER",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      };
+      stubClerk({ failing: new Set(["fb2"]) });
+      await run(flags);
+      expect(readRun(runsDir(), listRuns(runsDir())[0]!.id)?.firebaseHash).toMatch(
+        /^[0-9a-f]{64}$/,
+      );
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+      await expect(run({ ...flags, firebaseRounds: 9 })).rejects.toThrow(
+        /different Firebase hash parameters/,
+      );
+      expect(created()).toEqual([]);
+
+      await run(flags);
+      expect(created()).toEqual(["fb2"]);
+    });
+
+    test("the printed command keeps the --firebase-* flags, as placeholders", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify({ users: [{ localId: "fb1", email: "a@x.dev", emailVerified: true }] }),
+      );
+
+      const error = (await run({
+        ...baseOptions,
+        yes: false,
+        source: "firebase",
+        firebaseSignerKey: "SIGNER",
+        firebaseSaltSeparator: "Bw==",
+        firebaseRounds: 8,
+        firebaseMemCost: 14,
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.examples?.[0]?.command).toContain(
+        "--firebase-signer-key SIGNER_KEY --firebase-salt-separator SALT_SEPARATOR --firebase-rounds ROUNDS --firebase-mem-cost MEM_COST",
+      );
+    });
+
+    test("a partial firebase flag set fails before anything is read", async () => {
+      await expect(
+        run({ ...baseOptions, source: "firebase", firebaseSignerKey: "SIGNER" }),
+      ).rejects.toThrow(/--firebase-salt-separator/);
+      expect(requests).toHaveLength(0);
+    });
+
     test("an unknown source fails listing the valid keys", async () => {
       const error = (await run({ ...baseOptions, source: "nope" }).catch(
         (caught: unknown) => caught,
       )) as CliError;
       expect(error.exitCode).toBe(EXIT_CODE.USAGE);
-      expect(error.message).toContain('Unknown source "nope". Valid sources: clerk, supabase.');
+      expect(error.message).toContain(
+        'Unknown source "nope". Valid sources: clerk, auth0, authjs, betterauth, firebase, supabase, workos.',
+      );
       expect(requests).toHaveLength(0);
     });
   });

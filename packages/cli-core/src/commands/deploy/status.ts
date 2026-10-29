@@ -1,6 +1,19 @@
 import { resolveProfile } from "../../lib/config.ts";
-import { errorMessage, PlapiError, UserAbortError } from "../../lib/errors.ts";
+import { detectFramework } from "../../lib/framework.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  errorMessage,
+  PlapiError,
+  UserAbortError,
+} from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
+import {
+  credentialPlaceholder,
+  discoverEnabledOAuthProviderSlugs,
+  OAUTH_KEY_PREFIX,
+} from "../../lib/oauth-config.ts";
+import { currentCliPrefix } from "../../lib/cli-invocation.ts";
 import {
   fetchApplication,
   fetchInstanceConfig,
@@ -23,16 +36,18 @@ import {
   classifyDomainPending,
   domainsDashboardUrl,
   instanceDashboardUrl,
+  appleProjectNextStep,
+  keyPullCommand,
   nativeAppleGuidance,
   nativeApplicationsDashboardUrl,
   pendingRecordComponents,
   type DeployComponentStatus,
 } from "./copy.ts";
-import { mapDeployError } from "./errors.ts";
+import { mapDeployError, type MapDeployErrorOptions } from "./errors.ts";
 import {
-  OAUTH_KEY_PREFIX,
   buildOAuthProviderDescriptors,
   hasProviderRequiredCredentials,
+  oauthWalkthroughUrls,
   inspectNativeAppleConfiguration,
   hasHostedAppleIdentifier,
   nativeAppleBundleId,
@@ -85,6 +100,47 @@ export type DeployStatusState =
  */
 export type DomainComponentState = "complete" | "pending";
 
+/**
+ * What it takes to give one pending provider its production credentials
+ * without the wizard: what the provider's OAuth app must allow, and how to
+ * save the credentials. Each entry stands on its own, because the report
+ * carries them while the domain is still pending and `nextAction` is about DNS.
+ */
+export type OAuthSetupGuide = {
+  provider: string;
+  label: string;
+  configKey: string;
+  fields: {
+    key: string;
+    label: string;
+    /** Counts toward `oauth.complete`; the rest are optional. */
+    required: boolean;
+    secret: boolean;
+    options?: string[];
+    /** The value is the contents of a file, such as Apple's `.p8` key, not its path. */
+    fileContents?: true;
+  }[];
+  redirectUri: string;
+  authorizedOrigins: string[];
+  docsUrl: string;
+  note: string | null;
+  /** The document `command` takes, with a `<key>` placeholder for each required field. */
+  payload: Record<string, Record<string, unknown>>;
+  /** Reads `payload` from a file so client secrets stay off the command line. */
+  command: string;
+};
+
+/** A command that copies the production keys to one host, for an agent to copy verbatim and run. */
+export type HostSetupEntry = {
+  /** The host's slug, e.g. `vercel`. */
+  host: string;
+  label: string;
+  /** The shells `command` is written for. */
+  shells: string[];
+  /** Pipes `clerk env pull --print` into the host's CLI, so the keys never reach the agent's output. */
+  command: string;
+};
+
 export interface DeployStatusReport {
   complete: boolean;
   state: DeployStatusState;
@@ -96,14 +152,36 @@ export interface DeployStatusReport {
     mail: DomainComponentState;
   } | null;
   pendingDnsRecords: { type: "CNAME"; host: string; value: string; required: boolean }[];
-  oauth: { complete: boolean; configured: string[]; pending: string[]; unsupported: string[] };
+  oauth: {
+    complete: boolean;
+    configured: string[];
+    pending: string[];
+    unsupported: string[];
+    /**
+     * One entry per provider in `pending`, except Apple while
+     * `nativeAppleReadinessIssue` is set: native-only Apple needs that fix,
+     * not the web credentials an entry asks for.
+     */
+    setup: OAuthSetupGuide[];
+  };
   nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
+  /**
+   * Present when the command ran in an iOS or macOS app's directory. Clerk's
+   * side can't see the Xcode project, so `nextAction` points at `clerk doctor`
+   * for the Release build's key, Associated Domain, and native registration.
+   */
+  appleProject?: true;
   /**
    * Dashboard pages for this deploy: the production instance and its Domains
    * page. Null before a production instance exists, and when the run was
    * interrupted before the state could be read.
    */
   urls: { domains: string; instance: string } | null;
+  /**
+   * Commands that put the production keys on a host without the agent
+   * reading them, at `complete` only; `[]` in every other state.
+   */
+  hostSetup: HostSetupEntry[];
   /**
    * Derived, never written: every constructor goes through `withNextAction`,
    * which renders this from `deployNextStep` over the other fields. Assigning
@@ -125,14 +203,20 @@ export type DeployNextStep =
   | {
       kind: "complete";
       domain: string;
+      productionInstanceId: string | null;
       oauthUnsupported: readonly string[];
       instanceUrl: string | null;
+      appleProject?: boolean;
     }
   | {
       kind: "oauth_pending";
       oauthPending: readonly string[];
       oauthUnsupported: readonly string[];
       nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
+      /** Labels of `oauth.setup` entries with a field that takes a file's contents. */
+      setupFromFile: readonly string[];
+      /** How many entries `oauth.setup` has, those included. */
+      setupCount: number;
     }
   | {
       kind: "records_available" | "records_unavailable" | "ssl_pending" | "finalizing";
@@ -166,6 +250,8 @@ export type LiveDeploySnapshot = Omit<
   unsupportedOAuthProviders: string[];
   nativeApple?: NativeAppleConfiguration;
   nativeAppleReadinessIssue?: NativeAppleReadinessIssue;
+  /** Whether the command runs in an iOS or macOS app's directory. */
+  appleProject?: boolean;
 };
 
 export type DeployState =
@@ -187,6 +273,47 @@ export type DiscoveredOAuthProviders = {
   descriptors: OAuthProviderDescriptor[];
   unsupported: string[];
 };
+
+/**
+ * For requests about the production domain: a 404 there means Clerk can't
+ * return the domain's status yet. The application was read moments earlier,
+ * so the default reading (the application is gone; re-link) would be wrong.
+ */
+function domainRequest(options: DomainCheckOptions = {}): MapDeployErrorOptions<never> {
+  return {
+    onNotFound: () =>
+      domainStatusNotFoundError(
+        "The production instance exists, but Clerk couldn't read its domain status yet. " +
+          "Run `clerk deploy status` again shortly.",
+        options,
+      ),
+  };
+}
+
+/** `justCreated`: this run created the production instance, so it can't be the deleted one. */
+export type DomainCheckOptions = { justCreated?: boolean };
+
+/**
+ * Every `deploy_instance_unresolved` error for a 404 on the production
+ * domain's status. That 404 also follows a production instance deleted since.
+ * `clerk link` can't help there (an already-linked profile is left as it is,
+ * and deploy state comes from Clerk's list), so the message says what will:
+ * once Clerk stops listing the instance, status reports `not_started` and
+ * `clerk deploy --domain` creates a new one. Left out when this run just
+ * created the instance, which can't be the deleted one.
+ */
+export function domainStatusNotFoundError(
+  message: string,
+  { justCreated = false }: { justCreated?: boolean } = {},
+): CliError {
+  return new CliError(
+    justCreated
+      ? message
+      : `${message} If the production instance was deleted, \`clerk deploy status\` reports ` +
+          "`not_started` once Clerk stops listing it; then run `clerk deploy --domain`.",
+    { code: ERROR_CODE.DEPLOY_INSTANCE_UNRESOLVED },
+  );
+}
 
 export async function resolveDeployContext(): Promise<DeployContext> {
   const resolved = await withSpinner("Resolving linked Clerk application...", async () =>
@@ -232,8 +359,31 @@ export async function resolveLiveApplicationContext(profile: DeployContext["prof
   };
 }
 
+/**
+ * The production instance to read: the one Clerk's application list shows,
+ * else the one this run already holds from Clerk in `ctx` (an earlier read in
+ * the same run, or its own create's response) while the list trails a
+ * create. Never the id saved in the profile: an instance deleted since would
+ * read as provisioning forever. An empty id names no instance, as with
+ * `rememberProductionInstance`.
+ */
+function productionInstanceToRead(
+  listed: string | undefined,
+  thisRun: string | undefined,
+): string | undefined {
+  return listed || thisRun || undefined;
+}
+
+/** Which instance it reads: see {@link productionInstanceToRead}. */
 export async function resolveDeployState(ctx: DeployContext): Promise<DeployState> {
-  const live = await resolveLiveApplicationContext(ctx.profile);
+  const application = await resolveLiveApplicationContext(ctx.profile);
+  const live = {
+    ...application,
+    productionInstanceId: productionInstanceToRead(
+      application.productionInstanceId,
+      ctx.productionInstanceId,
+    ),
+  };
   if (!live.productionInstanceId) return { kind: "not_started" };
 
   // The read-only status path surfaces domain-status read failures instead of
@@ -342,9 +492,10 @@ export async function resolveLiveDeploySnapshot(
   const productionInstanceId = ctx.productionInstanceId;
   if (!productionInstanceId) return undefined;
 
-  const [domain, oauth] = await Promise.all([
+  const [domain, oauth, appleProject] = await Promise.all([
     loadProductionDomain(ctx),
     loadDevelopmentOAuthProviders(ctx),
+    inAppleProject(),
   ]);
   if (!domain) return undefined;
 
@@ -408,6 +559,7 @@ export async function resolveLiveDeploySnapshot(
     unsupportedOAuthProviderCount: unsupported.length,
     unsupportedOAuthProviders: unsupported,
     nativeApple,
+    appleProject,
     nativeAppleReadinessIssue:
       nativeApple && nativeApple.status !== "ready"
         ? {
@@ -424,6 +576,20 @@ export async function resolveLiveDeploySnapshot(
     domainComplete,
     pending: resolvePendingStep(pendingOAuthDescriptor, domainComplete),
   };
+}
+
+/**
+ * Whether this directory is an iOS or macOS app — the same detection `clerk
+ * doctor` uses to run its Xcode checks, so pointing there is only done where
+ * it will check something.
+ */
+export async function inAppleProject(cwd = process.cwd()): Promise<boolean> {
+  try {
+    return (await detectFramework(cwd))?.dep === "ios";
+  } catch (error) {
+    log.debug(`deploy: could not detect the project type: ${errorMessage(error)}`);
+    return false;
+  }
 }
 
 function resolvePendingStep(
@@ -445,7 +611,10 @@ export async function loadInitialDeployStatus(
   options: SnapshotOptions = {},
 ): Promise<{ status: DomainStatusResponse; live: boolean }> {
   try {
-    const status = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
+    const status = await mapDeployError(
+      getApplicationDomainStatus(appId, domainIdOrName),
+      domainRequest(),
+    );
     return { status, live: true };
   } catch (error) {
     if (options.throwOnStatusError) throw error;
@@ -469,22 +638,25 @@ function domainComponentState(value: boolean): DomainComponentState {
   return value ? "complete" : "pending";
 }
 
+/** `cli` starts every command the report hands over to run as given. */
 export function buildDeployStatusReport(
   state: DeployState,
   outcome: DeployStatusOutcome | null,
+  cli: string = currentCliPrefix(),
 ): DeployStatusReport {
-  return withNextAction(buildDeployStatusFacts(state, outcome));
+  return withNextAction(buildDeployStatusFacts(state, outcome, cli), cli);
 }
 
 type DeployStatusFacts = Omit<DeployStatusReport, "nextAction">;
 
-function withNextAction(facts: DeployStatusFacts): DeployStatusReport {
-  return { ...facts, nextAction: agentNextAction(deployNextStep(facts)) };
+function withNextAction(facts: DeployStatusFacts, cli: string): DeployStatusReport {
+  return { ...facts, nextAction: agentNextAction(deployNextStep(facts), cli) };
 }
 
 function buildDeployStatusFacts(
   state: DeployState,
   outcome: DeployStatusOutcome | null,
+  cli: string,
 ): DeployStatusFacts {
   if (state.kind === "not_started") {
     return {
@@ -494,8 +666,9 @@ function buildDeployStatusFacts(
       productionInstanceId: null,
       domainStatus: null,
       pendingDnsRecords: [],
-      oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+      oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
       urls: null,
+      hostSetup: [],
     };
   }
 
@@ -507,8 +680,9 @@ function buildDeployStatusFacts(
       productionInstanceId: state.productionInstanceId,
       domainStatus: null,
       pendingDnsRecords: [],
-      oauth: { complete: false, configured: [], pending: [], unsupported: [] },
+      oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
       urls: dashboardUrls(state.appId, state.productionInstanceId),
+      hostSetup: [],
     };
   }
 
@@ -544,12 +718,121 @@ function buildDeployStatusFacts(
       configured: [...snapshot.completedOAuthProviders],
       pending: oauthPending,
       unsupported: [...snapshot.unsupportedOAuthProviders],
+      setup: oauthSetupGuides(snapshot, oauthPending, cli),
     },
     nativeAppleReadinessIssue: snapshot.nativeAppleReadinessIssue,
+    ...(snapshot.appleProject ? { appleProject: true as const } : {}),
     urls: snapshot.productionInstanceId
       ? dashboardUrls(snapshot.appId, snapshot.productionInstanceId)
       : null,
+    hostSetup: complete ? hostSetupEntries(snapshot.productionInstanceId ?? null, cli) : [],
   };
+}
+
+function oauthSetupGuides(
+  snapshot: LiveDeploySnapshot,
+  pending: readonly string[],
+  cli: string,
+): OAuthSetupGuide[] {
+  const urls = oauthWalkthroughUrls(snapshot.domain, snapshot.frontendApiUrl);
+  // The id, not `prod`: that alias reads the local profile, which has no
+  // production instance when it was created elsewhere.
+  const instance = snapshot.productionInstanceId ?? "prod";
+  return snapshot.oauthProviderDescriptors
+    .filter(
+      (descriptor) =>
+        pending.includes(descriptor.provider) &&
+        !(descriptor.provider === "apple" && snapshot.nativeAppleReadinessIssue),
+    )
+    .map((descriptor) => ({
+      provider: descriptor.provider,
+      label: descriptor.label,
+      configKey: descriptor.configKey,
+      fields: descriptor.fields.map((field) => ({
+        key: field.key,
+        // The schema's description of the config field. `label` is the
+        // wizard's prompt, which for a key file asks for a path.
+        label: field.description ?? field.label,
+        required: descriptor.requiredCredentialKeys.includes(field.key),
+        secret: field.secret,
+        ...(field.options && { options: field.options }),
+        ...(field.filePath && { fileContents: true as const }),
+      })),
+      ...urls,
+      docsUrl: descriptor.docsUrl,
+      note: descriptor.gotcha,
+      payload: {
+        [descriptor.configKey]: {
+          enabled: true,
+          ...Object.fromEntries(
+            descriptor.requiredCredentialKeys.map((key) => [key, credentialPlaceholder(key)]),
+          ),
+        },
+      },
+      command: `${cli} config patch --instance ${instance} --file <file> --yes`,
+    }));
+}
+
+/**
+ * The Vercel command for `hostSetup`, which copies the production keys into
+ * Vercel without the agent reading them. It exits 1 when the pull, the variable
+ * listing, or an upload fails or the listing can't be read, and 3, before
+ * uploading, when a key is already a production variable shared with another
+ * environment, which `--force` might rewrite.
+ */
+function vercelKeyCopyCommand(pull: string): string {
+  return (
+    // `set +x` comes first, or a caller's `set -x` traces each line holding a
+    // key to stderr, which the agent reads. The keys go into a variable first
+    // so a failed pull exits before any upload, and the subshell keeps `exit`
+    // and `pipefail` out of the agent's shell.
+    `( set +x; allow_shared=0; set -o pipefail; keys=$(${pull}) || exit 1; ` +
+    // `NETLIFY` or a non-zero `FORCE_HYPERLINK` turns Vercel's links on even in
+    // a pipe, and their codes hide the commas the shared check reads;
+    // `FORCE_HYPERLINK=0` overrides both, and `--no-color` with `FORCE_COLOR=0`
+    // turns color off. A failed listing's output is Vercel's error, which names
+    // the fix (`vercel login`, `vercel link`) and holds no key, so it goes to
+    // stderr, or the agent gets exit 1 with no reason.
+    `e=$(printf '\\033'); vars=$(FORCE_COLOR=0 FORCE_HYPERLINK=0 vercel env ls --no-color 2>&1 | sed "s/$e\\[[0-9;]*m//g") || { printf '%s\\n' "$vars" >&2; exit 1; }; ` +
+    // Codes `sed` doesn't strip could hide those commas too, so any escape code
+    // left stops the command instead of being misread.
+    `case "$vars" in *"$e"*) echo "vercel env ls printed escape codes this command can't read; check the project's variables before replacing any." >&2; exit 1 ;; esac; ` +
+    // `>/dev/null`, not `grep -q`: `grep -q` exits at its first match, so in
+    // bash a long listing's `printf` fails writing to the closed pipe, and
+    // `pipefail` makes that exit 1.
+    `printf '%s\\n' "$vars" | grep -iE "^[[:space:]]*name[[:space:]].*environments|No Environment Variables found" >/dev/null || ` +
+    `{ echo "Couldn't read the variable list from vercel env ls; check the project's variables before replacing any." >&2; exit 1; }; ` +
+    `shared=$(printf '%s\\n' "$keys" | cut -d= -f1 | while read -r name; do ` +
+    // An `if`, not `grep ... && echo`: with no shared key the `&&` form ends
+    // the loop with grep's 1, which `pipefail` carries into `shared=$(...)`, so
+    // a caller's `set -e` exits there before uploading. `${name}` has braces
+    // because zsh reads `$name[` as an array subscript.
+    `if printf '%s\\n' "$vars" | grep -E "^[[:space:]]*\${name}[[:space:]]" | grep -iE "production[[:space:]]*,|,[[:space:]]*production" >/dev/null; then echo "$name"; fi; done); ` +
+    // Consent is the command's own `allow_shared=0` changed to `1` for one
+    // rerun: the command sets it, so an `allow_shared` the caller exported
+    // doesn't count.
+    `if [ -n "$shared" ] && [ "$allow_shared" != 1 ]; then ` +
+    `echo "Also set for an environment other than Production: $shared" >&2; exit 3; fi; ` +
+    // Each line splits at its first `=` by parameter expansion: bash's
+    // `IFS='=' read -r key value` drops a single trailing `=` and still exits 0.
+    `printf '%s\\n' "$keys" | while IFS= read -r line; do key=\${line%%=*}; value=\${line#*=}; ` +
+    // `--force` makes `vercel env add` send its upsert flag, so it replaces an
+    // existing production variable, and one usually exists, holding
+    // development's key.
+    `printf '%s' "$value" | vercel env add "$key" production --force || exit 1; done )`
+  );
+}
+
+/** The `hostSetup` entries at `complete`: one per host the CLI has a recipe for. */
+function hostSetupEntries(productionInstanceId: string | null, cli: string): HostSetupEntry[] {
+  return [
+    {
+      host: "vercel",
+      label: "Vercel",
+      shells: ["bash", "zsh"],
+      command: vercelKeyCopyCommand(keyPullCommand(cli, productionInstanceId)),
+    },
+  ];
 }
 
 function dashboardUrls(appId: string, productionInstanceId: string): DeployStatusReport["urls"] {
@@ -568,17 +851,23 @@ function dashboardUrls(appId: string, productionInstanceId: string): DeployStatu
  * "unknown" instead, so an agent parsing stdout gets a well-formed document
  * rather than the empty output this path used to produce.
  */
-export function buildInterruptedDeployStatusReport(): DeployStatusReport {
-  return withNextAction({
-    complete: false,
-    state: "interrupted",
-    domain: null,
-    productionInstanceId: null,
-    domainStatus: null,
-    pendingDnsRecords: [],
-    oauth: { complete: false, configured: [], pending: [], unsupported: [] },
-    urls: null,
-  });
+export function buildInterruptedDeployStatusReport(
+  cli: string = currentCliPrefix(),
+): DeployStatusReport {
+  return withNextAction(
+    {
+      complete: false,
+      state: "interrupted",
+      domain: null,
+      productionInstanceId: null,
+      domainStatus: null,
+      pendingDnsRecords: [],
+      oauth: { complete: false, configured: [], pending: [], unsupported: [], setup: [] },
+      urls: null,
+      hostSetup: [],
+    },
+    cli,
+  );
 }
 
 /**
@@ -600,8 +889,10 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
       return {
         kind: "complete",
         domain: report.domain ?? "",
+        productionInstanceId: report.productionInstanceId,
         oauthUnsupported: report.oauth.unsupported,
         instanceUrl: report.urls?.instance ?? null,
+        appleProject: report.appleProject === true,
       };
     case "oauth_pending":
       return {
@@ -609,6 +900,10 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
         oauthPending: report.oauth.pending,
         oauthUnsupported: report.oauth.unsupported,
         nativeAppleReadinessIssue: report.nativeAppleReadinessIssue,
+        setupFromFile: report.oauth.setup
+          .filter((entry) => entry.fields.some((field) => field.fileContents))
+          .map((entry) => entry.label),
+        setupCount: report.oauth.setup.length,
       };
     case "domain_pending": {
       // DNS and email DNS are records someone has to add at the registrar;
@@ -631,7 +926,7 @@ export function deployNextStep(report: DeployStatusFacts): DeployNextStep {
 }
 
 /** The `nextAction` sentence: written for an agent that will relay it to a person. */
-export function agentNextAction(step: DeployNextStep): string {
+export function agentNextAction(step: DeployNextStep, cli: string): string {
   // In development Clerk supplies shared OAuth credentials; in production it
   // doesn't, so a provider the CLI couldn't configure has a sign-in button
   // that fails for real users. `oauth.complete` only covers what the CLI
@@ -646,21 +941,78 @@ export function agentNextAction(step: DeployNextStep): string {
     url
       ? ` Ask the user to visit the Clerk Dashboard domains page, or offer to open it: ${url}`
       : "";
+  // The person types the secrets into the file: pasted into chat, they end up
+  // in the agent's transcript. The file lives outside the project (so it
+  // can't be committed), is readable only by the user (`mktemp`), is written
+  // by a shell command (some agent tools echo files they wrote back to the
+  // agent), and is removed whether or not the command succeeds. The wrapper
+  // keeps the command's status: `<command>; rm -f` would report the rm's.
+  // A private key pasted into JSON needs its newlines escaped, and a mistake
+  // only shows when someone signs in, so an entry that takes a file's
+  // contents never goes through that file: the wizard reads the key by path,
+  // and skips providers already saved, so the others go first.
+  const oauthSetupSteps = (fromFile: readonly string[], entryCount: number): string => {
+    const names = fromFile.join(", ");
+    const fileSteps =
+      `For each entry in \`oauth.setup\`${fromFile.length > 0 ? ` other than ${names}'s` : ""}: ` +
+      "have the user create the provider's OAuth app with its `redirectUri` and " +
+      "`authorizedOrigins`. Create a file for the entry outside the project with `mktemp` (it " +
+      "prints the path, and only your user can read the file), and write the entry's `payload` " +
+      "into it with a shell command rather than a file tool, as it is, placeholders included: " +
+      "`printf '%s' '<payload>' > <path>`. Ask the user to replace each `<placeholder>` with the " +
+      "real value; don't ask for the values or read the file. Then run " +
+      '`( rc=0; <command> || rc=$?; rm -f "<path>"; exit "$rc" )`, with the entry\'s `command` as ' +
+      "`<command>` and that path as its `<file>`: it keeps the command's exit status and removes " +
+      "the file whether or not the command succeeds.";
+    if (fromFile.length === 0) return fileSteps;
+    const wizard = `\`clerk deploy\` in a terminal for ${names}: the wizard reads the key from its file.`;
+    if (entryCount > fromFile.length) {
+      const subject =
+        fromFile.length === 1 ? `${names}'s entry takes` : `The entries for ${names} take`;
+      return (
+        `${fileSteps} ${subject} a file's contents (a private key), which is easy to break when ` +
+        `pasted into JSON. Save the other \`oauth.setup\` entries first, then send the user to ${wizard}`
+      );
+    }
+    const subject =
+      fromFile.length === 1
+        ? `${names}'s entry in \`oauth.setup\` takes`
+        : `The entries for ${names} in \`oauth.setup\` take`;
+    return (
+      `${subject} a file's contents (a private key), which is easy to break when pasted into ` +
+      `JSON, so don't write ${fromFile.length === 1 ? "it" : "them"} to a file. ` +
+      `Send the user to ${wizard}`
+    );
+  };
+  // Only a Bundle ID reads as native-only (production first, development as
+  // the fallback), yet the app may also offer Apple sign-in on the web, which
+  // development serves with Clerk's shared credentials. #509's wizard asks
+  // about web credentials here; the agent has no prompt, so the report says it.
   const nativeApple =
     "nativeAppleReadinessIssue" in step && step.nativeAppleReadinessIssue
-      ? ` ${nativeAppleGuidance(step.nativeAppleReadinessIssue)}`
+      ? ` ${nativeAppleGuidance(step.nativeAppleReadinessIssue)}` +
+        " If the app also offers Sign in with Apple on the web, production needs Apple web " +
+        "credentials too; the user can add them with `clerk deploy` in a terminal."
       : "";
 
   switch (step.kind) {
     case "not_started":
+      // Creating the instance is hard to undo and the domain is the user's
+      // to choose, so the sentence makes asking the first step. Clerk's list
+      // can trail a create, so this state can follow one, and a rerun on the
+      // same domain resumes rather than creating twice.
       return (
-        "No production instance yet. `clerk deploy` configures production interactively and " +
-        "needs a human terminal, ask the user to run `clerk deploy`, then run `clerk deploy status` to verify."
+        "No production instance yet. Ask the user which domain they own for production " +
+        "(for example example.com; a hosting provider's URL such as *.vercel.app won't work), " +
+        "then run `clerk deploy --domain <domain>` to create it and get the DNS records to add. " +
+        "If `clerk deploy --domain` just succeeded, Clerk may not list the instance yet: rerun it " +
+        "with the same domain instead of asking the user for a new one. " +
+        "Verify with `clerk deploy status`."
       );
     case "domain_provisioning":
       return (
         "A production instance exists but its domain is still provisioning. " +
-        "Run `clerk deploy status` again shortly, or ask the user to finish `clerk deploy`." +
+        "Run `clerk deploy status` again shortly." +
         domains(step.domainsUrl)
       );
     case "interrupted":
@@ -668,28 +1020,54 @@ export function agentNextAction(step: DeployNextStep): string {
         "Interrupted before the deploy status could be read, so nothing is known about this " +
         "deploy. Run `clerk deploy status` again to check it."
       );
-    case "complete":
+    case "complete": {
+      const pull = keyPullCommand(cli, step.productionInstanceId);
       // Complete on Clerk's side only. The app keeps running on development
       // keys until the production keys reach the host, and the report can't
       // tell whether that already happened — hence "if you haven't already".
       // Nothing is left to monitor on the Domains page here, so the pointer is
       // the instance itself (users, settings, billing) rather than the shared
       // "visit the domains page" clause every pending state carries.
+      // `--print` rather than a bare `env pull`: that one writes the
+      // production keys into the local env file, over the development ones.
+      // The id rather than `prod` for the same reason as `oauth.setup`. A
+      // pipe the agent never reads: `--print` output holds the secret key,
+      // and an agent that reads it puts it in its own transcript.
       return (
         `Clerk's production setup for https://${step.domain} is verified. If you haven't already: ` +
-        `run \`clerk env pull --instance prod\`, set those keys on your host alongside the other ` +
-        `Clerk variables from your env file, redeploy, then sign up at https://${step.domain} to confirm.` +
+        `put the production keys on the host without reading them, by piping them to the host's CLI. ` +
+        `For Vercel, run the \`command\` from the \`hostSetup\` entry whose \`host\` is \`vercel\` ` +
+        `in bash or zsh, copied verbatim from the field. ` +
+        `It reads the keys and the variable list (\`vercel env ls\`) before changing anything, and it stops ` +
+        `with exit 1 if it can't read that list. If a key is already set as a production variable that also ` +
+        `targets another environment (Preview, Development, or a custom one), it stops with exit 3 and names ` +
+        `it: ask the user before replacing it, because \`--force\` may rewrite that shared variable and put ` +
+        `the production secret key in those deployments. If they agree, run the command again with its \`allow_shared=0\` changed to ` +
+        `\`allow_shared=1\`. Otherwise it replaces the production values and exits non-zero if the pull or ` +
+        `any upload fails; redeploy only after it exits 0. ` +
+        `For a host without a CLI, ask the user to run \`${pull}\` in a separate terminal, not through ` +
+        `this session (a shell escape such as Claude Code's \`!\` would put the keys in your transcript), ` +
+        `and add each line as a production environment variable. On macOS, \`${pull} | pbcopy\` copies ` +
+        `the lines to the clipboard without showing them. Set them alongside the other Clerk variables from your env file, ` +
+        `redeploy, then sign up at https://${step.domain} to confirm.` +
         unsupported(step.oauthUnsupported) +
+        (step.appleProject ? ` ${appleProjectNextStep()}` : "") +
         (step.instanceUrl
           ? ` Manage users, settings, and billing for this instance: ${step.instanceUrl}`
           : "")
       );
-    case "oauth_pending":
+    }
+    case "oauth_pending": {
+      const fromFile = step.setupFromFile;
       if (step.nativeAppleReadinessIssue) {
         const hostedPending = step.oauthPending.filter((provider) => provider !== "apple");
+        // Apple has no `oauth.setup` entry here; the others still do. No
+        // wizard alternative: it asks for Apple web credentials and pauses
+        // there if the user declines.
         const hostedAction =
           hostedPending.length > 0
-            ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}.`
+            ? ` These OAuth providers are also missing production credentials: ${hostedPending.join(", ")}. ` +
+              oauthSetupSteps(fromFile, step.setupCount)
             : "";
         return (
           `Domain verified, but setup is incomplete.${nativeApple}` +
@@ -698,13 +1076,22 @@ export function agentNextAction(step: DeployNextStep): string {
           unsupported(step.oauthUnsupported)
         );
       }
+      const entryCount = step.setupCount;
       // The domain is verified, so there is nothing to monitor on the Domains
-      // page; the wizard is the only way to supply credentials.
+      // page. With every entry already sent to the wizard, offering it again
+      // would only repeat the sentence before.
+      const wizardAlternative =
+        entryCount > fromFile.length
+          ? "Or the user can run `clerk deploy` in a terminal to enter them interactively. "
+          : "";
       return (
         `Domain verified, but these OAuth providers are missing production credentials: ` +
-        `${step.oauthPending.join(", ")}. Ask the user to finish \`clerk deploy\`, then run \`clerk deploy status\`.` +
+        `${step.oauthPending.join(", ")}. ${oauthSetupSteps(fromFile, entryCount)} ` +
+        wizardAlternative +
+        `Then run \`clerk deploy status\`.` +
         unsupported(step.oauthUnsupported)
       );
+    }
     case "records_available":
       return (
         `${step.records} records not found yet for ${step.domain}. ` +
@@ -749,28 +1136,18 @@ export async function loadProductionDomain(
   return domains.data.find((domain) => !domain.is_satellite) ?? domains.data[0];
 }
 
-export function discoverEnabledOAuthProviderSlugs(config: Record<string, unknown>): string[] {
-  const providers: string[] = [];
-  for (const [key, value] of Object.entries(config)) {
-    if (!key.startsWith(OAUTH_KEY_PREFIX)) continue;
-    if (!value || typeof value !== "object") continue;
-    if ((value as Record<string, unknown>).enabled !== true) continue;
-    providers.push(key.slice(OAUTH_KEY_PREFIX.length));
-  }
-  return providers;
-}
-
 export async function waitForDeployStatus(
   appId: string,
   domainIdOrName: string,
   domain: string,
   handlers: DeployProgressHandlers,
-  options: { triggerCheck?: boolean } = {},
+  options: { triggerCheck?: boolean } & DomainCheckOptions = {},
 ): Promise<DeployStatusOutcome> {
+  const notFound = domainRequest(options);
   if (options.triggerCheck !== false) {
-    await triggerDeployStatusCheck(appId, domainIdOrName);
+    await triggerDeployStatusCheck(appId, domainIdOrName, options);
   }
-  let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
+  let response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName), notFound);
   let status = deployComponentStatusFromDomainStatus(response);
   handlers.onStatus?.({ verified: response.status === "complete", status });
 
@@ -790,7 +1167,7 @@ export async function waitForDeployStatus(
       );
       retriesRemaining--;
       nextRetryDelay *= DEPLOY_STATUS_BACKOFF_FACTOR;
-      response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName));
+      response = await mapDeployError(getApplicationDomainStatus(appId, domainIdOrName), notFound);
       status = deployComponentStatusFromDomainStatus(response);
       handlers.onStatus?.({ verified: response.status === "complete", status });
       if (response.status === "complete") return true;
@@ -826,9 +1203,13 @@ async function sleepWithRetryCountdown(
 export async function triggerDeployStatusCheck(
   appId: string,
   domainIdOrName: string,
+  options: DomainCheckOptions = {},
 ): Promise<void> {
   try {
-    await mapDeployError(triggerApplicationDomainDNSCheck(appId, domainIdOrName));
+    await mapDeployError(
+      triggerApplicationDomainDNSCheck(appId, domainIdOrName),
+      domainRequest(options),
+    );
   } catch (error) {
     if (error instanceof PlapiError && error.status === 409 && error.code === "conflict") {
       log.debug("DNS check is already in flight; continuing to poll domain status.");

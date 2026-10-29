@@ -91,6 +91,12 @@ Partially updates instance configuration using a PATCH request. Only the fields 
 
 Input can be provided via `--json` (inline), `--file` (path to a JSON file), or piped to stdin. When running interactively, the command shows the payload and prompts for confirmation before sending.
 
+The diff printed before a `patch` or `put`, the response it prints to stdout afterwards (including a server-side `--dry-run`'s), and that response in the `--verbose` log of the config writer the `orgs` and `billing` commands use all show string values under keys named like a secret (`*secret*`, `*private_key*`) as `[REDACTED]`, so credentials do not end up in terminal scrollback or captured output. `--verbose` still logs the raw body of a failed request (the shared request logger), so `--verbose` output is not guaranteed free of secrets.
+
+`patch` and `put` refuse, before any config read or write (dry runs included), a payload whose `connection_oauth_*` entry still holds a placeholder from `clerk deploy`'s `oauth.setup`: the value `<key>` under that same key, e.g. `<client_secret>` under `client_secret`. The error names each such field and exits 2. Only that exact value under that key counts, so no real credential is refused.
+
+They also refuse, at the same point, a payload that holds the exact text `[REDACTED]` under a key the redaction covers (`*secret*`, `*private_key*`): that is their own output fed back in, and saved it would replace the real secret. The error names each such field and exits 2.
+
 ```sh
 clerk config patch --json '{"session":{"lifetime":3600}}'
 clerk config patch --app app_123 --json '{"session":{"lifetime":3600}}'
@@ -181,6 +187,14 @@ Both must hold, otherwise the account-authenticated path runs unchanged:
 **Account credentials are not part of this decision.** Accountless mode works with or without `CLERK_PLATFORM_API_KEY` and with or without a `clerk auth login` session — the instance secret key is sufficient on its own. What rules it out is an explicit destination (`--app` or a linked profile), because that names an application the local secret key may not belong to.
 
 When credentials _are_ present and the directory simply isn't linked, the command prints a warning that it's using the reduced key-based view and points at `clerk link`, so the narrower output is never a silent surprise.
+
+The same path takes a secret key for a **claimed** application, since the key alone doesn't say which it is, and the precedence above doesn't change for it. A refusal (an unsupported key or `instance` field, `put`, `schema`, `--instance`) reads `GET /v1/instance` once to word itself, and only a refusal makes that request:
+
+- `workspace_id` null: the application is unclaimed, and the refusal says to claim it with `clerk auth login`.
+- `workspace_id` set: the application belongs to an account. The refusal says a secret key can't change those keys, and to pass `--app <id> --instance <dev|prod>` (or run `clerk link`) with `clerk auth login` or `CLERK_PLATFORM_API_KEY`. A login alone isn't enough while the secret key is found, since it takes precedence.
+- The lookup fails: the refusal gives both, and never calls the application unclaimed.
+
+A default `config pull` (no `--keys`) of a claimed application warns that the secret key read only some groups, worded the same way. It reads `workspace_id` from the `instance` group it pulls, so it makes no extra request. A pull with `--keys`, and the read a `patch` makes to diff against, never warn.
 
 The secret key is resolved the way the app itself would resolve one, and this order is shared by every accountless-capable command (`lib/keyless-target.ts`):
 

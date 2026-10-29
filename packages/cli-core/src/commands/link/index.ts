@@ -30,6 +30,28 @@ interface LinkOptions {
   showNextSteps?: boolean;
 }
 
+/**
+ * The link that linking `cwd` to `app` would replace, if any. Inside a Git repository a link is
+ * stored for the whole repository (by remote, else by its Git directory), so relinking any folder
+ * in it moves every project there to `app`. Outside one, only a link stored for `cwd` itself is
+ * replaced. A `newProject` doesn't exist yet, so outside a repository it never replaces one.
+ */
+export async function replacedLink(
+  cwd: string,
+  app: string,
+  { newProject = false }: { newProject?: boolean } = {},
+): Promise<{ appId: string; appName?: string; scope: string } | undefined> {
+  const existing = await resolveProfile(cwd);
+  if (!existing || existing.profile.appId === app) return undefined;
+  const repoRoot = await getGitRepoRoot(cwd);
+  if (!repoRoot && (newProject || existing.path !== cwd)) return undefined;
+  return {
+    appId: existing.profile.appId,
+    appName: existing.profile.appName || undefined,
+    scope: repoRoot ?? cwd,
+  };
+}
+
 export async function link(options: LinkOptions = {}): Promise<void> {
   const agent = isAgent();
   const cwd = options.cwd ?? process.cwd();

@@ -64,7 +64,10 @@ export async function runIOSDoctorChecks(
   }
   const results: CheckResult[] = report.checks.map((check) => ({
     ...check,
-    remedy: check.status === "pass" ? undefined : "Run clerk init to complete the remaining setup.",
+    remedy:
+      check.status === "pass"
+        ? undefined
+        : (check.remedy ?? "Run clerk init to complete the remaining setup."),
   }));
   if (remoteError)
     results.push({

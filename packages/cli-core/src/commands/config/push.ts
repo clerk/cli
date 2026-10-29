@@ -7,8 +7,10 @@ import { closeStatusForError } from "../../lib/signals.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
-import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
+import { keyAccess, resolveInstanceTarget } from "../../lib/keyless-target.ts";
+import { credentialPlaceholder, credentialPlaceholderPaths } from "../../lib/oauth-config.ts";
 import type { KeylessWriteVerification } from "./keyless.ts";
+import { REDACTED, redactSecrets, redactedSecretPaths } from "./redact.ts";
 import {
   assertPayloadWritable,
   LOCAL_DRY_RUN_MESSAGE,
@@ -60,13 +62,15 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   const target = await resolveInstanceTarget(options);
 
   if (target.kind === "keyless" && op.method === "PUT") {
-    throw new CliError(keylessCopy.putNeedsClaimedApplication(), {
+    throw new CliError(keylessCopy.putNeedsClaimedApplication(await keyAccess(target.keyless)), {
       code: ERROR_CODE.AUTH_REQUIRED,
     });
   }
 
   const configPayload = parsePayload(await readInput(options));
-  assertPayloadWritable(target, configPayload);
+  assertNoCredentialPlaceholders(configPayload);
+  assertNoRedactedSecrets(configPayload);
+  await assertPayloadWritable(target, configPayload);
 
   const shouldWrap = !isInsideGutter();
   if (shouldWrap) intro(op.title);
@@ -118,7 +122,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
         failureContext: "Failed to push config",
       }),
     );
-    log.data(JSON.stringify(result.body, null, 2));
+    log.data(JSON.stringify(redactSecrets(result.body), null, 2));
     if (options.dryRun) {
       log.success("[dry-run] Validation passed — no changes applied");
       printNextSteps(
@@ -143,6 +147,46 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
       }
     }
   }
+}
+
+/**
+ * `clerk deploy`'s `oauth.setup` payload is a template the user fills in.
+ * Saved with a placeholder left, the placeholder would become the production
+ * credential, so it is refused before any config read or write, dry runs
+ * included. The message names fields and placeholders only, never a value.
+ */
+function assertNoCredentialPlaceholders(payload: Record<string, unknown>): void {
+  const paths = credentialPlaceholderPaths(payload);
+  if (paths.length === 0) return;
+  const placeholders = paths.map((path) =>
+    credentialPlaceholder(path.slice(path.lastIndexOf(".") + 1)),
+  );
+  throwUsageError(
+    paths.length === 1
+      ? `Nothing was saved: ${paths[0]} still holds its placeholder, ${placeholders[0]}. ` +
+          "Replace it with the real value, then run the command again."
+      : `Nothing was saved: ${new Intl.ListFormat("en", { type: "conjunction" }).format(paths)} ` +
+          `still hold their placeholders (${placeholders.join(", ")}). ` +
+          "Replace them with the real values, then run the command again.",
+  );
+}
+
+/**
+ * `patch` and `put` print secret-named values as `[REDACTED]`. That output fed
+ * back in would save the text over the real secret, so it is refused before
+ * any config read or write, dry runs included.
+ */
+function assertNoRedactedSecrets(payload: Record<string, unknown>): void {
+  const paths = redactedSecretPaths(payload);
+  if (paths.length === 0) return;
+  throwUsageError(
+    paths.length === 1
+      ? `Nothing was saved: ${paths[0]} holds ${REDACTED}, which \`clerk config\` prints in place ` +
+          "of a secret. Replace it with the real value, then run the command again."
+      : `Nothing was saved: ${new Intl.ListFormat("en", { type: "conjunction" }).format(paths)} ` +
+          `hold ${REDACTED}, which \`clerk config\` prints in place of a secret. ` +
+          "Replace them with the real values, then run the command again.",
+  );
 }
 
 /** Parses the raw input into a config object, rejecting anything else. */
@@ -305,12 +349,13 @@ export function printDiff(
       }
       const indent = path ? "      " : "    ";
       const useColor = isHuman();
+      const leaf = path.split(".").pop() || key;
       if (oldVal !== undefined) {
-        const line = `${indent}- ${JSON.stringify(oldVal)}`;
+        const line = `${indent}- ${JSON.stringify(redactSecrets(oldVal, leaf))}`;
         log.raw(useColor ? dim(red(line)) : line);
       }
       if (newVal !== undefined) {
-        const line = `${indent}+ ${JSON.stringify(newVal)}`;
+        const line = `${indent}+ ${JSON.stringify(redactSecrets(newVal, leaf))}`;
         log.raw(useColor ? bold(green(line)) : line);
       }
     }

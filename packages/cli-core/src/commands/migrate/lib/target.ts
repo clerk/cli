@@ -3,9 +3,10 @@
  *
  * `resolveBapiSecretKey` picks the key. This names what that key points at:
  * the instance ID and environment come from `GET /v1/instance`, so every key
- * source yields the same identity. That identity is what the run store keys
- * resumes and undos on, so an app label or an `--instance` alias is never
- * enough on its own.
+ * source yields the same identity. When that call fails, `--app` and a linked
+ * profile use the instance the Platform API or the profile names. That
+ * identity is what the run store keys resumes and undos on, so an app label or
+ * an `--instance` alias is never enough on its own.
  */
 
 import { createHash } from "node:crypto";
@@ -14,11 +15,16 @@ import { dim } from "../../../lib/color.ts";
 import { resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
 import { INSTANCE_ALIASES, resolveAppContext } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
-import { resolveKeylessTarget, SDK_KEYLESS_SOURCE } from "../../../lib/keyless-target.ts";
+import {
+  ENV_VAR_SOURCE_SUFFIX,
+  resolveKeylessTarget,
+  SDK_KEYLESS_SOURCE,
+} from "../../../lib/keyless-target.ts";
 import { log } from "../../../lib/log.ts";
 import { isHuman } from "../../../mode.ts";
 import { detectInstanceType } from "./instance.ts";
 import { retryOn429 } from "./retry.ts";
+import { type CarryOptions, carryFlags } from "./carry-flags.ts";
 import type { RunTarget } from "./run-store.ts";
 
 export type TargetOptions = {
@@ -36,24 +42,78 @@ export type ClerkTarget = RunTarget & {
 };
 
 /**
+ * The key sources a run records by name. A `.env` file or a keyless app is
+ * recorded by its file, so those stay plain strings.
+ */
+export const KEY_SOURCE = {
+  secretKeyFlag: "--secret-key",
+  app: "--app",
+  envVar: `CLERK_SECRET_KEY${ENV_VAR_SOURCE_SUFFIX}`,
+  linkedProfile: "linked profile",
+} as const;
+
+type NamedKeySource = (typeof KEY_SOURCE)[keyof typeof KEY_SOURCE];
+
+type InstanceIdentity = {
+  instanceId: string;
+  env: string;
+  /**
+   * `max_allowed_users`: the user limit Clerk enforces, `null` for none.
+   * Absent when Clerk did not say: an API that predates the field, or a read
+   * that failed.
+   */
+  maxAllowedUsers?: number | null;
+};
+
+/** `max_allowed_users` as {@link InstanceIdentity} carries it. */
+function readUserLimit(value: unknown): { maxAllowedUsers?: number | null } {
+  if (value === null) return { maxAllowedUsers: null };
+  return Number.isInteger(value) && (value as number) >= 0
+    ? { maxAllowedUsers: value as number }
+    : {};
+}
+
+type KeySource = {
+  keySource: string;
+  appId?: string;
+  appLabel?: string;
+  /** No `env` when the instance was named by ID, which is no environment. */
+  instance?: { instanceId: string; env?: string };
+};
+
+/** The app and instance `--app` or a linked profile names. */
+async function fromAppContext(
+  keySource: NamedKeySource,
+  options: TargetOptions,
+): Promise<KeySource> {
+  const ctx = await resolveAppContext(options);
+  return {
+    keySource,
+    appId: ctx.appId,
+    appLabel: ctx.appLabel,
+    instance: {
+      instanceId: ctx.instanceId,
+      // A profile labels a literal `--instance ins_…` with the ID itself.
+      ...(isClerkInstanceId(ctx.instanceLabel) ? {} : { env: ctx.instanceLabel }),
+    },
+  };
+}
+
+/**
  * Which rung of `resolveBapiSecretKey`'s chain supplies the key, and the app
- * it belongs to when that rung knows one.
+ * it belongs to when that rung knows one. `--app` and a linked profile also
+ * know the instance, from the Platform API or the profile.
  *
  * Mirrors the chain's order exactly. An exported `CLERK_SECRET_KEY` wins over
  * a linked profile, so the profile's app is not named for it: that key may
  * belong to any app at all.
  */
-async function describeKeySource(
-  options: TargetOptions,
-): Promise<{ keySource: string; appId?: string; appLabel?: string }> {
-  if (options.secretKey) return { keySource: "--secret-key" };
+async function describeKeySource(options: TargetOptions): Promise<KeySource> {
+  if (options.secretKey) return { keySource: KEY_SOURCE.secretKeyFlag };
 
-  if (options.app) {
-    const ctx = await resolveAppContext({ app: options.app, instance: options.instance });
-    return { keySource: "--app", appId: ctx.appId, appLabel: ctx.appLabel };
-  }
+  if (options.app) return fromAppContext(KEY_SOURCE.app, options);
 
-  if (process.env.CLERK_SECRET_KEY) return { keySource: "CLERK_SECRET_KEY env var" };
+  if (process.env.CLERK_SECRET_KEY) return { keySource: KEY_SOURCE.envVar };
 
   // Only the SDK's own file says the app is accountless: a key in `.env`
   // may belong to any app, an account's included.
@@ -64,8 +124,54 @@ async function describeKeySource(
       : { keySource: keyless.source };
   }
 
-  const ctx = await resolveAppContext({ instance: options.instance });
-  return { keySource: "linked profile", appId: ctx.appId, appLabel: ctx.appLabel };
+  return fromAppContext(KEY_SOURCE.linkedProfile, options);
+}
+
+type TargetCarry = Omit<CarryOptions, "runsDir">;
+type CarryFor = (target: RunTarget, instance?: string) => TargetCarry;
+
+// The key again, as a placeholder: the key alone picks the instance, from
+// any directory. Not `--instance`: in an unlinked directory with a `.env`,
+// the keyless rung refuses it before a profile could resolve it.
+const keyAgain: CarryFor = () => ({ secretKey: "<key>" });
+// The app and the instance. A profile's own link resolves development, and
+// only from a directory linked to that app. Without a real instance, the key:
+// a bare `--app` resolves development too.
+const appAndInstance: CarryFor = (target, instance) =>
+  instance ? { app: target.appId, instance } : keyAgain(target);
+
+/**
+ * For each named key source, what reaches a recorded target again. Every
+ * name needs an entry, so a new one fails to compile until it says how.
+ */
+const TARGET_CARRY: Record<NamedKeySource, CarryFor> = {
+  [KEY_SOURCE.secretKeyFlag]: keyAgain,
+  [KEY_SOURCE.envVar]: keyAgain,
+  [KEY_SOURCE.app]: appAndInstance,
+  [KEY_SOURCE.linkedProfile]: appAndInstance,
+};
+
+function isNamedKeySource(source: string | undefined): source is NamedKeySource {
+  return source !== undefined && Object.hasOwn(TARGET_CARRY, source);
+}
+
+/**
+ * The flags a command meant for later needs to reach a run's target and runs
+ * folder again: `runs <id>`'s, and an import's or undo's own next steps. The
+ * instance goes by ID, not alias (a staging one has none), and only a real
+ * one: no `--instance` resolves a stand-in. A framework's own key variable,
+ * exported like `CLERK_SECRET_KEY`, gets the key again. A key file (`.env`, a
+ * keyless app's) gets nothing: it refuses `--instance`, and run from the same
+ * project it names the key itself.
+ */
+export function laterCarry(runsDir: string | undefined, target: RunTarget): string[] {
+  const instance = isClerkInstanceId(target.instanceId) ? target.instanceId : undefined;
+  const carry = isNamedKeySource(target.keySource)
+    ? TARGET_CARRY[target.keySource](target, instance)
+    : target.keySource?.endsWith(ENV_VAR_SOURCE_SUFFIX)
+      ? keyAgain(target, instance)
+      : {};
+  return carryFlags({ runsDir, ...carry });
 }
 
 /**
@@ -76,26 +182,39 @@ async function describeKeySource(
  * instances apart, and nothing is sent anywhere. A 429 is retried first: it is
  * most likely straight after a large import, which is when `undo` runs.
  */
-export async function fetchInstanceIdentity(
-  secretKey: string,
-): Promise<{ instanceId: string; env: string }> {
+export async function fetchInstanceIdentity(secretKey: string): Promise<InstanceIdentity> {
   const fallbackEnv = detectInstanceType(secretKey) === "prod" ? "production" : "development";
   try {
     const { body } = await retryOn429(async () =>
       bapiRequest({ method: "GET", path: "/v1/instance", secretKey }),
     );
-    const instance = body as { id?: unknown; environment_type?: unknown };
-    if (typeof instance.id === "string" && instance.id.startsWith("ins_")) {
+    const instance = body as {
+      id?: unknown;
+      environment_type?: unknown;
+      max_allowed_users?: unknown;
+    };
+    if (typeof instance.id === "string" && isClerkInstanceId(instance.id)) {
       return {
         instanceId: instance.id,
         env:
           typeof instance.environment_type === "string" ? instance.environment_type : fallbackEnv,
+        ...readUserLimit(instance.max_allowed_users),
       };
     }
   } catch (error) {
     log.debug(`migrate: could not read the instance behind the key: ${String(error)}`);
   }
   return { instanceId: keyInstanceId(secretKey), env: fallbackEnv };
+}
+
+/** A stand-in for an instance Clerk did not name: {@link keyInstanceId}'s `key_` hash. */
+export function isStandInInstanceId(id: string | undefined): boolean {
+  return id?.startsWith("key_") === true;
+}
+
+/** An instance ID Clerk itself returned. */
+export function isClerkInstanceId(id: string | undefined): boolean {
+  return id?.startsWith("ins_") === true;
 }
 
 /**
@@ -115,19 +234,19 @@ export function keyInstanceId(secretKey: string): string {
  * writes and deletes in bulk, so `--instance dev` next to an exported
  * `sk_live_` key must not reach production.
  */
-function assertInstanceFlagMatches(
+export function assertInstanceFlagMatches(
   options: TargetOptions,
   keySource: string,
-  identity: { instanceId: string; env: string },
+  identity: InstanceIdentity,
 ): void {
   const flag = options.instance;
-  if (!flag || (keySource !== "--secret-key" && !keySource.startsWith("CLERK_SECRET_KEY"))) return;
+  if (!flag || (keySource !== KEY_SOURCE.secretKeyFlag && keySource !== KEY_SOURCE.envVar)) return;
   const wanted = INSTANCE_ALIASES[flag];
   const matches = wanted ? identity.env === wanted : identity.instanceId === flag;
   if (matches) return;
   // A `key_` ID means Clerk did not name the instance, so a literal ID cannot
   // be checked; saying it "does not match" would blame the flag.
-  if (!wanted && identity.instanceId.startsWith("key_")) {
+  if (!wanted && isStandInInstanceId(identity.instanceId)) {
     throwUsageError(
       `Could not verify that the key from ${keySource} addresses --instance ${flag}: ` +
         "Clerk did not answer GET /v1/instance. Nothing was changed.\n" +
@@ -142,12 +261,22 @@ function assertInstanceFlagMatches(
 }
 
 /** Resolves the key, then names the instance it addresses. */
-export async function resolveClerkTarget(
-  options: TargetOptions,
-): Promise<{ secretKey: string; target: ClerkTarget }> {
+export async function resolveClerkTarget(options: TargetOptions): Promise<{
+  secretKey: string;
+  target: ClerkTarget;
+  /** Kept off the target, which a run records: Clerk can raise it between runs. */
+  maxAllowedUsers?: number | null;
+}> {
   const secretKey = await resolveBapiSecretKey(options);
-  const source = await describeKeySource(options);
-  const { instanceId, env } = await fetchInstanceIdentity(secretKey);
+  const { instance: named, ...source } = await describeKeySource(options);
+  const fetched = await fetchInstanceIdentity(secretKey);
+  // The Platform API or the profile already named the instance: recorded
+  // instead of a stand-in, a run's commands can reach it with `--instance`.
+  // Named by ID, its environment is unknown: the key prefix only guesses it.
+  const { instanceId, env } =
+    named && isStandInInstanceId(fetched.instanceId) && isClerkInstanceId(named.instanceId)
+      ? { instanceId: named.instanceId, env: named.env ?? "unknown" }
+      : fetched;
   assertInstanceFlagMatches(options, source.keySource, { instanceId, env });
 
   return {
@@ -158,6 +287,7 @@ export async function resolveClerkTarget(
       instanceType: detectInstanceType(secretKey),
       ...source,
     },
+    ...("maxAllowedUsers" in fetched ? { maxAllowedUsers: fetched.maxAllowedUsers } : {}),
   };
 }
 
