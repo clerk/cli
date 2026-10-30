@@ -222,7 +222,7 @@ function missingRequiredIdentifier(
   const identifiers = splitIdentifiers(user);
   const reserved = (unverified: string[]) => reserveUnverified && unverified.length > 0;
   const hint = suggestReserve
-    ? " (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)"
+    ? " (--reserve-unverified imports it reserved: usable for sign-in, though the auth platform never verified it)"
     : "";
 
   if (

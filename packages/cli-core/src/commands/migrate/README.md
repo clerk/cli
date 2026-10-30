@@ -910,7 +910,7 @@ would be refused, and 0 otherwise.
 Checks
   120 users checked
   ✗ 12 users rejected
-      12: only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)
+      12: only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the auth platform never verified it)
          u_17, u_22, u_40, u_51, u_88, and 7 more
   ⚠ Imported, but not everything comes across
       6 users have a username, which this instance does not use: it is stored, and works only once usernames are turned on
@@ -1224,7 +1224,7 @@ export default {
   description: "Exports from My Platform's admin console.",
   transformer: {
     account_ref: "userId", // required: becomes the Clerk user's external_id
-    // Created verified: map an address the source never confirmed to "unverifiedEmailAddresses".
+    // Created verified: map an address the auth platform never confirmed to "unverifiedEmailAddresses".
     contact_email: "email",
     pw_bcrypt: "password",
     // full_name is left unmapped: postTransform splits it below.
@@ -1353,7 +1353,7 @@ address stays on the user, unverified.
 ### Verified vs unverified identifiers
 
 Every platform records verification differently, and each source declares
-which style it uses. An identifier the source never confirmed is routed to
+which style it uses. An identifier the auth platform never confirmed is routed to
 `unverifiedEmailAddresses` / `unverifiedPhoneNumbers` rather than the primary
 field, because Clerk creates primary identifiers **verified** — sending an
 unconfirmed address there would silently promote it.

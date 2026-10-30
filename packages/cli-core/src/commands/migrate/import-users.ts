@@ -101,7 +101,7 @@ function createIdentifiers(
  * Optional fields are omitted rather than sent as null so Clerk applies its own
  * defaults for anything the source platform did not record.
  *
- * @param reserveUnverified - Create the identifiers the source never verified
+ * @param reserveUnverified - Create the identifiers the auth platform never verified
  *   as reserved, in this request, rather than attaching them unverified.
  */
 export function buildCreateUserBody(
@@ -456,7 +456,7 @@ export type ImportUsersOptions = {
   adoptedPending?: Map<string, string[]>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
-  /** Create the identifiers the source never verified as reserved. */
+  /** Create the identifiers the auth platform never verified as reserved. */
   reserveUnverified?: boolean;
   /** Carried into the summary so the report covers the whole file. */
   validationFailed?: number;

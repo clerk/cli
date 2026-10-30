@@ -278,7 +278,7 @@ test("a user whose only email is unverified is refused where email is required",
     expect.objectContaining({
       status: "skipped",
       reason:
-        "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)",
+        "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the auth platform never verified it)",
     }),
   ]);
 }, 60_000);

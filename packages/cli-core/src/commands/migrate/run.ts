@@ -131,7 +131,7 @@ export type MigrateRunOptions = {
    */
   skipLegalChecks?: boolean;
   /**
-   * Create the emails and phones the source never verified as reserved, not
+   * Create the emails and phones the auth platform never verified as reserved, not
    * unverified. Without it, a prompt asks; where nobody can be asked, they
    * stay unverified.
    */
@@ -1252,7 +1252,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         canPrompt(options)
       ) {
         reserveUnverified = await confirm({
-          message: `${plural(withUnverified, "user")} ${withUnverified === 1 ? "has" : "have"} an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified? A reserved one another user already holds rejects its user, not just that address.`,
+          message: `${plural(withUnverified, "user")} ${withUnverified === 1 ? "has" : "have"} an email or phone the auth platform never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified? A reserved one another user already holds rejects its user, not just that address.`,
           default: false,
         });
       }
