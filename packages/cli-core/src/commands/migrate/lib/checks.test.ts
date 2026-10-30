@@ -316,6 +316,19 @@ describe("rejects", () => {
     });
   });
 
+  // A continue of a run that kept them unverified refuses --reserve-unverified.
+  test("doesn't suggest --reserve-unverified to a continue that refuses it", async () => {
+    expect(
+      await reasonsOf({
+        settings: EMAIL_REQUIRED,
+        reserveLocked: true,
+        users: [user("unverified", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({
+      unverified: "only has an unverified email, and this instance requires an email",
+    });
+  });
+
   // Reserved is usable for sign-in, so it meets the requirement (checked live
   // against the E2E test app, which requires an email).
   test("a reserved email meets an email requirement", async () => {

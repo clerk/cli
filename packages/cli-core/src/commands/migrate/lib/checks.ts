@@ -131,6 +131,11 @@ export type CheckInput = {
   /** Unverified identifiers are created reserved, so they meet a requirement. */
   reserveUnverified?: boolean;
   /**
+   * A continue of a run that kept unverified identifiers unverified. It refuses
+   * --reserve-unverified, so the reject reasons don't suggest it.
+   */
+  reserveLocked?: boolean;
+  /**
    * Source IDs of adopted users whose create reserved their unverified
    * identifiers: those exist reserved, whatever this run's flag says.
    */
@@ -204,16 +209,21 @@ export function hashShapeProblem(password: string, hasher: string): string | und
  * An email or phone counts only when it is verified: an unverified one is
  * attached after the user exists, so it cannot satisfy a sign-up requirement.
  * With `reserveUnverified` it goes on the create as reserved, which does.
+ * `suggestReserve` names that flag in the reason, unless the run refuses it.
  */
 function missingRequiredIdentifier(
   user: User,
   settings: UserSettingsJSON | null,
   reserveUnverified = false,
+  suggestReserve = true,
 ): string | undefined {
   if (!settings) return undefined;
   const required = (attribute: AttributeName) => isRequired(settings, attribute);
   const identifiers = splitIdentifiers(user);
   const reserved = (unverified: string[]) => reserveUnverified && unverified.length > 0;
+  const hint = suggestReserve
+    ? " (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)"
+    : "";
 
   if (
     required("email_address") &&
@@ -221,7 +231,7 @@ function missingRequiredIdentifier(
     !reserved(identifiers.unverifiedEmails)
   ) {
     return identifiers.unverifiedEmails.length > 0
-      ? "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)"
+      ? `only has an unverified email, and this instance requires an email${hint}`
       : "no email, which this instance requires";
   }
   if (
@@ -230,7 +240,7 @@ function missingRequiredIdentifier(
     !reserved(identifiers.unverifiedPhones)
   ) {
     return identifiers.unverifiedPhones.length > 0
-      ? "only has an unverified phone number, and this instance requires one (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)"
+      ? `only has an unverified phone number, and this instance requires one${hint}`
       : "no phone number, which this instance requires";
   }
   if (required("username") && !hasValue(user.username)) {
@@ -1139,7 +1149,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         !missingRequiredIdentifier(emailed, input.settings, reserve)
           ? "its phones aren't in E.164 form, and this instance requires a phone number (numeric usernames are on)"
           : undefined) ??
-        missingRequiredIdentifier(user, input.settings, reserve) ??
+        missingRequiredIdentifier(user, input.settings, reserve, !input.reserveLocked) ??
         // Stripping the identifiers the instance has off can leave nothing to
         // sign in with; Clerk would still create the user.
         (!hasAnyIdentifier(sent)
