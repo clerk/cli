@@ -1,6 +1,6 @@
 # `clerk migrate`
 
-Migrate users into a Clerk instance from another auth provider, or from another
+Migrate users into a Clerk instance from another auth platform, or from another
 Clerk instance.
 
 ```
@@ -90,7 +90,7 @@ instance — its
 environment, its app when the key came from one, and its ID from
 `GET /v1/instance` — and where the key came from: `--secret-key`, `--app`, the
 `CLERK_SECRET_KEY` env var, an accountless app's `.env.local`, or the linked
-profile. An export names its source platform instead, and `export clerk` the
+profile. An export names its auth platform instead, and `export clerk` the
 instance it reads. `runs` names the runs folder. `--json` carries the same
 facts as `target`.
 
@@ -213,12 +213,12 @@ grep '"sourceId":"user_123"' .clerk/migrate/20260929-141502-a1b2/users.ndjson
 ## Commands
 
 The direction is always spelled out — `migrate import` moves users **into**
-Clerk, `migrate export` gets them **out** of a source platform — so neither is
+Clerk, `migrate export` gets them **out** of an auth platform — so neither is
 implied by the group.
 
 ### `clerk migrate export`
 
-Gets users **out** of a source platform, so there is something to feed
+Gets users **out** of an auth platform, so there is something to feed
 `clerk migrate import`.
 
 ```sh
@@ -942,7 +942,7 @@ so too, rather than checking the headroom against zero.
 
 Every create sends `skip_restriction_checks: true`. The instance's allowlist,
 blocklist, disposable-email and subaddress rules police new sign-ups, and these
-users already signed up on the source platform.
+users already signed up on the auth platform.
 
 #### Additional identifiers
 
@@ -1305,7 +1305,7 @@ migration re-runnable.
 
 ### Metadata
 
-Metadata a user can edit on the source platform — Auth0's `user_metadata`,
+Metadata a user can edit on the auth platform — Auth0's `user_metadata`,
 Supabase's `raw_user_meta_data` — goes to Clerk's `unsafe_metadata`, which is
 the user-editable one. Public metadata is read-only to the user, so putting it
 there would take away an edit the user had. Metadata only the source's backend
@@ -1376,7 +1376,7 @@ any, creates them **reserved** instead, on `POST /v1/users` through
 `email_address_identification_status` / `phone_number_identification_status`.
 A reserved identifier is unverified, but usable for sign-in and locked to the
 user, and becomes verified the first time the user signs in with a code or
-link sent to it. That is how most source platforms treat an unconfirmed address, but it lets the user
+link sent to it. That is how most auth platforms treat an unconfirmed address, but it lets the user
 sign in with one nobody proved they own, so it is opt-in. `-y`, `--json` and
 agent mode never ask, and keep them unverified without the flag.
 
@@ -1459,7 +1459,7 @@ reject the user as invalid. Each accepts a single value or an array.
 | -------------------- | ---------- | --------------------------------------------------- |
 | `firstName`          | `string`   | First name                                          |
 | `lastName`           | `string`   | Last name                                           |
-| `password`           | `string`   | The hashed password from the source platform        |
+| `password`           | `string`   | The hashed password from the auth platform          |
 | `passwordHasher`     | `enum`     | **Required whenever `password` is set** (see below) |
 | `totpSecret`         | `string`   | TOTP secret                                         |
 | `backupCodesEnabled` | `boolean`  | Whether backup codes are enabled                    |
