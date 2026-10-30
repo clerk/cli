@@ -28,8 +28,11 @@ import {
   readRun,
   sha256File,
   startRun,
+  importLockFile,
 } from "./lib/run-store.ts";
+import { keyInstanceId } from "./lib/target.ts";
 import { explainErrors, run, validateRunOptions } from "./run.ts";
+import { __resetCustomSourcesForTesting } from "./sources/registry.ts";
 // After run.ts: imported first, signals.ts loads version.ts ahead of its Bun
 // macro here, and the file fails to load.
 import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
@@ -625,6 +628,225 @@ describe("run", () => {
       await run({ ...noSource, input: record.id });
 
       expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
+    });
+
+    test("says how to map the users differently when a built-in source contradicts it", async () => {
+      const { record } = exportRun("clerk", export2);
+
+      await expect(run({ ...noSource, source: "auth0", input: record.id })).rejects.toThrow(
+        /pass the path to a source you wrote/,
+      );
+    });
+
+    /** A source of your own, for an Auth0 export, that also brings `nickname` across. */
+    const ownAuth0Source = () => {
+      const file = `./own-auth0-${Date.now()}-${Math.random().toString(36).slice(2)}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, file),
+        `export default {
+          key: "myauth0",
+          label: "My Auth0",
+          transformer: { user_id: "userId", email: "email", nickname: "firstName" },
+          carries: {
+            passwords: { level: "no", note: "None." },
+            mfa: { level: "no", note: "None." },
+            metadata: { level: "no", note: "None." },
+          },
+        };`,
+      );
+      return file;
+    };
+    const auth0Rows = [{ user_id: "auth0|a1", email: "a@x.dev", nickname: "Ada" }];
+
+    // The built-in mapping leaves `nickname` out; the customer's source brings it.
+    test("a source you wrote replaces the envelope's, reading its users", async () => {
+      const { record } = exportRun("auth0", auth0Rows);
+      const own = ownAuth0Source();
+
+      await run({ ...noSource, source: own, input: record.id });
+
+      const created = requests.filter((r) => r.url.endsWith("/v1/users"));
+      expect(created).toHaveLength(1);
+      expect(created[0]?.body).toMatchObject({ external_id: "auth0|a1", first_name: "Ada" });
+      expect(captured.err).toContain("in place of the built-in");
+    });
+
+    test("an import through a source you wrote keeps its export run, and records what it replaced", async () => {
+      const { record } = exportRun("auth0", auth0Rows);
+
+      await run({ ...noSource, source: ownAuth0Source(), input: record.id });
+
+      const imported = listRuns(runsDir()).find((r) => r.kind === "import");
+      expect(imported).toMatchObject({
+        source: "myauth0",
+        fromExport: record.id,
+        envelopeSource: "auth0",
+      });
+    });
+
+    // A re-run without it would map the rest with the built-in source.
+    // Import with the built-in, notice a field is missing, write a source, re-run:
+    // the first run's users are the same people, whichever source maps them.
+    test("refuses a source you wrote while the built-in's run of the same export holds its users", async () => {
+      const { record } = exportRun("auth0", auth0Rows);
+      await run({ ...noSource, input: record.id });
+      const [first] = listRuns(runsDir()).filter((r) => r.kind === "import");
+      requests = [];
+
+      const error = (await run({ ...noSource, source: ownAuth0Source(), input: record.id }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(
+        `Run ${first!.id} imported this file into this instance with the \`auth0\` source`,
+      );
+      expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(0);
+
+      await run({ ...noSource, source: ownAuth0Source(), input: record.id, newRun: true });
+      expect(listRuns(runsDir()).filter((r) => r.kind === "import")).toHaveLength(2);
+    });
+
+    // One lock for the file and instance, whichever source each import uses.
+    test("a source you wrote takes the same import lock as the built-in", async () => {
+      const { record, file } = exportRun("auth0", auth0Rows);
+      const lock = importLockFile({
+        sha256: sha256File(file),
+        instanceId: keyInstanceId(baseOptions.secretKey),
+      });
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(
+          run({ ...noSource, source: ownAuth0Source(), input: record.id }),
+        ).rejects.toThrow(/importing this file into this instance right now/);
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+    });
+
+    // A Firebase export's digests need the project's parameters, whatever maps it.
+    test("a source you wrote over a Firebase export gets its hash parameters", async () => {
+      const { record } = exportRun(
+        "firebase",
+        [{ localId: "f1", email: "f@x.dev", passwordHash: "HASH", passwordSalt: "SALT" }],
+        {
+          firebase: {
+            base64_signer_key: "SIGNER",
+            base64_salt_separator: "Bw==",
+            rounds: 8,
+            mem_cost: 14,
+          },
+        },
+      );
+      const own = `./own-firebase-${Date.now()}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, own),
+        `export default {
+          key: "myfirebase",
+          label: "My Firebase",
+          transformer: { localId: "userId", email: "email", passwordHash: "passwordHash", passwordSalt: "salt" },
+          carries: {
+            passwords: { level: "yes", note: "scrypt." },
+            mfa: { level: "no", note: "None." },
+            metadata: { level: "no", note: "None." },
+          },
+          defaults: { passwordHasher: "scrypt_firebase" },
+          postTransform: (user, context) => {
+            const c = context.firebaseHashConfig;
+            if (!c) throw new Error("no hash parameters");
+            user.password = [user.passwordHash, user.salt, c.base64_signer_key, c.base64_salt_separator, c.rounds, c.mem_cost].join("$");
+            delete user.passwordHash;
+            delete user.salt;
+          },
+        };`,
+      );
+
+      await run({ ...noSource, source: own, input: record.id });
+
+      const created = requests.find((r) => r.url.endsWith("/v1/users"));
+      expect(created?.body).toMatchObject({
+        password_hasher: "scrypt_firebase",
+        password_digest: "HASH$SALT$SIGNER$Bw==$8$14",
+      });
+      const imported = listRuns(runsDir()).find((r) => r.kind === "import");
+      expect(imported?.firebaseHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    // The provider rows come from the raw file, whatever maps it.
+    test("a source you wrote over a Supabase export still checks its providers", async () => {
+      stubClerk({
+        settings: {
+          attributes: { email_address: { enabled: true } },
+          social: { oauth_google: { enabled: true } },
+          enterprise_sso: { enabled: true },
+        },
+      });
+      const { record } = exportRun("supabase", [
+        {
+          id: "sb1",
+          email: "a@x.dev",
+          email_confirmed_at: "2024-01-01 00:00:00+00",
+          raw_app_meta_data: '{"providers":["discord"]}',
+        },
+      ]);
+      const own = `./own-supabase-${Date.now()}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, own),
+        `export default {
+          key: "mysupabase",
+          label: "My Supabase",
+          transformer: { id: "userId", email: "email" },
+          carries: {
+            passwords: { level: "no", note: "None." },
+            mfa: { level: "no", note: "None." },
+            metadata: { level: "no", note: "None." },
+          },
+        };`,
+      );
+
+      await run({ ...noSource, source: own, input: record.id, dryRun: true });
+
+      expect(captured.err).toContain("only signs in with Discord, which is not enabled in Clerk");
+    });
+
+    // Without its own `socialProviders`, a source you wrote counts the export's.
+    test("a source you wrote over an Auth0 export still counts its social providers", async () => {
+      stubClerk({
+        settings: {
+          attributes: { email_address: { enabled: true } },
+          enterprise_sso: { enabled: true },
+        },
+      });
+      const { record } = exportRun("auth0", [
+        { user_id: "google-oauth2|g1", email: "g@x.dev", email_verified: true },
+      ]);
+
+      await run({ ...noSource, source: ownAuth0Source(), input: record.id, dryRun: true });
+
+      expect(captured.err).toContain("1 user signed in with Google, which is not enabled in Clerk");
+    });
+
+    // A file from a newer CLI names a platform this one doesn't know; yours maps it.
+    test("a source you wrote maps an export from a platform this CLI doesn't know", async () => {
+      const { record } = exportRun("okta", auth0Rows);
+
+      await run({ ...noSource, source: ownAuth0Source(), input: record.id });
+
+      const created = requests.filter((r) => r.url.endsWith("/v1/users"));
+      expect(created).toHaveLength(1);
+    });
+
+    test("the printed command keeps a source you wrote in place of the envelope's", async () => {
+      const { record } = exportRun("auth0", auth0Rows);
+      const own = ownAuth0Source();
+
+      const error = (await run({ ...noSource, source: own, input: record.id, yes: false }).catch(
+        (caught: unknown) => caught,
+      )) as CliError;
+
+      expect(error.examples?.[0]?.command).toContain(
+        `clerk migrate import ${record.id} --source ${own}`,
+      );
     });
 
     test("refuses a run ID that is not an export", async () => {
@@ -2034,6 +2256,80 @@ describe("run", () => {
       fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
 
       expect(await exitCodeOf(run(baseOptions))).toBe(EXIT_CODE.USAGE);
+      // A new run would send the same external IDs alongside it.
+      expect(await exitCodeOf(run({ ...baseOptions, newRun: true }))).toBe(EXIT_CODE.USAGE);
+    });
+
+    // The scan of runs alone has a gap: a second process can pass it before
+    // either has written a run. The import's own lock closes it.
+    test("refuses while another process holds this import's lock, with no run yet", async () => {
+      // Keyed by the key, so it holds whether or not `GET /v1/instance` answers.
+      const lock = importLockFile({
+        sha256: sha256File(path.join(workDir, "export.json")),
+        instanceId: keyInstanceId(baseOptions.secretKey),
+      });
+      // PID 1 is always alive, and never this test.
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(run(baseOptions)).rejects.toThrow(
+          /importing this file into this instance right now/,
+        );
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+      expect(created()).toHaveLength(0);
+      expect(listRuns(runsDir())).toHaveLength(0);
+    });
+
+    // A different --runs-dir is a different record of the same job.
+    test("refuses while another process holds this import's lock under another runs folder", async () => {
+      const lock = importLockFile({
+        sha256: sha256File(path.join(workDir, "export.json")),
+        instanceId: keyInstanceId(baseOptions.secretKey),
+      });
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(
+          run({ ...baseOptions, runsDir: path.join(workDir, "other-runs") }),
+        ).rejects.toThrow(/importing this file into this instance right now/);
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+      expect(created()).toHaveLength(0);
+    });
+
+    // A second key for the same instance has its own stand-in ID.
+    test("refuses while another key's process holds this instance's lock", async () => {
+      const lock = importLockFile({
+        sha256: sha256File(path.join(workDir, "export.json")),
+        instanceId: "ins_1",
+      });
+      fs.writeFileSync(lock, "1");
+      try {
+        await expect(run(baseOptions)).rejects.toThrow(
+          /importing this file into this instance right now/,
+        );
+      } finally {
+        fs.rmSync(lock, { force: true });
+      }
+      expect(created()).toHaveLength(0);
+      // The key's own lock, taken first, is let go when the second is refused.
+      const own = importLockFile({
+        sha256: sha256File(path.join(workDir, "export.json")),
+        instanceId: keyInstanceId(baseOptions.secretKey),
+      });
+      expect(fs.existsSync(own)).toBe(false);
+    });
+
+    test("lets go of the import's locks when the run ends", async () => {
+      await run(baseOptions);
+      const lockFor = (instanceId: string) =>
+        importLockFile({
+          sha256: sha256File(path.join(workDir, "export.json")),
+          instanceId,
+        });
+      expect(fs.existsSync(lockFor(keyInstanceId(baseOptions.secretKey)))).toBe(false);
+      expect(fs.existsSync(lockFor("ins_1"))).toBe(false);
     });
 
     // An edited file is a different job.
@@ -2091,6 +2387,351 @@ describe("run", () => {
       await run(baseOptions);
 
       expect(listRuns(runsDir())).toHaveLength(2);
+    });
+  });
+
+  describe("--source <path>", () => {
+    const CUSTOM = `export default {
+      key: "myplatform",
+      label: "My Platform",
+      description: "Exports from My Platform.",
+      transformer: { account_ref: "userId", contact_email: "email", given: "firstName", pw: "password" },
+      carries: {
+        passwords: { level: "yes", note: "bcrypt." },
+        mfa: { level: "no", note: "None." },
+        metadata: { level: "no", note: "None." },
+      },
+      defaults: { passwordHasher: "bcrypt" },
+      postTransform: (user) => { if (!user.firstName) delete user.firstName; },
+    };`;
+
+    let customFile: string;
+    let customCounter = 0;
+
+    beforeEach(() => {
+      // A fresh filename each time: dynamic import() caches by URL, so reusing
+      // one would silently return a previous test's module.
+      customFile = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, customFile), CUSTOM);
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { account_ref: "mp_1", contact_email: "a@x.dev", given: "Ada", pw: BCRYPT },
+          { account_ref: "mp_2", contact_email: "b@x.dev", given: "", pw: BCRYPT },
+        ]),
+      );
+    });
+
+    afterEach(() => {
+      __resetCustomSourcesForTesting();
+    });
+
+    const created = () => requests.filter((r) => r.url.endsWith("/v1/users"));
+
+    // The registered key isn't something --source accepts; the path is.
+    test("the printed command names the source's path, not its key", async () => {
+      const error = (await run({
+        input: "export.json",
+        source: customFile,
+        secretKey: "sk_test_x",
+        json: true,
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.examples?.[0]?.command).toBe(
+        `clerk migrate import export.json --source ${customFile} --secret-key <key> --json --yes`,
+      );
+    });
+
+    // The checks reject the users a run under another source created, so the
+    // refusal names that run, as it does for one of the same source.
+    test("a refusal names the earlier run of another source that holds the users", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const [first] = listRuns(runsDir());
+      const other = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, other),
+        CUSTOM.replace('key: "myplatform"', 'key: "otherplatform"'),
+      );
+      stubClerk({
+        existing: [
+          { id: "user_1", external_id: "mp_1" },
+          { id: "user_2", external_id: "mp_2" },
+        ],
+      });
+
+      const error = (await run({
+        input: "export.json",
+        source: other,
+        newRun: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.message).toContain(`2 of them were created by run ${first!.id}`);
+      expect(error.examples?.map((example) => example.description)).toContain(
+        `Undo run ${first!.id} first`,
+      );
+    });
+
+    test("imports through a user-authored source", async () => {
+      await run({
+        input: "export.json",
+        source: customFile,
+        yes: true,
+        secretKey: "sk_test_x",
+      });
+
+      expect(created().map((r) => (r.body as { external_id: string }).external_id)).toEqual([
+        "mp_1",
+        "mp_2",
+      ]);
+      expect(captured.err).toContain("myplatform");
+      expect(captured.err).toContain("source from");
+    });
+
+    test("applies the custom source's defaults and postTransform", async () => {
+      await run({
+        input: "export.json",
+        source: customFile,
+        yes: true,
+        secretKey: "sk_test_x",
+      });
+
+      const bodies = created().map((r) => r.body as Record<string, unknown>);
+      expect(bodies[0]).toMatchObject({ first_name: "Ada", password_hasher: "bcrypt" });
+      // postTransform dropped the empty given name rather than sending "".
+      expect("first_name" in (bodies[1] ?? {})).toBe(false);
+    });
+
+    // An edited source misses the live run's `sourceHash`, but both would send
+    // the same external IDs.
+    test("refuses while a run of this file with an earlier version of the source is live", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+      // PID 1 is always alive, and never this test.
+      fs.writeFileSync(path.join(runsDir(), first!.id, "lock"), "1");
+
+      const edited = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, edited), `${CUSTOM}\n// edited`);
+      requests = [];
+      await expect(
+        run({ input: "export.json", source: edited, yes: true, secretKey: "sk_test_x" }),
+      ).rejects.toThrow(/importing this file right now in another process/);
+      expect(created()).toHaveLength(0);
+    });
+
+    /** Rewrites the only run as one a crash stopped, and returns its ID. */
+    const interruptOnly = (): string => {
+      const [first] = listRuns(runsDir());
+      const record = readRun(runsDir(), first!.id)!;
+      delete record.finishedAt;
+      fs.writeFileSync(path.join(runsDir(), first!.id, "run.json"), JSON.stringify(record));
+      return first!.id;
+    };
+
+    test("continues an interrupted run when the source is unchanged", async () => {
+      stubClerk({ failing: new Set(["mp_2"]) });
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const id = interruptOnly();
+      requests = [];
+      process.exitCode = 0;
+      stubClerk();
+
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+
+      expect(created().map((r) => (r.body as { external_id: string }).external_id)).toEqual([
+        "mp_2",
+      ]);
+      expect(captured.err).toContain(`Continuing run ${id}`);
+      expect(listRuns(runsDir())).toHaveLength(1);
+    });
+
+    // Starting over would bring the users the earlier run created back as conflicts.
+    test("refuses an edited source while an earlier version's run is interrupted, naming it", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const id = interruptOnly();
+      const edited = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, edited), `${CUSTOM}\n// edited`);
+      requests = [];
+
+      const error = (await run({
+        input: "export.json",
+        source: edited,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(
+        `Run ${id} imported this file into this instance with an earlier version`,
+      );
+      expect(error.message).toContain("--new-run");
+      expect(created()).toHaveLength(0);
+    });
+
+    // The newest run being undone doesn't clear an older one that still holds users.
+    test("refuses an edited source while any earlier version's run is unfinished, not just the newest", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const older = interruptOnly();
+      const second = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, second), `${CUSTOM}\n// second`);
+      await run({
+        input: "export.json",
+        source: second,
+        yes: true,
+        secretKey: "sk_test_x",
+        newRun: true,
+      });
+      const newer = listRuns(runsDir()).find((record) => record.id !== older)!;
+      fs.writeFileSync(
+        path.join(runsDir(), newer.id, "run.json"),
+        JSON.stringify({ ...readRun(runsDir(), newer.id), status: "undone" }),
+      );
+      const third = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, third), `${CUSTOM}\n// third`);
+      requests = [];
+
+      const error = (await run({
+        input: "export.json",
+        source: third,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.message).toContain(
+        `Run ${older} imported this file into this instance with an earlier version`,
+      );
+      expect(error.message).toContain(`clerk migrate undo ${older} --secret-key <key>`);
+      expect(created()).toHaveLength(0);
+    });
+
+    // The newer, undone run is of this same version: undone, it starts a new
+    // run, so the older interrupted one has to be checked too.
+    test("refuses while an earlier version's run is unfinished behind an undone run of this version", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      const older = interruptOnly();
+      const second = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, second), `${CUSTOM}\n// second`);
+      await run({
+        input: "export.json",
+        source: second,
+        yes: true,
+        secretKey: "sk_test_x",
+        newRun: true,
+      });
+      const newer = listRuns(runsDir()).find((record) => record.id !== older)!;
+      fs.writeFileSync(
+        path.join(runsDir(), newer.id, "run.json"),
+        JSON.stringify({ ...readRun(runsDir(), newer.id), status: "undone" }),
+      );
+      requests = [];
+
+      const error = (await run({
+        input: "export.json",
+        source: second,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(error.message).toContain(
+        `Run ${older} imported this file into this instance with an earlier version`,
+      );
+      expect(created()).toHaveLength(0);
+    });
+
+    test("an edited source with --new-run starts a new run beside the earlier one", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      interruptOnly();
+      const edited = `./custom-run-${customCounter++}.ts`;
+      fs.writeFileSync(path.join(workDir, edited), `${CUSTOM}\n// edited`);
+      requests = [];
+
+      await run({
+        input: "export.json",
+        source: edited,
+        yes: true,
+        secretKey: "sk_test_x",
+        newRun: true,
+      });
+
+      expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
+    // The loader caches by URL: an edit at the same path must still load the
+    // edited mappings, the ones the run's hash names.
+    test("an edited source at the same path maps with its edited code", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+      fs.writeFileSync(
+        path.join(workDir, customFile),
+        CUSTOM.replace('given: "firstName"', 'given: "lastName"'),
+      );
+      requests = [];
+      await run({
+        input: "export.json",
+        source: customFile,
+        yes: true,
+        secretKey: "sk_test_x",
+        newRun: true,
+      });
+
+      const bodies = created().map((r) => r.body as Record<string, unknown>);
+      expect(bodies[0]).toMatchObject({ last_name: "Ada" });
+      expect("first_name" in (bodies[0] ?? {})).toBe(false);
+    });
+
+    // An edited source is a different source, so the run records which one.
+    test("records the custom source's content hash on the run", async () => {
+      await run({ input: "export.json", source: customFile, yes: true, secretKey: "sk_test_x" });
+
+      const [record] = listRuns(runsDir());
+      expect(record?.source).toBe("myplatform");
+      expect(record?.sourceHash).toMatch(/^[0-9a-f]{64}$/);
+    });
+
+    test("an unknown built-in key is a usage error listing the valid ones", async () => {
+      await expect(
+        run({ input: "export.json", source: "okta", yes: true, secretKey: "sk_test_x" }),
+      ).rejects.toThrow(/Unknown source "okta". Valid sources: clerk, auth0/);
+      expect(created()).toHaveLength(0);
+    });
+
+    test("fails before any request when the file is not there", async () => {
+      await expect(
+        run({
+          input: "export.json",
+          source: "./nope.ts",
+          yes: true,
+          secretKey: "sk_test_x",
+        }),
+      ).rejects.toThrow(/No source file at/);
+      expect(requests).toHaveLength(0);
+    });
+
+    test("fails before any request when the file is malformed", async () => {
+      const bad = `./bad-${customCounter++}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, bad),
+        `export default { key: "x", label: "X", transformer: {} };`,
+      );
+
+      const error = (await run({
+        input: "export.json",
+        source: bad,
+        yes: true,
+        secretKey: "sk_test_x",
+      }).catch((caught: unknown) => caught)) as CliError;
+      expect(error.message).toMatch(/no source field maps to `userId`/);
+      expect(error.exitCode).toBe(EXIT_CODE.USAGE);
+      expect(requests).toHaveLength(0);
+    });
+
+    test("still requires a file", async () => {
+      await expect(run({ source: customFile, yes: true, secretKey: "sk_test_x" })).rejects.toThrow(
+        /needs the file to import/,
+      );
     });
   });
 
