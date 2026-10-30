@@ -436,7 +436,7 @@ floor exists. Resolution is `--db-url`, then `SUPABASE_DB_URL` / `AUTHJS_DB_URL`
 / `BETTERAUTH_DB_URL`, then a masked prompt, since a connection string carries the password inline. A password
 pasted unencoded (`#`, `@`, `/` and the like) is percent-encoded for you. A libsql
 token comes from `?authToken=` on the URL, or from `TURSO_AUTH_TOKEN` /
-`LIBSQL_AUTH_TOKEN`, and is redacted like a password.
+`LIBSQL_AUTH_TOKEN`, and the CLI redacts it like a password.
 
 **Connection strings are redacted everywhere.** Errors show
 `postgres://***@host/db`, including when the password itself contains an
