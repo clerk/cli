@@ -149,7 +149,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .setExamples([
       {
         command: "clerk migrate export clerk",
-        description: "Prompts for the source instance and where to save the file",
+        description: "Prompts for the instance to export from",
       },
       {
         command: "clerk migrate export clerk --secret-key sk_live_… --output prod-users.json",
