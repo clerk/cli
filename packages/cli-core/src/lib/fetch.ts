@@ -16,9 +16,20 @@ import { optOutEnvVar } from "./env-signals.ts";
 import { getTelemetryDisabled, getTelemetryNoticeShown } from "./config.ts";
 
 let userAgentPromise: Promise<string> | undefined;
+let migrateRequests = false;
 
 /** Test-only: recompute the User-Agent on the next request. */
 export function _resetUserAgentCache(): void {
+  userAgentPromise = undefined;
+  migrateRequests = false;
+}
+
+/**
+ * Mark the rest of this process's requests as `clerk migrate`'s: the
+ * User-Agent gains a `migrate` segment, under the same opt-outs as `AIAgent`.
+ */
+export function markMigrateRequests(): void {
+  migrateRequests = true;
   userAgentPromise = undefined;
 }
 
@@ -26,18 +37,21 @@ export function _resetUserAgentCache(): void {
 // would allocate a fresh one on every request for no gain.
 // oxlint-disable-next-line typescript/promise-function-async
 function resolveUserAgent(): Promise<string> {
-  // The AIAgent segment exists purely for analytics classification, so it
-  // honors the telemetry opt-outs (env vars and `clerk telemetry disable`)
-  // and, like the events, stays absent until the disclosure notice has been
+  // The AIAgent and migrate segments exist purely for analytics, so they
+  // honor the telemetry opt-outs (env vars and `clerk telemetry disable`)
+  // and, like the events, stay absent until the disclosure notice has been
   // shown — CI exempt, matching showTelemetryNoticeOnce.
   userAgentPromise ??= (async () => {
     const beforeDisclosure =
       !process.env.CI && !(await getTelemetryNoticeShown().catch(() => false));
-    const omitAgentSegment =
+    const omitAnalyticsSegments =
       optOutEnvVar(process.env) !== null ||
       beforeDisclosure ||
       (await getTelemetryDisabled().catch(() => true));
-    return buildUserAgent(process.env, { agentToken: !omitAgentSegment });
+    return buildUserAgent(process.env, {
+      agentToken: !omitAnalyticsSegments,
+      migrate: migrateRequests && !omitAnalyticsSegments,
+    });
   })();
   return userAgentPromise;
 }
