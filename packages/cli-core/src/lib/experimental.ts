@@ -10,12 +10,17 @@
  * @example
  * // In the command group's register<Name>(), before building the real tree:
  * if (!isExperimentEnabled("my-command", env)) {
- *   program
+ *   const stub = program
  *     .command("my-command", { hidden: true })
+ *     .helpOption(false)
  *     .allowUnknownOption()
  *     .allowExcessArguments()
  *     .argument("[args...]")
  *     .action(() => requireExperiment("my-command", env));
+ *   stub.helpInformation = () => {
+ *     requireExperiment("my-command", env);
+ *     return "";
+ *   };
  *   return;
  * }
  */
