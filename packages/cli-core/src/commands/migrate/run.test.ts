@@ -106,6 +106,8 @@ type Stub = {
   count?: number;
   /** Source IDs whose `POST /v1/users` fails with a 422. */
   failing?: Set<string>;
+  /** Source IDs whose `POST /v1/users` gets a 503: Clerk may or may not hold them. */
+  unanswered?: Set<string>;
   /** `GET /v1/instance` fails, so the target falls back to the key's stand-in ID. */
   instanceDown?: boolean;
   /** `max_allowed_users` on `GET /v1/instance`; left out when undefined, as an older API does. */
@@ -177,6 +179,7 @@ describe("run", () => {
       }
       if (method === "POST" && url.pathname === "/v1/users") {
         const externalId = body?.external_id as string;
+        if (stub.unanswered?.has(externalId)) return new Response("upstream", { status: 503 });
         if (stub.failing?.has(externalId)) {
           return Response.json(
             {
@@ -1257,6 +1260,23 @@ describe("run", () => {
     expect(error.examples ?? []).toEqual([]);
   });
 
+  // A continue of a run that kept them unverified refuses the flag.
+  test("--new-run's continue keeps the earlier run's reservation mode", async () => {
+    stubClerk({ failing: new Set(["u2"]) });
+    await run(baseOptions);
+    const [first] = listRuns(runsDir());
+    expect(first?.reserveUnverified).toBe(false);
+    captured.clear();
+    stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+
+    const error = (await run({ ...baseOptions, newRun: true, reserveUnverified: true }).catch(
+      (caught: unknown) => caught,
+    )) as CliError;
+
+    expect(error.message).toContain(`Drop --new-run to continue run ${first!.id}.`);
+    expect(error.examples?.[0]?.command).not.toContain("--reserve-unverified");
+  });
+
   // The continue would carry --require-password and leave the same users out.
   test("--new-run --require-password doesn't offer a continue that imports nobody", async () => {
     await run({ ...baseOptions, requirePassword: true });
@@ -1473,11 +1493,35 @@ describe("run", () => {
       await run({ ...baseOptions, dryRun: true });
 
       expect(captured.err).toContain(
-        "only has an unverified email, and this instance requires an email",
+        "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)",
       );
       expect(captured.err).toContain(
         `clerk config patch --app APP_ID --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
       );
+    });
+
+    // Reserved meets the requirement, so neither the reject nor the fix applies.
+    test("with --reserve-unverified, an unverified-only user is neither rejected nor a fix", async () => {
+      stubClerk({
+        settings: {
+          attributes: { email_address: { enabled: true, required: true } },
+          // A way in besides a password, so users without one import.
+          enterprise_sso: { enabled: true },
+        },
+      });
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", unverified_email_addresses: "b@x.dev" },
+        ]),
+      );
+
+      await run({ ...baseOptions, dryRun: true, reserveUnverified: true });
+
+      expect(captured.err).not.toContain("only has an unverified email");
+      expect(captured.err).not.toContain("required_for_sign_up");
+      expect(process.exitCode).toBe(0);
     });
 
     test("legal consent: refused without --skip-legal-checks, sent with skip_legal_checks with it", async () => {
@@ -2070,6 +2114,164 @@ describe("run", () => {
         clerkId: "user_found",
       });
       expect(readRun(runsDir(), first!.id)?.status).toBe("complete");
+    });
+
+    // The `creating` line records what the create did; a continued run reads it
+    // back rather than guessing from this run's flags.
+    test("an adopted user whose create reserved its unverified email gets no attach for it", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", primary_email_address: "b@x.dev", unverified_email_addresses: "c@x.dev" },
+        ]),
+      );
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating", reserved: true })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toEqual([]);
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
+    });
+
+    // The retry after a refused phone sent without the reserved phones, and was
+    // cut off: they are attached, the reserved email isn't sent again.
+    test("an adopted user gets the reserved phones its cut-off retry left out", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          {
+            id: "u2",
+            primary_email_address: "b@x.dev",
+            unverified_email_addresses: "c@x.dev",
+            unverified_phone_numbers: "+31612345678",
+          },
+        ]),
+      );
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({
+          sourceId: "u2",
+          status: "creating",
+          reserved: true,
+          pending: [{ kind: "phone", value: "+31612345678", verified: false }],
+        })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toEqual([]);
+      expect(
+        requests.filter((r) => r.url.endsWith("/v1/phone_numbers")).map((r) => r.body),
+      ).toEqual([
+        { user_id: "user_found", phone_number: "+31612345678", primary: false, verified: false },
+      ]);
+    });
+
+    // A reserved create with no answer: its latest line has to keep `reserved`,
+    // or the continue adopts the user as unreserved and attaches the email
+    // Clerk already holds reserved.
+    test("adopts a reserved create that got no answer as reserved", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", primary_email_address: "b@x.dev", unverified_email_addresses: "c@x.dev" },
+        ]),
+      );
+      stubClerk({ unanswered: new Set(["u2"]) });
+      await run({ ...baseOptions, reserveUnverified: true });
+      const [first] = listRuns(runsDir());
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "creating",
+        reserved: true,
+      });
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run({ ...baseOptions, reserveUnverified: true });
+
+      expect(created()).toEqual([]);
+      expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toEqual([]);
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
+    });
+
+    // Created reserved by the run that stopped: its unverified email exists
+    // reserved, and meets the requirement, though this run has no flag.
+    test("an adopted user created reserved meets a required email without the flag", async () => {
+      const settings = {
+        attributes: { email_address: { enabled: true, required: true } },
+        enterprise_sso: { enabled: true },
+      };
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", unverified_email_addresses: "c@x.dev" },
+        ]),
+      );
+      stubClerk({ settings, failing: new Set(["u2"]) });
+      await run({ ...baseOptions, reserveUnverified: true });
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating", reserved: true })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({
+        settings,
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+      });
     });
 
     // A reject would stop a create; an adopted user needs none. Rejected, it

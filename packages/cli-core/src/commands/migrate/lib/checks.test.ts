@@ -237,6 +237,49 @@ describe("rejects", () => {
     );
   });
 
+  // --reserve-unverified puts unverified identifiers on the create, so they
+  // clash there as a primary would; without it they are attached after.
+  test.each([
+    [
+      true,
+      {
+        b: "email is also used by an earlier user in the file, which is kept",
+        c: "email is already used by a user in the instance",
+      },
+    ],
+    [false, {}],
+  ])(
+    "with reserveUnverified %p, unverified emails that clash are duplicates",
+    async (reserveUnverified, expected) => {
+      existing = [{ id: "user_1", email_addresses: [{ email_address: "taken@x.dev" }] }];
+      expect(
+        await reasonsOf({
+          reserveUnverified,
+          users: [
+            user("a", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+            user("b", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+            user("c", { unverifiedEmailAddresses: ["taken@x.dev"] }),
+          ],
+        }),
+      ).toEqual(expected);
+    },
+  );
+
+  // An adopted user's create already ran without reserving, so its unverified
+  // email is attached later, whatever this run's flag says: no clash.
+  test("an adopted user's unverified email counts by its own create's mode", async () => {
+    expect(
+      await reasonsOf({
+        reserveUnverified: true,
+        adoptedSourceIds: new Set(["b"]),
+        users: [
+          user("a", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+          user("b", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+        ],
+      }),
+    ).toEqual({});
+  });
+
   // The source's order decides which duplicate survives, so the dry run says.
   test("a duplicate names the earlier user kept in its place", async () => {
     const checks = await checkImport(
@@ -267,9 +310,35 @@ describe("rejects", () => {
         ],
       }),
     ).toEqual({
-      unverified: "only has an unverified email, and this instance requires an email",
+      unverified:
+        "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)",
       none: "no email, which this instance requires",
     });
+  });
+
+  // A continue of a run that kept them unverified refuses --reserve-unverified.
+  test("doesn't suggest --reserve-unverified to a continue that refuses it", async () => {
+    expect(
+      await reasonsOf({
+        settings: EMAIL_REQUIRED,
+        reserveLocked: true,
+        users: [user("unverified", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({
+      unverified: "only has an unverified email, and this instance requires an email",
+    });
+  });
+
+  // Reserved is usable for sign-in, so it meets the requirement (checked live
+  // against the E2E test app, which requires an email).
+  test("a reserved email meets an email requirement", async () => {
+    expect(
+      await reasonsOf({
+        settings: EMAIL_REQUIRED,
+        reserveUnverified: true,
+        users: [user("unverified", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({});
   });
 
   test("a password that is not the shape its hasher says", async () => {
@@ -409,6 +478,44 @@ describe("rejects", () => {
     ).toEqual({ neither: "only signs in with Discord, which is not enabled in Clerk" });
   });
 
+  // The create would strip it, so it can't be what saves the user.
+  test("an email Clerk refuses is no way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: settings({
+          email_address: {
+            enabled: true,
+            used_for_first_factor: true,
+            first_factors: ["email_code"],
+          },
+          username: { enabled: true },
+        }),
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: "u@x.test", username: "uname" })],
+      }),
+    ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
+  test("a phone not in E.164 form is no way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: {
+          ...settings({
+            phone_number: {
+              enabled: true,
+              used_for_first_factor: true,
+              first_factors: ["phone_code"],
+            },
+            username: { enabled: true },
+          }),
+          username_settings: { min_length: 4, max_length: 64, allow_numeric_usernames: true },
+        } as unknown as UserSettingsJSON,
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: undefined, username: "12345", phone: "(555) 123-4567" })],
+      }),
+    ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
   test("an unverified email is no way in for a supabase user on a disabled provider", async () => {
     expect(
       await reasonsOf({
@@ -423,6 +530,24 @@ describe("rejects", () => {
         users: [user("u", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
       }),
     ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
+  // A reserved identifier signs in by code, and is verified the first time.
+  test("a reserved email is a way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: settings({
+          email_address: {
+            enabled: true,
+            used_for_first_factor: true,
+            first_factors: ["email_link"],
+          },
+        }),
+        reserveUnverified: true,
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({});
   });
 
   // Clerk can't turn on a provider it doesn't offer, so none is suggested.

@@ -707,6 +707,7 @@ clerk migrate import users.json --source clerk --new-run --yes
 clerk migrate import users.json --source clerk --json --yes
 clerk migrate import users.json --source clerk --require-password --yes
 clerk migrate import users.json --source clerk --skip-legal-checks --yes
+clerk migrate import users.json --source workos --reserve-unverified --yes
 clerk migrate import users.json --source firebase --firebase-signer-key SIGNER_KEY \
   --firebase-salt-separator SALT_SEPARATOR --firebase-rounds 8 --firebase-mem-cost 14 --yes
 clerk migrate import users.json --source clerk --runs-dir ./runs --yes
@@ -724,6 +725,7 @@ clerk migrate import                                          # a human is asked
 | `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one                               |
 | `--require-password`                    | Import only users that carry a password digest                                                    |
 | `--skip-legal-checks`                   | Import users with no legal acceptance into an instance requiring it                               |
+| `--reserve-unverified`                  | Create [unverified identifiers](#verified-vs-unverified-identifiers) reserved, not unverified     |
 | `--firebase-signer-key <key>`           | Firebase base64 signer key (overrides the export file), or `CLERK_FIREBASE_SIGNER_KEY` (does not) |
 | `--firebase-salt-separator <separator>` | Firebase base64 salt separator, or `CLERK_FIREBASE_SALT_SEPARATOR`                                |
 | `--firebase-rounds <n>`                 | Firebase scrypt rounds, or `CLERK_FIREBASE_ROUNDS`                                                |
@@ -854,10 +856,11 @@ after them. They sort the users four ways:
     any other user, with a warning. Spaces around a phone don't count, as Clerk
     trims them. Phones the instance has off are stripped anyway, so they are
     not checked
-  - it lacks an identifier the instance requires. An email or phone counts
-    only when it is verified, because an unverified one is attached after the
-    user exists. A required phone dropped for not being in E.164 form is named
-    as such
+  - it lacks an identifier the instance requires. An email or phone counts when
+    it is verified, or when it is created reserved (`--reserve-unverified`, or
+    an adopted user's recorded mode). An unverified one attached after the user
+    exists does not. A required phone dropped for not being in E.164 form is
+    named as such
   - it has no identifier left once the emails and phones Clerk would refuse
     are stripped: those of an instance that neither has them on nor signs in
     or does MFA with them. A username is kept, as Clerk stores it with
@@ -882,9 +885,9 @@ after them. They sort the users four ways:
     to 15, `scrypt_firebase`, `argon2i`/`argon2id` and `scrypt_werkzeug` are
     checked; other hashers are not, and Clerk refuses a bad one at create)
   - Supabase: its only providers are ones Clerk has off, or doesn't offer at all
-    (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly), and it has no verified email or
-    phone the instance signs in with by code or link. The checks offer to turn
-    on the first kind; nothing can turn on the second
+    (Figma, Kakao, Keycloak, WorkOS, Zoom, Fly), and it has no verified or
+    reserved email or phone the instance signs in with by code or link. The
+    checks offer to turn on the first kind; nothing can turn on the second
   - its source ID, primary email, primary phone or username repeats an
     earlier user in the file that passes the checks above. Only what the
     create sends counts: an extra email is attached after it, and a stripped
@@ -916,7 +919,7 @@ would be refused, and 0 otherwise.
 Checks
   120 users checked
   ✗ 12 users rejected
-      12: only has an unverified email, and this instance requires an email
+      12: only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)
          u_17, u_22, u_40, u_51, u_88, and 7 more
   ⚠ Imported, but not everything comes across
       6 users have a username, which this instance does not use: it is stored, and works only once usernames are turned on
@@ -965,6 +968,12 @@ email: the create is retried without the phone. The user counts as imported,
 and the summary lists them under "Imported without their phone", by Clerk's
 reason (`result.warnings` in `--json`).
 
+With [reserved](#verified-vs-unverified-identifiers) phones on the create, the
+refused one may be any of them, so the verified phone is retried alone first.
+Reserved phones the refusal kept off, when Clerk's answer can't say which was
+refused, are attached one by one once the user exists, unverified: only the
+refused one is lost.
+
 #### Throughput
 
 Defaults follow Clerk's documented `POST /v1/users` limits: 100 req/s for
@@ -982,10 +991,10 @@ A non-numeric or non-positive value is ignored in favour of the default.
 An instance's user limit is checked with the other [checks](#checks), against
 the live count (`GET /v1/users/count`). The limit is the one Clerk reports as
 `max_allowed_users` on `GET /v1/instance`, on any instance; `null` there means
-no limit. New development instances are created with a 100-user limit, and
-production instances have none by default. An API that predates the field
-leaves a development instance at `CLERK_MIGRATE_DEV_USER_LIMIT`, or 100, and a
-production one unchecked: the import then stops at the first refusal.
+no limit. Development instances are created with a 100-user limit. Production
+instances have none: Clerk reports `null` for them and won't set one. An API
+that predates the field leaves a development instance at
+`CLERK_MIGRATE_DEV_USER_LIMIT`, or 100.
 `--allow-partial` imports up to the headroom. When a limit applies, `--json`'s
 `checks.quota` says where it came from (`limitSource`: `instance`, `env` or
 `default`). When no limit applies, `checks.quota` is omitted.
@@ -1366,6 +1375,35 @@ unconfirmed address there would silently promote it.
   (the epoch) or a value that isn't a date.
 
 A Clerk export keeps an unverified primary email or phone unverified.
+
+**Unverified or reserved.** By default an unverified identifier is attached
+after the user exists (`POST /v1/email_addresses` or `POST /v1/phone_numbers`,
+`verified: false`). The user
+cannot sign in with it, and another user can claim it by verifying it first.
+`--reserve-unverified`, or a yes at the prompt a human gets when the file has
+any, creates them **reserved** instead, on `POST /v1/users` through
+`email_address_identification_status` / `phone_number_identification_status`.
+A reserved identifier is unverified, but usable for sign-in and locked to the
+user, and becomes verified the first time the user signs in with a code or
+link sent to it. That is how most source platforms treat an unconfirmed address, but it lets the user
+sign in with one nobody proved they own, so it is opt-in. `-y`, `--json` and
+agent mode never ask, and keep them unverified without the flag.
+
+A run records its choice (`reserveUnverified` in `run.json`), and a continued
+run reuses it without asking, so every user of one run is created the same way.
+A run recorded before the choice existed asks once, and records the answer.
+`--reserve-unverified` on a continue of a run that kept them unverified is
+refused; pass `--new-run` to change modes. A user a run adopts keeps the mode
+its first create recorded (`reserved` on its `creating` line). When Clerk
+refused a phone and the retry went out without the reserved phones, that line
+lists them as `pending`, and a continue that adopts the user attaches them,
+unverified (one Clerk refuses again fails with a note).
+
+A reserved identifier is checked for duplicates like a verified one, since it
+goes on the user's create. If an instance user, or an earlier record in the
+file that passes the checks, already holds it, the whole user is rejected.
+Without reserving, only that address fails to attach, with a note. If that
+rejects users you want, import without reserving.
 
 ### Firebase hash parameters
 
