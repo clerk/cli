@@ -1512,14 +1512,14 @@ stamping every user with today's.
 
 ## What telemetry records
 
-Every `clerk migrate` event carries the fields every command sends, plus four that say what the run did. Each is null when the run never learned it.
+`clerk migrate` adds two fields to the ones every command sends, `migrate_source` and `instance_id`, and gives `app_id` and `stage` values of its own:
 
-| Field            | What it holds                                                                                                                                                     |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `migrate_source` | Where the users come from: a built-in source or export platform (`auth0`, `clerk`, …), or `custom` for a source you wrote. Never its path or its key.             |
-| `instance_id`    | The Clerk instance the command acted on (`ins_…`). For `export clerk`, the instance it read.                                                                      |
-| `app_id`         | Its app (`app_…`): from `--app`, or from the linked profile when that profile owns the instance. A key for another app's instance sends null, not the linked app. |
-| `stage`          | How far the run got. One funnel per subcommand, below.                                                                                                            |
+| Field            | What it holds                                                                                                                                                                                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `migrate_source` | Where the users come from: a built-in source or export platform (`auth0`, `clerk`, …), or `custom` for a source you wrote. Never its path or its key. Null when the run stopped before it knew the source.                                                                             |
+| `instance_id`    | The Clerk instance the command acted on (`ins_…`). For `export clerk`, the instance it read. Null when the run stopped before it resolved one, or when Clerk didn't confirm it.                                                                                                        |
+| `app_id`         | Its app (`app_…`): from `--app`, or from the linked profile when that profile owns the instance. When the run learned nothing about its target, the linked project's app, as for every command. Null for a key for another app's instance, or one whose instance Clerk didn't confirm. |
+| `stage`          | How far the run got: one funnel per subcommand, below. Null for `runs` and `sources`, which are one step each.                                                                                                                                                                         |
 
 `workspace_id` is the linked profile's only when `app_id` is that profile's app. A `key_…` stand-in, the hash a run records when `GET /v1/instance` fails, is never sent: neither is an `--instance` alias or an app label.
 
@@ -1528,8 +1528,6 @@ Stages, in the order each subcommand runs them. The last one set is the one sent
 - `import`: `migrate_source`, `migrate_target_setup` (sign-in, link), `migrate_input`, `migrate_target`, `migrate_resume`, `migrate_load`, `migrate_checks`, `migrate_confirm`, `migrate_import`, `done`. Terminal branches: `migrate_already_imported`, `migrate_dry_run`, `migrate_nothing_to_import`.
 - `export`: `migrate_pick_platform` (bare `clerk migrate export` only), `migrate_export_read` (credentials and reading users), `migrate_export_write`, `done`.
 - `undo`: `migrate_run_lookup`, `migrate_target`, `migrate_inspect`, `migrate_confirm`, `migrate_delete`, `done`. Terminal branch: `migrate_dry_run`.
-
-`runs` and `sources` are one step each and send no stage.
 
 A run that finishes part-way exits nonzero without throwing, and carries a code so it is not an uncoded error:
 
