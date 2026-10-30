@@ -2,7 +2,7 @@ import { test, expect, describe, afterEach, beforeEach, mock } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { _resetUserAgentCache, loggedFetch } from "./fetch.ts";
+import { _resetUserAgentCache, loggedFetch, markMigrateRequests } from "./fetch.ts";
 import { _resetInterruptState, abortInFlight, beginInterrupt, interruptSignal } from "./signals.ts";
 import { _setConfigDir, markTelemetryNoticeShown, setTelemetryDisabled } from "./config.ts";
 
@@ -48,7 +48,7 @@ describe("loggedFetch", () => {
   });
 });
 
-describe("AIAgent segment honors the telemetry opt-out", () => {
+describe("AIAgent and migrate segments honor the telemetry opt-out", () => {
   let configDir: string;
   let originalClaudecode: string | undefined;
   let originalCi: string | undefined;
@@ -111,6 +111,30 @@ describe("AIAgent segment honors the telemetry opt-out", () => {
     await markTelemetryNoticeShown();
     await setTelemetryDisabled(true);
     expect(await sentUserAgent()).not.toContain("AIAgent/");
+  });
+
+  // Marks `clerk migrate`'s Backend API requests, under the same opt-outs.
+  test("migrate segment present once clerk migrate marks its requests", async () => {
+    await markTelemetryNoticeShown();
+    markMigrateRequests();
+    expect(await sentUserAgent()).toContain("; migrate)");
+  });
+
+  test("migrate segment omitted when nothing marks the requests", async () => {
+    await markTelemetryNoticeShown();
+    expect(await sentUserAgent()).not.toContain("migrate");
+  });
+
+  test("migrate segment omitted under an opt-out", async () => {
+    await markTelemetryNoticeShown();
+    await setTelemetryDisabled(true);
+    markMigrateRequests();
+    expect(await sentUserAgent()).not.toContain("migrate");
+  });
+
+  test("migrate segment omitted before the disclosure notice has been shown", async () => {
+    markMigrateRequests();
+    expect(await sentUserAgent()).not.toContain("migrate");
   });
 });
 

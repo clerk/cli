@@ -1,5 +1,6 @@
 import type { Program } from "../../cli-program.ts";
 import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
+import { markMigrateRequests } from "../../lib/fetch.ts";
 import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { setMode } from "../../mode.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
@@ -69,6 +70,8 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     // With globals: `export auth0 --json` lands on the export group's own
     // --json, which the subcommand's opts() never sees.
     const opts = actionCommand.optsWithGlobals();
+    // So the Backend API logs can tell a migration's creates from `clerk users create`.
+    markMigrateRequests();
     setAssumeYes(Boolean(opts.yes));
     if (opts.json && !opts.mode) setMode("agent");
     // A hint, so a run that fails before its target resolves still names it.
