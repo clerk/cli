@@ -4,13 +4,16 @@
  * we fall through to Bun's default `User-Agent: Bun/<version>`, which is
  * indistinguishable from any other Bun-based client.
  *
- * Format: `Clerk-CLI/<version> (Bun/<bun-version>; <platform>-<arch>[; ci][; AIAgent/<agent>])`
+ * Format: `Clerk-CLI/<version> (Bun/<bun-version>; <platform>-<arch>[; ci][; AIAgent/<agent>][; migrate])`
  *   - <platform>: darwin | linux | win32 | …  (process.platform)
  *   - <arch>:     arm64 | x64 | …             (process.arch)
  *   - `ci` segment is appended when running under a recognized CI environment.
  *   - `AIAgent/<agent>` segment is appended when an AI agent is detected —
- *     analytics-purposed, so the fetch layer omits it when telemetry is
- *     opted out or not yet disclosed.
+ *     analytics-purposed, so the fetch layer omits it from dev builds and when
+ *     telemetry is opted out or not yet disclosed.
+ *   - `migrate` segment is appended to `clerk migrate`'s requests, so the
+ *     Backend API logs can count a migration's user creates. Analytics too,
+ *     so the fetch layer omits it under the same rules as `AIAgent`.
  */
 
 import { detectAiAgent, type EnvLike } from "./env-signals.ts";
@@ -18,7 +21,7 @@ import { CURRENT_VERSION } from "./version.ts";
 
 export function buildUserAgent(
   env: EnvLike = process.env,
-  options: { agentToken?: boolean } = {},
+  options: { agentToken?: boolean; migrate?: boolean } = {},
 ): string {
   const segments = [`Bun/${Bun.version}`, `${process.platform}-${process.arch}`];
   if (env.CI) segments.push("ci");
@@ -26,5 +29,6 @@ export function buildUserAgent(
     const agent = detectAiAgent(env);
     if (agent) segments.push(`AIAgent/${agent}`);
   }
+  if (options.migrate) segments.push("migrate");
   return `Clerk-CLI/${CURRENT_VERSION} (${segments.join("; ")})`;
 }

@@ -14,7 +14,7 @@ import path from "node:path";
 import { EXIT_CODE, type CliError } from "../../lib/errors.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import { _resetInterruptState, abortInFlight, beginInterrupt } from "../../lib/signals.ts";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
 import {
   continueRun,
   latestUserLines,
@@ -793,5 +793,54 @@ describe("deleting", () => {
       run: { kind: "undo", undoes: record.id, status: "complete" },
       result: { deleted: 2, failed: 0, errors: [] },
     });
+  });
+});
+
+describe("telemetry", () => {
+  const send = async (runId: string, options: Parameters<typeof undo>[1]) =>
+    (
+      await captureTelemetryPayload("migrate undo", () => undo(runId, options), {
+        captureError: true,
+      })
+    ).payload;
+
+  test("a finished undo ends at done, naming the import's source and instance", async () => {
+    const payload = await send(importRun().id, withDir({ yes: true }));
+    expect(payload).toMatchObject({
+      outcome: "success",
+      stage: "done",
+      migrate_source: "clerk",
+      instance_id: "ins_1",
+    });
+  });
+
+  test("an undo with deletes left is coded", async () => {
+    failing.add("user_a");
+    const payload = await send(importRun().id, withDir({ yes: true }));
+    expect(payload).toMatchObject({
+      outcome: "error",
+      stage: "done",
+      error_code: "migrate_undo_incomplete",
+    });
+  });
+
+  test.each([
+    ["a dry run", { dryRun: true }, "migrate_dry_run"],
+    ["no consent where nobody can be asked", {}, "migrate_confirm"],
+  ])("%s stops at its stage", async (_label, extra, stage) => {
+    const payload = await send(importRun().id, withDir(extra));
+    expect(payload.stage).toBe(stage);
+  });
+
+  test("an unknown run stops at migrate_run_lookup", async () => {
+    const payload = await send("20260101-000000-nope", withDir({ yes: true }));
+    expect(payload.stage).toBe("migrate_run_lookup");
+  });
+
+  // Recorded before resolution, so a failed one still names the run's instance.
+  test("a target that fails to resolve still names the run's instance", async () => {
+    const record = importRun({ target: { instanceId: "ins_recorded", env: "development" } });
+    const payload = await send(record.id, withDir({ yes: true, instance: "prod" }));
+    expect(payload).toMatchObject({ stage: "migrate_target", instance_id: "ins_recorded" });
   });
 });

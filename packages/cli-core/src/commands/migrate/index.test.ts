@@ -6,6 +6,7 @@ import { getMode, setMode } from "../../mode.ts";
 import { createProgram } from "../../cli-program.ts";
 import { exportPlatformKeys } from "./export/registry.ts";
 import { isAssumeYes, setAssumeYes } from "./lib/assume-yes.ts";
+import { captureTelemetryPayload } from "../../test/lib/stubs.ts";
 
 let saved: string | undefined;
 beforeAll(() => {
@@ -300,5 +301,63 @@ describe("the migrate group's -y hook", () => {
   test("records its absence, so a previous run cannot leak into this one", async () => {
     setAssumeYes(true);
     expect(await parse(["migrate", "import", missing, "--secret-key", "sk_test_x"])).toBe(false);
+  });
+});
+
+describe("what the migrate hooks record for telemetry", () => {
+  let missing: string;
+  let missingDb: string;
+  beforeAll(() => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-telemetry-"));
+    missing = path.join(dir, "none.json");
+    missingDb = path.join(dir, "none.sqlite");
+  });
+
+  // The action is allowed to fail: only what the hooks record is under test.
+  async function payloadOf(argv: string[]) {
+    const program = createProgram();
+    program.exitOverride();
+    const { payload } = await captureTelemetryPayload(
+      "migrate",
+      () =>
+        program.parseAsync(["node", "clerk", ...argv]).then(
+          () => undefined,
+          () => undefined,
+        ),
+      { result: { outcome: "error", exitCode: 1 } },
+    );
+    return payload;
+  }
+
+  test("--app and --instance IDs are recorded before anything resolves", async () => {
+    const payload = await payloadOf([
+      "migrate",
+      "import",
+      missing,
+      "--app",
+      "app_x",
+      "--instance",
+      "ins_y",
+    ]);
+    expect(payload).toMatchObject({ app_id: "app_x", instance_id: "ins_y" });
+  });
+
+  test("an --instance alias is not an ID, and is dropped", async () => {
+    const payload = await payloadOf([
+      "migrate",
+      "import",
+      missing,
+      "--app",
+      "app_x",
+      "--instance",
+      "dev",
+    ]);
+    expect(payload).toMatchObject({ app_id: "app_x", instance_id: null });
+  });
+
+  test("an export subcommand records its platform as the source", async () => {
+    const payload = await payloadOf(["migrate", "export", "supabase", "--db-url", missingDb]);
+    expect(payload.migrate_source).toBe("supabase");
+    expect(payload.stage).toBe("migrate_export_read");
   });
 });

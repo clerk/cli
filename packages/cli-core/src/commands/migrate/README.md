@@ -1510,6 +1510,36 @@ stamping every user with today's.
 | `skipLegalChecks`           | `boolean` | Skip legal acceptance checks                                                         |
 | `skipPasswordChecks`        | `boolean` | Skip password requirements on import                                                 |
 
+## What telemetry records
+
+`clerk migrate` adds two fields to the ones every command sends, `migrate_source` and `instance_id`, and gives `app_id` and `stage` values of its own:
+
+| Field            | What it holds                                                                                                                                                                                                                                                                                                                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `migrate_source` | Where the users come from: a built-in source or export platform (`auth0`, `clerk`, …), or `custom` for a source you wrote. Never its path or its key. Null when the run stopped before it knew the source.                                                                                                                                                                             |
+| `instance_id`    | The Clerk instance the command acted on (`ins_…`). For `export clerk`, the instance it read. Before the run resolves its instance, the `--instance` you passed, unchecked, when it's an `ins_…` ID. Null when there's neither, or when Clerk didn't confirm the instance.                                                                                                              |
+| `app_id`         | Its app (`app_…`): from `--app`, or from the linked profile when that profile owns the instance. Before the run resolves its target, the `--app` you passed, unchecked, when it's an `app_…` ID. When the run learned nothing about its target, the linked project's app, as for every command. Null for a key for another app's instance, or one whose instance Clerk didn't confirm. |
+| `stage`          | How far the run got: one funnel per subcommand, below. Null for `runs` and `sources`, which are one step each.                                                                                                                                                                                                                                                                         |
+
+`workspace_id` is the linked profile's only when `app_id` is that profile's app. Telemetry never sends a `key_…` stand-in (the hash a run records when `GET /v1/instance` fails), an `--instance` alias, or an app label.
+
+Stages, in the order each subcommand runs them. Telemetry sends the last stage set, so a failure or a Ctrl-C reports where the run stopped:
+
+- `import`: `migrate_source`, `migrate_target_setup` (sign-in, link), `migrate_input`, `migrate_target`, `migrate_resume`, `migrate_load`, `migrate_checks`, `migrate_confirm`, `migrate_import`, `done`. Terminal branches: `migrate_already_imported`, `migrate_dry_run`, `migrate_nothing_to_import`.
+- `export`: `migrate_pick_platform` (bare `clerk migrate export` only), `migrate_export_read` (credentials and reading users), `migrate_export_write`, `done`.
+- `undo`: `migrate_run_lookup`, `migrate_target`, `migrate_inspect`, `migrate_confirm`, `migrate_delete`, `done`. Terminal branch: `migrate_dry_run`.
+
+A run that finishes part-way exits nonzero without throwing, and carries a code so it is not an uncoded error:
+
+| Ending                                     | `error_code`               | Exit |
+| ------------------------------------------ | -------------------------- | ---- |
+| `import --dry-run` the checks would refuse | `migrate_checks_rejected`  | 2    |
+| `import` where some users failed           | `migrate_import_partial`   | 1    |
+| `undo` with deletes left                   | `migrate_undo_incomplete`  | 1    |
+| `export` the platform cut short            | `migrate_export_truncated` | 1    |
+
+`clerk migrate` also adds a `migrate` segment to the `User-Agent` of the requests it sends (`Clerk-CLI/<version> (…; migrate)`), so Clerk's logs can count the users each migration creates. The CLI follows the same rules as for telemetry: it leaves the segment out when telemetry is off and, outside CI, until the telemetry notice has shown.
+
 ## API endpoints
 
 | Method   | Path                                                    | Used by                                                                                                                        |

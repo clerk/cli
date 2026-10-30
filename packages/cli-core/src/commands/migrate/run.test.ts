@@ -12,10 +12,14 @@ import {
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { _setConfigDir } from "../../lib/config.ts";
+import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { type CliError, EXIT_CODE } from "../../lib/errors.ts";
 import * as plapi from "../../lib/plapi.ts";
-import { credentialStoreStubs, useCaptureLog } from "../../test/lib/stubs.ts";
+import {
+  captureTelemetryPayload,
+  credentialStoreStubs,
+  useCaptureLog,
+} from "../../test/lib/stubs.ts";
 
 // Every test below names its own `--secret-key`, which short-circuits the
 // signed-in check — except the one that asserts what happens without it.
@@ -3111,6 +3115,116 @@ describe("run", () => {
         'Unknown source "nope". Valid sources: clerk, auth0, authjs, betterauth, firebase, supabase, workos.',
       );
       expect(requests).toHaveLength(0);
+    });
+  });
+
+  describe("telemetry", () => {
+    const send = async (options: Parameters<typeof run>[0]) =>
+      (await captureTelemetryPayload("migrate import", () => run(options), { captureError: true }))
+        .payload;
+
+    test("a finished import ends at done, naming its source and instance", async () => {
+      const payload = await send(baseOptions);
+      expect(payload).toMatchObject({
+        outcome: "success",
+        stage: "done",
+        migrate_source: "clerk",
+        instance_id: "ins_1",
+      });
+    });
+
+    test("a key-only import borrows the app of the linked profile that owns its instance", async () => {
+      await setProfile(workDir, {
+        workspaceId: "ws_1",
+        appId: "app_1",
+        instances: { development: "ins_1" },
+      });
+      const payload = await send(baseOptions);
+      expect(payload).toMatchObject({
+        app_id: "app_1",
+        workspace_id: "ws_1",
+        instance_id: "ins_1",
+      });
+    });
+
+    // A stand-in is a hash of the secret key.
+    test("a stand-in instance is never sent", async () => {
+      stubClerk({ instanceDown: true });
+      const payload = await send(baseOptions);
+      expect(payload.instance_id).toBeNull();
+      expect(JSON.stringify(payload)).not.toContain(keyInstanceId("sk_test_x"));
+    });
+
+    test("some users failing is a partial import, coded", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      const payload = await send(baseOptions);
+      expect(payload).toMatchObject({
+        outcome: "error",
+        stage: "done",
+        error_code: "migrate_import_partial",
+      });
+    });
+
+    test.each([
+      ["a dry run", { dryRun: true }, "migrate_dry_run"],
+      ["no consent where nobody can be asked", { yes: false }, "migrate_confirm"],
+      ["an unknown source", { source: "nope" }, "migrate_source"],
+    ])("%s stops at its stage", async (_label, extra, stage) => {
+      const payload = await send({ ...baseOptions, ...extra });
+      expect(payload.stage).toBe(stage);
+    });
+
+    test("a dry run the checks would refuse is coded", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3" }]),
+      );
+      const payload = await send({ ...baseOptions, dryRun: true });
+      expect(payload).toMatchObject({
+        outcome: "error",
+        stage: "migrate_dry_run",
+        error_code: "migrate_checks_rejected",
+      });
+    });
+
+    test("an import already done stops at migrate_already_imported", async () => {
+      await run(baseOptions);
+      const payload = await send(baseOptions);
+      expect(payload.stage).toBe("migrate_already_imported");
+    });
+
+    test("a file with no users stops at migrate_nothing_to_import", async () => {
+      const payload = await send({ ...baseOptions, input: "users.json" });
+      expect(payload.stage).toBe("migrate_nothing_to_import");
+    });
+
+    test("an envelope names the source when no flag does", async () => {
+      const file = path.join(workDir, "envelope.json");
+      fs.writeFileSync(file, JSON.stringify({ clerkMigrate: 1, source: "auth0", users: [] }));
+      const { source: _source, ...noSource } = baseOptions;
+      const payload = await send({ ...noSource, input: "envelope.json" });
+      expect(payload.migrate_source).toBe("auth0");
+    });
+
+    test("a source you wrote is custom, never its path or name", async () => {
+      const own = `./own-telemetry-${Date.now()}.ts`;
+      fs.writeFileSync(
+        path.join(workDir, own),
+        `export default {
+          key: "secretname",
+          label: "Secret",
+          transformer: { id: "userId", primary_email_address: "email" },
+          carries: {
+            passwords: { level: "no", note: "None." },
+            mfa: { level: "no", note: "None." },
+            metadata: { level: "no", note: "None." },
+          },
+        };`,
+      );
+      const payload = await send({ ...baseOptions, source: own });
+      expect(payload.migrate_source).toBe("custom");
+      expect(JSON.stringify(payload)).not.toContain("secretname");
+      expect(JSON.stringify(payload)).not.toContain("own-telemetry");
     });
   });
 });
