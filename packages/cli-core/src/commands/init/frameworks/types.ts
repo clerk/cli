@@ -22,6 +22,8 @@ export interface ProjectContext {
   isBootstrap?: boolean;
   /** The `clerk init` an agent runs after choosing an application, with this run's native setup options. */
   nativeContinuation?: string;
+  /** Why native setup refused this project, when init fell back to the manual steps and the env file. */
+  nativeFallback?: string;
 }
 
 export type FileAction =

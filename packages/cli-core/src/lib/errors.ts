@@ -164,6 +164,12 @@ export const ERROR_CODE = {
   IOS_REMOTE_APPLY_FAILED: "ios_remote_apply_failed",
   /** Clerk native configuration was readable after apply but did not match the approved state. */
   IOS_REMOTE_VERIFY_FAILED: "ios_remote_verify_failed",
+  /** The inspected Android project has a known condition that prevents safe automatic setup. */
+  ANDROID_SETUP_BLOCKED: "android_setup_blocked",
+  /** The Android project or Clerk application changed after the approved setup was planned. */
+  ANDROID_SETUP_STALE: "android_setup_stale",
+  /** Clerk's Android registration was readable after apply but did not match the approved state. */
+  ANDROID_REMOTE_VERIFY_FAILED: "android_remote_verify_failed",
   /** Platform API returned a successful response with missing or contradictory data. */
   PLAPI_UNEXPECTED_RESPONSE: "plapi_unexpected_response",
 } as const;

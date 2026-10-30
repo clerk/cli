@@ -7,7 +7,7 @@ import {
   patchInstanceConfig,
   type InstanceConfigSchema,
 } from "../../../lib/plapi.ts";
-import { withNativeSpinner as withSpinner } from "./progress.ts";
+import { withNativeSpinner as withSpinner } from "../native/progress.ts";
 import type { IOSNativePlatform } from "./types.ts";
 
 const APPLE_CONNECTION_KEY = "connection_oauth_apple";
