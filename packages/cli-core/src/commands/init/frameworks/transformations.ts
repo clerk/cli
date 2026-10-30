@@ -7,12 +7,13 @@ import { parseModule, type ProxifiedModule } from "magicast";
 import { maskCommentsAndStrings } from "./source-scan.js";
 
 /**
- * Print a magicast module, keeping the trailing line break of the source it was parsed
- * from. magicast's printer drops it, which leaves "No newline at end of file" in the
- * user's diff.
+ * Print a magicast module in the line endings of the source it was parsed from, keeping
+ * its trailing line break. magicast's printer joins lines with the host's EOL and drops
+ * the final line break, which leaves "No newline at end of file" in the user's diff.
  */
 export function printModule(mod: ProxifiedModule, source: string): string {
-  const code = mod.generate().code;
+  const lineTerminator = /\r?\n/.exec(source)?.[0] ?? "\n";
+  const code = mod.generate({ lineTerminator }).code;
   const eol = /\r?\n$/.exec(source)?.[0];
   return eol && !code.endsWith("\n") ? code + eol : code;
 }

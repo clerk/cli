@@ -11,14 +11,22 @@ describe("printModule", () => {
   test.each([
     ["LF", "\n"],
     ["CRLF", "\r\n"],
-  ])("keeps the source's trailing %s line break", (_name, eol) => {
+  ])("keeps the source's %s line endings, including the trailing one", (_name, eol) => {
     const source = `export default {${eol}  a: 1,${eol}};${eol}`;
     const mod = parseModule(source);
     mod.exports.default.b = 2;
 
     const result = printModule(mod, source);
 
-    expect(result.endsWith(`;${eol}`)).toBe(true);
+    expect(result).toBe(`export default {${eol}  a: 1,${eol}  b: 2,${eol}};${eol}`);
+  });
+
+  test("keeps CRLF line endings when the source ended without one", () => {
+    const source = `export default {\r\n  a: 1,\r\n};`;
+    const mod = parseModule(source);
+    mod.exports.default.b = 2;
+
+    expect(printModule(mod, source)).toBe(`export default {\r\n  a: 1,\r\n  b: 2,\r\n};`);
   });
 
   test("adds no line break when the source ended without one", () => {
