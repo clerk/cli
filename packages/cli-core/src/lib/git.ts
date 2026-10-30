@@ -102,7 +102,17 @@ export function normalizeGitRemoteUrl(raw: string): string {
 }
 
 /**
- * Adds `entry` to the project's `.gitignore` unless it is already listed.
+ * Reduces a root-level ignore pattern to its bare path so equivalent spellings
+ * compare equal: `/.clerk/`, `.clerk/`, `/.clerk`, `.clerk`, and `.clerk/*`
+ * all become `.clerk`.
+ */
+function normalizeGitignorePattern(pattern: string): string {
+  return pattern.replace(/^\//, "").replace(/\/\*{0,2}$/, "");
+}
+
+/**
+ * Adds `entry` to the project's `.gitignore` unless it, or an equivalent
+ * pattern such as `/.clerk/` for `.clerk/`, is already listed.
  *
  * The CLI writes files into a user's repository that must not be committed,
  * such as the keyless breadcrumb. Creating one without this is how a live
@@ -113,8 +123,18 @@ export async function ensureGitignoreEntry(cwd: string, entry: string): Promise<
   const content = await Bun.file(gitignorePath)
     .text()
     .catch(() => "");
-  const lines = content.split("\n").map((l) => l.trim());
-  if (lines.includes(entry)) return;
+  const target = normalizeGitignorePattern(entry);
+  // Git strips a trailing CR and trailing spaces, but keeps tabs and leading
+  // whitespace. The last matching rule wins, so a later `!.clerk/` re-includes
+  // the folder.
+  let listed = false;
+  for (const line of content.split("\n").map((l) => l.replace(/\r$/, "").replace(/ +$/, ""))) {
+    if (!line || line.startsWith("#")) continue;
+    const negated = line.startsWith("!");
+    const pattern = negated ? line.slice(1) : line;
+    if (normalizeGitignorePattern(pattern) === target) listed = !negated;
+  }
+  if (listed) return;
   const separator = content && !content.endsWith("\n") ? "\n" : "";
   await Bun.write(gitignorePath, `${content}${separator}${entry}\n`);
   log.debug(`git: added ${entry} to .gitignore`);
