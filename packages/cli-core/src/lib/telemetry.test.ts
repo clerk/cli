@@ -892,6 +892,18 @@ describe("finalizeAndSendTelemetry", () => {
       expect(JSON.stringify(payload)).not.toContain("key_0123456789abcdef");
     });
 
+    // A key whose instance Clerk didn't confirm may be any app's, not the linked one.
+    test("a key_ stand-in counts as a target, not the linked profile", async () => {
+      await setProfile(process.cwd(), linked);
+      const payload = await sendAndCapturePayload(
+        () => setTelemetryTarget({ instanceId: "key_0123456789abcdef" }),
+        ok,
+      );
+      expect(payload.app_id).toBeNull();
+      expect(payload.workspace_id).toBeNull();
+      expect(payload.instance_id).toBeNull();
+    });
+
     test("an alias-only hint counts as no target", async () => {
       await setProfile(process.cwd(), linked);
       const payload = await sendAndCapturePayload(
