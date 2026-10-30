@@ -1521,9 +1521,9 @@ stamping every user with today's.
 | `app_id`         | Its app (`app_…`): from `--app`, or from the linked profile when that profile owns the instance. When the run learned nothing about its target, the linked project's app, as for every command. Null for a key for another app's instance, or one whose instance Clerk didn't confirm. |
 | `stage`          | How far the run got: one funnel per subcommand, below. Null for `runs` and `sources`, which are one step each.                                                                                                                                                                         |
 
-`workspace_id` is the linked profile's only when `app_id` is that profile's app. A `key_…` stand-in, the hash a run records when `GET /v1/instance` fails, is never sent: neither is an `--instance` alias or an app label.
+`workspace_id` is the linked profile's only when `app_id` is that profile's app. Telemetry never sends a `key_…` stand-in (the hash a run records when `GET /v1/instance` fails), an `--instance` alias, or an app label.
 
-Stages, in the order each subcommand runs them. The last one set is the one sent, so a failure or a Ctrl-C reports where the run stopped:
+Stages, in the order each subcommand runs them. Telemetry sends the last stage set, so a failure or a Ctrl-C reports where the run stopped:
 
 - `import`: `migrate_source`, `migrate_target_setup` (sign-in, link), `migrate_input`, `migrate_target`, `migrate_resume`, `migrate_load`, `migrate_checks`, `migrate_confirm`, `migrate_import`, `done`. Terminal branches: `migrate_already_imported`, `migrate_dry_run`, `migrate_nothing_to_import`.
 - `export`: `migrate_pick_platform` (bare `clerk migrate export` only), `migrate_export_read` (credentials and reading users), `migrate_export_write`, `done`.
