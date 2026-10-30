@@ -562,9 +562,11 @@ file _or_ the key's JSON pasted whole, so a key kept in a password manager or a
 CI secret never has to be written to disk. The prompt is masked, since the key
 carries a private key. Agent mode cannot prompt, so it names the flag instead.
 
-Either way the key is validated before anything reaches the network, so
-downloading the web app config by mistake fails in a second with the right
-console page named rather than after an auth round-trip. Key material never
+Either way the CLI checks the key before anything reaches the network, so the
+wrong file fails in a second rather than after an auth round-trip. A key whose
+`type` isn't `service_account` fails naming the console page to download one
+from (Project settings → Service accounts). A web app config, which has no
+`type`, fails with `"project_id" is missing`. Key material never
 appears in output.
 
 Firebase's scrypt is a modified variant, so a digest is worthless without the
@@ -918,12 +920,12 @@ store: …`), passwords a source had to drop, emails Clerk refuses (malformed,
 Any reject stops the import, and it exits 2 with the command that adds
 `--allow-partial`. With `--allow-partial`, the rest import and each reject is
 recorded as `skipped` with its reason. `--dry-run` exits 2 when the real run
-would be refused, and 0 otherwise. A refused dry run says so after the checks,
-with the advice and commands the real run would give: the `--allow-partial`
-command when any user passes, and the earlier run's undo (or continue) when it
-created some of the rejected users. In `--json` the preview carries
-`refused: true`, with `advice` (the real refusal's sentence) and `steps` (its
-commands, each a `command` and `description`).
+would be refused, 1 on an API, auth, or runtime error, and 0 otherwise. A
+refused dry run says so after the checks, with the advice and commands the real
+run would give: the `--allow-partial` command when any user passes, and the
+earlier run's undo (or continue) when it created some of the rejected users. In
+`--json` the preview carries `refused: true`, with `advice` (the real refusal's
+sentence) and `steps` (its commands, each a `command` and `description`).
 
 ```
 Checks
@@ -1412,9 +1414,10 @@ unconfirmed address there would silently promote it.
 - **Boolean** (`auth0`, `betterauth`, `firebase`, `workos`): `true`/`false`. A CSV export stringifies these, so `"false"` is
   read as false, not as a non-empty string. `TRUE`, `FALSE`, `t`, and `f` read
   too, as a spreadsheet or psql writes them.
-- **Timestamp** (`authjs`, `supabase`): a nullable confirmation time. Any real value
-  means verified; `""`, `null`, and `\N` do not. For `authjs`, neither does `0`
-  (the epoch) or a value that isn't a date.
+- **Timestamp** (`authjs`, `supabase`): a nullable confirmation time. `""`,
+  `null`, `nil`, `undefined`, and `\N`, in any case, mean not verified; any other
+  value means verified, even a string that isn't a date. For `authjs`, `0` (the
+  epoch) and a value that isn't a date mean not verified too.
 
 A Clerk export keeps an unverified primary email or phone unverified.
 
