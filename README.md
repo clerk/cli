@@ -103,14 +103,13 @@ Commands:
 
 The Clerk CLI collects usage telemetry: command name, flag names, duration, outcome,
 environment signals (OS, install method, terminal), a random machine identifier, the
-platform a migration's users come from, and the workspace, app and instance IDs of the
+platform a migration's users come from, and the workspace, app, and instance IDs of the
 Clerk app a command acts on or the project is linked to. It doesn't collect raw command
 arguments, option values, file paths, or personal data, with two exceptions. `clerk migrate`
-reports where a migration's users come from as a built-in platform name or `custom`, and
-the app and instance IDs it acts on, which can come from `--app` and `--instance`.
-`clerk feedback` sends the text you choose to send, which is scrubbed on a best-effort
-basis for common secret formats, home-directory paths and email addresses before it
-leaves your machine;
+reports its source as a built-in platform name or `custom`, and the IDs it acts on can come
+from `--app` and `--instance`. `clerk feedback` sends the text you choose to send, and
+scrubs it on a best-effort basis for common secret formats, home-directory paths, and email
+addresses before it leaves your machine;
 `clerk feedback --dry-run` shows exactly what would be sent. The first run only shows a
 disclosure notice and sends nothing (CI environments send from the first run), except
 `clerk feedback`, which shows the notice and then sends the report you asked it to send
