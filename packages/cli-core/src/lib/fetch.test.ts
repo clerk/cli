@@ -72,6 +72,8 @@ describe("AIAgent and migrate segments honor the telemetry opt-out", () => {
     delete process.env.CI;
     delete process.env.CLERK_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
+    // These run as a dev build; this variable lifts the guard, as for telemetry itself.
+    process.env.CLERK_TELEMETRY_URL = "https://telemetry.example.test";
   });
 
   afterEach(async () => {
@@ -84,6 +86,7 @@ describe("AIAgent and migrate segments honor the telemetry opt-out", () => {
     else process.env.CI = originalCi;
     delete process.env.CLERK_TELEMETRY_DISABLED;
     delete process.env.DO_NOT_TRACK;
+    delete process.env.CLERK_TELEMETRY_URL;
     await rm(configDir, { recursive: true, force: true });
   });
 
@@ -135,6 +138,17 @@ describe("AIAgent and migrate segments honor the telemetry opt-out", () => {
   test("migrate segment omitted before the disclosure notice has been shown", async () => {
     markMigrateRequests();
     expect(await sentUserAgent()).not.toContain("migrate");
+  });
+
+  // Our own testing with dev builds must not count as usage, as with the events.
+  test("both segments omitted from a dev build, even in CI", async () => {
+    await markTelemetryNoticeShown();
+    process.env.CI = "1";
+    delete process.env.CLERK_TELEMETRY_URL;
+    markMigrateRequests();
+    const userAgent = await sentUserAgent();
+    expect(userAgent).not.toContain("AIAgent/");
+    expect(userAgent).not.toContain("migrate");
   });
 });
 
