@@ -1362,13 +1362,20 @@ unconfirmed address there would silently promote it.
 
 - **Boolean** (`auth0`, `betterauth`, `firebase`, `workos`): `true`/`false`. A CSV export stringifies these, so `"false"` is
   read as false, not as a non-empty string. `TRUE`, `FALSE`, `t`, and `f` read
-  too, as a spreadsheet or psql writes them.
+  too, as a spreadsheet or psql writes them. `firebase`'s flag is `emailVerified`,
+  which covers email only.
 - **Timestamp** (`authjs`, `supabase`): a nullable confirmation time. `""`,
   `null`, `nil`, `undefined`, and `\N`, in any case, mean not verified; any other
   value means verified, even a string that isn't a date. For `authjs`, `0` (the
   epoch) and a value that isn't a date mean not verified too.
 
 A Clerk export keeps an unverified primary email or phone unverified.
+
+Firebase phones import verified, so `--reserve-unverified` doesn't apply to them.
+Firebase has no phone-verified field: a user confirms a number by SMS, and an
+admin vouches for one set through the Admin SDK, as with a phone an admin adds in
+Clerk. A number on the record signs in by SMS when the Firebase project has the
+Phone provider on.
 
 **Unverified or reserved.** By default an unverified identifier is attached
 after the user exists (`POST /v1/email_addresses` or `POST /v1/phone_numbers`,

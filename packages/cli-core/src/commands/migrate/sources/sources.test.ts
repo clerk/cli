@@ -552,6 +552,17 @@ describe("firebase", () => {
     ).toBeUndefined();
   });
 
+  // Firebase has no phone-verified field, so nothing routes a phone unverified.
+  test("imports a phone verified", () => {
+    const user = one("firebase", { localId: "p1", phoneNumber: "+14165550123" });
+    expect(user?.phone).toBe("+14165550123");
+    expect(user?.unverifiedPhoneNumbers).toBeUndefined();
+  });
+
+  test("says in its caveats that phones import verified", () => {
+    expect(getSource("firebase").caveats?.join(" ")).toContain("Phones import verified");
+  });
+
   const withHash = { ...base, passwordHash: "SGFzaA==", salt: "U2FsdA==" };
 
   test("builds the scrypt digest Clerk expects, parameters inline", async () => {
