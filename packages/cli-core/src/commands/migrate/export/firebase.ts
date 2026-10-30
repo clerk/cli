@@ -446,7 +446,7 @@ export async function fetchHashConfig(
 /**
  * Keeps the fields the `firebase` transformer maps from.
  *
- * A Firebase user also carries provider records, custom claims and sign-in
+ * A Firebase user also carries provider records, custom claims, and sign-in
  * timestamps that would bloat the export and mean nothing to the import.
  */
 export function mapFirebaseUserToExport(user: FirebaseUser): Record<string, unknown> {
@@ -492,7 +492,7 @@ export function buildFirebaseExport(
   const counts = { email: 0, verified: 0, password: 0, name: 0, phone: 0 };
   // Password users Firebase returned no hash for: it only returns digests it
   // made itself (scrypt), and an empty string for users uploaded with bcrypt,
-  // HMAC or any other hasher.
+  // HMAC, or any other hasher.
   let unreadablePasswords = 0;
   // Hashes Firebase redacted because the caller may not read them.
   let redactedPasswords = 0;
