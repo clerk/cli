@@ -25,7 +25,7 @@ import {
 
 /**
  * Only the metadata's own `first_name` and `last_name` are pulled out as
- * columns. A `display_name`, `full_name` or OAuth `name` stays in
+ * columns. A `display_name`, `full_name`, or OAuth `name` stays in
  * `raw_user_meta_data` for the Supabase source to split, which it does only
  * when `first_name` is empty: coalescing them in here would keep "Jane Doe"
  * as one first name, and let a display name outrank a real first name.

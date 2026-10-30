@@ -22,7 +22,7 @@ const clerkSource = {
     },
     metadata: {
       level: "partial",
-      note: "With `clerk migrate export clerk`, public, private and unsafe metadata keep their places; a Dashboard CSV carries no metadata, ban or legal acceptance. `export clerk` moves each user's external_id to private metadata as `clerkExternalId`, because the import uses external_id for the old Clerk ID.",
+      note: "With `clerk migrate export clerk`, public, private, and unsafe metadata keep their places; a Dashboard CSV carries no metadata, ban, or legal acceptance. `export clerk` moves each user's external_id to private metadata as `clerkExternalId`, because the import uses external_id for the old Clerk ID.",
     },
   },
   transformer: {

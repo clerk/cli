@@ -177,7 +177,7 @@ export function registerMigrate(program: Program): void {
       { command: "clerk migrate runs", description: "List every run, newest first" },
       {
         command: "clerk migrate runs 20260929-141502-a1b2",
-        description: "Show one run: counts, errors and the users that did not make it",
+        description: "Show one run: counts, errors, and the users that did not make it",
       },
       { command: "clerk migrate runs --json", description: "Machine-readable listing" },
     ])

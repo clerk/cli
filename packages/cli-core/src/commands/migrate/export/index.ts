@@ -79,7 +79,7 @@ const DB_PLATFORMS = [
     key: "authjs",
     summary: "Export users from an Auth.js database",
     envVar: "AUTHJS_DB_URL",
-    dbUrl: "Postgres, MySQL, libsql/Turso or SQLite connection string",
+    dbUrl: "Postgres, MySQL, libsql/Turso, or SQLite connection string",
     example: "mysql://user:password@127.0.0.1:3306/authjs",
     flags: [
       [
@@ -92,7 +92,7 @@ const DB_PLATFORMS = [
     key: "betterauth",
     summary: "Export users from a Better Auth database",
     envVar: "BETTERAUTH_DB_URL",
-    dbUrl: "Postgres, MySQL, libsql/Turso or SQLite connection string",
+    dbUrl: "Postgres, MySQL, libsql/Turso, or SQLite connection string",
     example: "./db.sqlite",
   },
 ] as const;
@@ -181,7 +181,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       },
       {
         command: "clerk migrate export auth0",
-        description: "Read AUTH0_DOMAIN, AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET, or prompt",
+        description: "Read AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_CLIENT_SECRET, or prompt",
       },
     ])
     .action(async (_opts, cmd) =>
