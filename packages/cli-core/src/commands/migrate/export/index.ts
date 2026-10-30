@@ -191,7 +191,10 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
   exportCommand
     .command("firebase")
     .description("Export users from a Firebase project")
-    .option("--service-account <path>", "Path to a service account key JSON file")
+    .option(
+      "--service-account <key>",
+      "Service account key: a path to its JSON file, or the JSON itself",
+    )
     .option("-o, --output <path>", "Write the export here instead of the run folder")
     .option("-y, --yes", "Do not prompt: fail on a rejected credential")
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)

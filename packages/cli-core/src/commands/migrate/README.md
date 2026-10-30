@@ -312,7 +312,7 @@ keep `--runs-dir`: the import looks the run ID up there.
 | `--json`                   | all                                | Print the result as JSON; never prompts                           |
 | `--runs-dir <path>`        | all                                | Where runs are kept (see [the run store](#the-run-store))         |
 | `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Connection string (Postgres only for `supabase`)                  |
-| `--service-account <path>` | `firebase`                         | Path to a service account key JSON file                           |
+| `--service-account <key>`  | `firebase`                         | Service account key: a path to its JSON file, or the JSON itself  |
 | `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`, not a custom domain |
 | `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                          |
 | `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret                      |

@@ -159,8 +159,8 @@ async function resolveServiceAccount(options: ExportFirebaseOptions): Promise<Se
   // `-y` is "do not prompt", as for the other exports.
   if (options.json || isAssumeYes() || !isHuman()) {
     throwUsageError(
-      "`clerk migrate export firebase` needs a service account key file and cannot prompt here. " +
-        "Pass --service-account <path>.",
+      "`clerk migrate export firebase` needs a service account key and cannot prompt here. " +
+        "Pass --service-account with the path to the key file, or the key's JSON.",
       DOCS_URL,
       undefined,
       [
