@@ -14,6 +14,7 @@ import { withNetworkAccess } from "./host-execution.ts";
 import { buildUserAgent } from "./user-agent.ts";
 import { optOutEnvVar } from "./env-signals.ts";
 import { getTelemetryDisabled, getTelemetryNoticeShown } from "./config.ts";
+import { IS_DEV_BUILD } from "./version.ts";
 
 let userAgentPromise: Promise<string> | undefined;
 let migrateRequests = false;
@@ -39,13 +40,16 @@ export function markMigrateRequests(): void {
 function resolveUserAgent(): Promise<string> {
   // The AIAgent and migrate segments exist purely for analytics, so they
   // honor the telemetry opt-outs (env vars and `clerk telemetry disable`)
-  // and, like the events, stay absent until the disclosure notice has been
-  // shown — CI exempt, matching showTelemetryNoticeOnce.
+  // and, like the events, stay absent from dev builds (unless
+  // CLERK_TELEMETRY_URL lifts that, as in telemetryEnabled, which this module
+  // can't import) and until the disclosure notice has been shown — CI exempt,
+  // matching showTelemetryNoticeOnce.
   userAgentPromise ??= (async () => {
     const beforeDisclosure =
       !process.env.CI && !(await getTelemetryNoticeShown().catch(() => false));
     const omitAnalyticsSegments =
       optOutEnvVar(process.env) !== null ||
+      (IS_DEV_BUILD && !process.env.CLERK_TELEMETRY_URL) ||
       beforeDisclosure ||
       (await getTelemetryDisabled().catch(() => true));
     return buildUserAgent(process.env, {
