@@ -333,6 +333,13 @@ describe("generateCompletions", () => {
       expect(names).toContain("workos");
     });
 
+    test("completes migrate subcommands", () => {
+      expect(completionNames("")).toContain("migrate");
+      expect(completionNames("migrate", "")).toEqual(
+        expect.arrayContaining(["import", "export", "undo", "runs", "sources"]),
+      );
+    });
+
     test("open dashboard: filters subpaths by prefix", () => {
       const names = completionNames("open", "dashboard", "u");
       expect(names).toContain("users");
