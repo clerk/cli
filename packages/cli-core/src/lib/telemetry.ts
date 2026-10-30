@@ -138,24 +138,6 @@ export type TelemetryStage =
   // shared terminal marker
   | "done";
 
-/**
- * Where a migration's users come from: a built-in source or export platform,
- * or `custom` for a source someone wrote. Closed like {@link TelemetryStage},
- * so a path to a custom source can never reach the payload.
- */
-export const MIGRATE_TELEMETRY_SOURCES = [
-  "auth0",
-  "authjs",
-  "betterauth",
-  "clerk",
-  "firebase",
-  "supabase",
-  "workos",
-  "custom",
-] as const;
-
-export type MigrateTelemetrySource = (typeof MIGRATE_TELEMETRY_SOURCES)[number];
-
 /** The Clerk app and instance a command acted on. Only real `app_`/`ins_` IDs are kept. */
 type TelemetryTarget = {
   appId?: string;
@@ -187,7 +169,7 @@ type TelemetryContext = {
   /** What the command acted on — see setTelemetryTarget. Empty when nothing said. */
   target: TelemetryTarget;
   /** Where a migration's users come from — see setTelemetryMigrateSource. */
-  migrateSource: MigrateTelemetrySource | null;
+  migrateSource: string | null;
 };
 
 /** What a command wants recorded for its soft exit. `deploy status` declares no code: nothing was thrown. */
@@ -365,8 +347,13 @@ export function setTelemetryTarget(target: { appId?: string; instanceId?: string
   };
 }
 
-/** Record where a migration's users come from. Last call wins. */
-export function setTelemetryMigrateSource(source: MigrateTelemetrySource): void {
+/**
+ * Record where a migration's users come from: a built-in source or export
+ * platform, or `custom`. Last call wins. `recordMigrateSource` in
+ * `commands/migrate/telemetry.ts` is the only caller, and it checks the key
+ * against the registries, so a custom source's path or name never gets here.
+ */
+export function setTelemetryMigrateSource(source: string): void {
   if (context) context.migrateSource = source;
 }
 
