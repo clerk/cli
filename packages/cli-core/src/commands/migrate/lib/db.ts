@@ -1,8 +1,8 @@
 /**
- * One query interface over Postgres, MySQL and SQLite.
+ * One query interface over Postgres, MySQL, and SQLite.
  *
  * Rewritten from the standalone migration-tool's `src/lib/db.ts`, which used
- * `pg`, `mysql2` and `better-sqlite3`. None of those belong in a statically
+ * `pg`, `mysql2`, and `better-sqlite3`. None of those belong in a statically
  * compiled binary — `better-sqlite3` is a native addon outright — so this runs
  * on `Bun.sql` (Postgres and MySQL) and `bun:sqlite`, both built into the
  * runtime. That swap is the entire reason the `engines.bun` floor exists.
@@ -86,7 +86,7 @@ export function redactConnectionString(connectionString: string): string {
  * replaced by `***`.
  *
  * {@link redactConnectionString} covers the string we print; this covers what
- * the server or driver says back, which can quote the URL, the password or a
+ * the server or driver says back, which can quote the URL, the password, or a
  * libsql token. A short password can blank an unrelated word too, and a
  * mangled message is the better failure.
  */

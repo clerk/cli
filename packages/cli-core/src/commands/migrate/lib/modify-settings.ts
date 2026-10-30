@@ -47,7 +47,7 @@ type ChangeWrites = { enable: SettingWrite[]; relax: SettingWrite[] };
  * no way to verify it — `422 phone_number: verifiable attributes need to have
  * at least one verification` — and switching the attribute off empties
  * `verification_strategies`, so whatever turns it back on has to put a strategy
- * back. Username, password and the name fields are not verifiable and take one
+ * back. Username, password, and the name fields are not verifiable and take one
  * write each.
  */
 const ATTRIBUTE_WRITES: Record<string, ChangeWrites> = {

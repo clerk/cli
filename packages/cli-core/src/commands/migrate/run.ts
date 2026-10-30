@@ -7,9 +7,9 @@
  * An import goes through the same steps every time:
  *
  * 1. Settle the file (an export run ID stands for the file that run wrote),
- *    the source (a file from `clerk migrate export` names its own) and the
+ *    the source (a file from `clerk migrate export` names its own), and the
  *    target instance, and print the target.
- * 2. Decide whether this continues an earlier run of the same file, source and
+ * 2. Decide whether this continues an earlier run of the same file, source, and
  *    instance, from the run store.
  * 3. Run `checkImport()` against the real instance. `--dry-run` stops here.
  * 4. Refuse on any reject unless `--allow-partial`, then ask for consent.
@@ -246,7 +246,7 @@ export function explainErrors(errors: Iterable<string>, instanceType: InstanceTy
   return notes;
 }
 
-// --- Settling the file, source and target ----------------------------------
+// --- Settling the file, source, and target ----------------------------------
 
 /**
  * Makes sure there is somewhere to import *into* before anything else happens.
@@ -500,7 +500,7 @@ function undoneInFull(runsDir: string, record: RunRecord): boolean {
   );
 }
 
-/** How this import relates to earlier runs of the same file, source and instance. */
+/** How this import relates to earlier runs of the same file, source, and instance. */
 type ResumeCase =
   | { kind: "new" }
   | { kind: "continue"; record: RunRecord; because: "interrupted" | "partial" }
@@ -508,7 +508,7 @@ type ResumeCase =
 
 /**
  * Finds the latest import run of this file (by sha256), this source (and a
- * custom source's hash) and this instance, and decides what a re-run does:
+ * custom source's hash), and this instance, and decides what a re-run does:
  *
  * - none, or undone: a new run
  * - interrupted: continue it, skipping the users it created
@@ -1196,7 +1196,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
 
       // Checked again after the last read of the file, before anything is
-      // created: the envelope, the users and the provider rows all came from
+      // created: the envelope, the users, and the provider rows all came from
       // one revision, the one an export run recorded if there is one.
       if (expectedSha256 !== undefined && sha256File(filePath) !== expectedSha256) {
         throwChanged(filePath);
@@ -1441,7 +1441,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
 
       // Rule 1: nothing is written without consent — `--yes`, or a yes at a
-      // prompt. An agent, a non-TTY run and `--json` never prompt. With users
+      // prompt. An agent, a non-TTY run, and `--json` never prompt. With users
       // skipped or attaches left, the question names them: "Import 0 users?"
       // hides both.
       const toCreate = plural(checks.importable.length, "user");

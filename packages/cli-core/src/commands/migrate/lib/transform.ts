@@ -354,7 +354,7 @@ function addDefaultFields(
 }
 
 /**
- * Maps, normalizes and (unless disabled) validates a batch of raw users.
+ * Maps, normalizes, and (unless disabled) validates a batch of raw users.
  *
  * @param options.validate - Set `false` to get the mapped shape without
  *   dropping invalid rows, for analysis passes that count fields.

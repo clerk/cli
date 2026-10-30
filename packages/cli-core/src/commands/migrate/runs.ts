@@ -1,5 +1,5 @@
 /**
- * `clerk migrate runs [run-id]` — what every import, export and undo did.
+ * `clerk migrate runs [run-id]` — what every import, export, and undo did.
  *
  * Reads the run store and nothing else. `runs` alone lists every run, newest
  * first. `runs <id>` shows one: its header, counts, the error breakdown, the
@@ -180,7 +180,7 @@ function nextCommands(
     const again = continueCommand(record, carry);
     if (!again || state === "complete" || !continuesThisRun(runsDir, record)) return [undo];
     if (state === "partial" && !hasRetryableUsers(record, latest)) return [undo];
-    // Continuing is what a stopped run is for: the same file, source and
+    // Continuing is what a stopped run is for: the same file, source, and
     // target pick it up where it left off.
     const why = state === "interrupted" ? "continue it" : "retry the users it didn't finish";
     // The record knows a source you wrote only by its hash.

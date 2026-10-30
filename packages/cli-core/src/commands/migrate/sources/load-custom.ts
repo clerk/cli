@@ -11,7 +11,7 @@
  * `import()` an arbitrary external `.ts` file at runtime, including TypeScript
  * that needs transpiling. Bun's transpiler is part of the runtime, not only the
  * bundler. Confirmed with a throwaway compiled binary on darwin-arm64,
- * linux-arm64 (glibc), linux-arm64-musl and linux-x64.
+ * linux-arm64 (glibc), linux-arm64-musl, and linux-x64.
  *
  * The file is user-supplied code the CLI executes, so its shape is validated
  * up front and rejected with a specific message rather than crashing deep in

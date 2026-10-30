@@ -4,7 +4,7 @@
  *
  * A compiled binary's users have no source tree to read the mappings in, so
  * this is where they are shown. `sources` alone lists every source with its
- * passwords, MFA and metadata at a glance. `sources <source>` shows one in
+ * passwords, MFA, and metadata at a glance. `sources <source>` shows one in
  * full: what each field becomes, how to export from it, and its caveats.
  */
 
