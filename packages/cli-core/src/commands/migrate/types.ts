@@ -124,7 +124,7 @@ export type SourceCarries = { passwords: Carry; mfa: Carry; metadata: Carry };
  * shape.
  *
  * @property transformer - Source field path → Clerk field name.
- * @property carries - What comes across: passwords, MFA and metadata.
+ * @property carries - What comes across: passwords, MFA, and metadata.
  * @property caveats - Anything else worth knowing before importing.
  * @property defaults - Values merged into every user from this platform.
  * @property preTransform - Runs before field mapping.

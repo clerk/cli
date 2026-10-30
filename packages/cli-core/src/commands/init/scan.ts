@@ -27,32 +27,32 @@ const AUTH_LIBRARY_SCANS: AuthLibraryScan[] = [
   {
     packages: ["next-auth"],
     name: "NextAuth / Auth.js",
-    docsUrl: "https://clerk.com/docs/migrations/nextauth",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/authjs",
   },
   {
     packages: ["@auth0/nextjs-auth0", "auth0"],
     name: "Auth0",
-    docsUrl: "https://clerk.com/docs/migrations/auth0",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/auth0",
   },
   {
     packages: ["@supabase/ssr", "@supabase/auth-helpers-nextjs"],
     name: "Supabase Auth",
-    docsUrl: "https://clerk.com/docs/migrations/supabase",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/supabase",
   },
   {
     packages: ["firebase"],
     name: "Firebase",
-    docsUrl: "https://clerk.com/docs/migrations/firebase",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/firebase",
   },
   {
     packages: ["passport"],
     name: "Passport.js",
-    docsUrl: "https://clerk.com/docs/migrations/overview",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/custom-source",
   },
   {
     packages: ["better-auth"],
     name: "Better Auth",
-    docsUrl: "https://clerk.com/docs/migrations/overview",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/better-auth",
   },
   {
     // AuthKit only: `@workos-inc/node` also serves SSO, Directory Sync and
@@ -65,12 +65,12 @@ const AUTH_LIBRARY_SCANS: AuthLibraryScan[] = [
       "@workos-inc/authkit-js",
     ],
     name: "WorkOS",
-    docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/workos",
   },
   {
     packages: ["@kinde-oss/kinde-auth-nextjs"],
     name: "Kinde",
-    docsUrl: "https://clerk.com/docs/migrations/overview",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/custom-source",
   },
 ];
 
@@ -129,7 +129,7 @@ const CODE_SCANS: CodeScan[] = [
     // out. The `sso` and `directorySync` modules alone hold no users.
     pattern: "\\bworkos\\.userManagement\\b",
     message: "WorkOS User Management still in use",
-    docsUrl: "https://clerk.com/docs/guides/development/migrating/overview",
+    docsUrl: "https://clerk.com/docs/guides/development/migrating/workos",
   },
   {
     pattern: "getServerSession\\s*\\(",

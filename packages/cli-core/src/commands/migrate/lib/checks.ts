@@ -222,7 +222,7 @@ function missingRequiredIdentifier(
   const identifiers = splitIdentifiers(user);
   const reserved = (unverified: string[]) => reserveUnverified && unverified.length > 0;
   const hint = suggestReserve
-    ? " (--reserve-unverified imports it reserved: usable for sign-in, though the source never verified it)"
+    ? " (--reserve-unverified imports it reserved: usable for sign-in, though the auth platform never verified it)"
     : "";
 
   if (
@@ -586,7 +586,7 @@ const hasAnyIdentifier = (user: User) =>
 const DUPLICATE_SOURCE_ID = "duplicate source ID in the file";
 
 /**
- * First user in the file to claim each email, phone and source ID.
+ * First user in the file to claim each email, phone, and source ID.
  *
  * Keyed by record, not source ID: two records with one source ID must not
  * share a verdict, or the one kept would be rejected along with its copy.
@@ -1181,7 +1181,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
 
   // No setting would let a duplicate in, so none earns a fix.
   const duplicates = new Set<User>();
-  // An adopted user already holds its email, phone and username in Clerk, so
+  // An adopted user already holds its email, phone, and username in Clerk, so
   // it claims them first, wherever it sits in the file: a fresh record sharing
   // one is the create Clerk would refuse, and is not kept in its place.
   const { reasons: fileDuplicates, keptBy } = findFileDuplicates(

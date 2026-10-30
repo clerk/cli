@@ -256,7 +256,7 @@ export function buildAuthJsExport(
     // A zero date is no verification, as a number or as a driver's Date.
     const exported = row.email_verified ? exportValue(row.email_verified) : undefined;
     // As the import reads it: the epoch (a driver's zero Date serializes to
-    // it), "0" and text that isn't a date are no verification, so they are
+    // it), "0", and text that isn't a date are no verification, so they are
     // neither exported nor counted as one.
     const verified = exported !== undefined && isAuthJsVerified(exported) ? exported : undefined;
     const providers = options.accounts?.get(userId) ?? [];

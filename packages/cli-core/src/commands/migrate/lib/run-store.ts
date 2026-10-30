@@ -1,7 +1,7 @@
 /**
  * The run store: the one place `clerk migrate` keeps state.
  *
- * Every import, export and undo is a run. A run is a folder under the runs
+ * Every import, export, and undo is a run. A run is a folder under the runs
  * directory holding:
  *
  * - `run.json` — what ran, against what, from which file, and how it ended.
@@ -11,7 +11,7 @@
  *   second writer; a dead one, or a run with no `finishedAt`, means the run
  *   was interrupted.
  *
- * `runs`, `undo` and re-runs all read or write it, so there is no second
+ * `runs`, `undo`, and re-runs all read or write it, so there is no second
  * record to drift out of step.
  *
  * Appends are synchronous so a run interrupted with Ctrl-C still leaves a
@@ -132,7 +132,7 @@ export type UserLine = {
   error?: string;
   /**
    * Failed: the HTTP status, or "unknown". Skipped: a machine reason,
-   * NO_PASSWORD_CODE, IN_FILE_CODE or SOURCE_SKIP_CODE.
+   * NO_PASSWORD_CODE, IN_FILE_CODE, or SOURCE_SKIP_CODE.
    */
   code?: string;
   passwordDropped?: boolean;
@@ -305,7 +305,7 @@ function acquireLockFile(
   }
   // ponytail: two processes that both read the same stale lock can both
   // remove it, and the second can remove the first's new one. Clerk still
-  // refuses the second create of any email, phone or username, so the cost
+  // refuses the second create of any email, phone, or username, so the cost
   // is failed lines, not duplicate users. A lock on the reclaim would close it.
   const holder = livePidIn(file);
   if (holder !== undefined) refuse(holder, file);
@@ -574,7 +574,7 @@ export type Run = {
   /** Merges fields into `run.json`. */
   update(patch: Partial<RunRecord>): void;
   /**
-   * Counts the outcomes, settles the status and releases the lock.
+   * Counts the outcomes, settles the status, and releases the lock.
    *
    * `partial` when any user failed, was skipped, may not have been created,
    * was never sent (`notSent`: they have no line to count) or has identifiers
@@ -638,7 +638,7 @@ function openRun(runsDir: string, record: RunRecord): Run {
 
 export type StartRunInit = Omit<RunRecord, "id" | "status" | "startedAt" | "counts">;
 
-/** Creates a run folder, takes its lock and writes the first `run.json`. */
+/** Creates a run folder, takes its lock, and writes the first `run.json`. */
 export function startRun(runsDir: string, init: StartRunInit): Run {
   // Owner-only: a run's files hold user data.
   fs.mkdirSync(runsDir, { recursive: true, mode: 0o700 });

@@ -79,7 +79,7 @@ const DB_PLATFORMS = [
     key: "authjs",
     summary: "Export users from an Auth.js database",
     envVar: "AUTHJS_DB_URL",
-    dbUrl: "Postgres, MySQL, libsql/Turso or SQLite connection string",
+    dbUrl: "Postgres, MySQL, libsql/Turso, or SQLite connection string",
     example: "mysql://user:password@127.0.0.1:3306/authjs",
     flags: [
       [
@@ -92,7 +92,7 @@ const DB_PLATFORMS = [
     key: "betterauth",
     summary: "Export users from a Better Auth database",
     envVar: "BETTERAUTH_DB_URL",
-    dbUrl: "Postgres, MySQL, libsql/Turso or SQLite connection string",
+    dbUrl: "Postgres, MySQL, libsql/Turso, or SQLite connection string",
     example: "./db.sqlite",
   },
 ] as const;
@@ -101,7 +101,7 @@ const DB_PLATFORMS = [
 export function registerMigrateExport(migrateCommand: Command<[], Record<string, unknown>>): void {
   const exportCommand = migrateCommand
     .command("export")
-    .description("Export users from a source platform, ready for `clerk migrate import`")
+    .description("Export users from an auth platform, ready for `clerk migrate import`")
     .setExamples([
       { command: "clerk migrate export", description: "Pick a platform interactively" },
       {
@@ -149,7 +149,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .setExamples([
       {
         command: "clerk migrate export clerk",
-        description: "Prompts for the source instance and where to save the file",
+        description: "Prompts for the instance to export from",
       },
       {
         command: "clerk migrate export clerk --secret-key sk_live_… --output prod-users.json",
@@ -181,7 +181,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       },
       {
         command: "clerk migrate export auth0",
-        description: "Read AUTH0_DOMAIN, AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET, or prompt",
+        description: "Read AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_CLIENT_SECRET, or prompt",
       },
     ])
     .action(async (_opts, cmd) =>
@@ -191,7 +191,10 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
   exportCommand
     .command("firebase")
     .description("Export users from a Firebase project")
-    .option("--service-account <path>", "Path to a service account key JSON file")
+    .option(
+      "--service-account <key>",
+      "Service account key: a path to its JSON file, or the JSON itself",
+    )
     .option("-o, --output <path>", "Write the export here instead of the run folder")
     .option("-y, --yes", "Do not prompt: fail on a rejected credential")
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)

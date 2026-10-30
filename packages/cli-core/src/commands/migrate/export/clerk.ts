@@ -3,13 +3,13 @@
  *
  * Ported from the standalone migration-tool's `src/export/clerk.ts`, rewritten
  * onto `bapiRequest` instead of `@clerk/backend` so it shares the CLI's auth
- * resolution, `--verbose` request tracing and error taxonomy.
+ * resolution, `--verbose` request tracing, and error taxonomy.
  *
- * The output feeds `clerk migrate import --transformer clerk` unedited, which is
+ * The output feeds `clerk migrate import --source clerk` unedited, which is
  * what makes development → production a two-command operation.
  *
  * **Passwords do not come out of this endpoint.** Clerk never returns password
- * digests, TOTP secrets or backup codes over the API; only the `*_enabled`
+ * digests, TOTP secrets, or backup codes over the API; only the `*_enabled`
  * booleans. The coverage report says how many users *have* a password so the
  * gap is visible before the import, not after.
  */

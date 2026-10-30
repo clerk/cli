@@ -11,7 +11,7 @@
  * `import()` an arbitrary external `.ts` file at runtime, including TypeScript
  * that needs transpiling. Bun's transpiler is part of the runtime, not only the
  * bundler. Confirmed with a throwaway compiled binary on darwin-arm64,
- * linux-arm64 (glibc), linux-arm64-musl and linux-x64.
+ * linux-arm64 (glibc), linux-arm64-musl, and linux-x64.
  *
  * The file is user-supplied code the CLI executes, so its shape is validated
  * up front and rejected with a specific message rather than crashing deep in
@@ -23,9 +23,9 @@ import path from "node:path";
 import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import type { CarryLevel, SourceEntry } from "../types.ts";
 
-/** How to write a source. The README ships nowhere, so link the published copy. */
+/** How to write a source: the custom-source migration guide. */
 export const CUSTOM_SOURCES_URL =
-  "https://github.com/clerk/cli/blob/main/packages/cli-core/src/commands/migrate/README.md#custom-sources";
+  "https://clerk.com/docs/guides/development/migrating/custom-source";
 
 const LEVELS: readonly CarryLevel[] = ["yes", "no", "partial"];
 

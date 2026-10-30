@@ -172,7 +172,9 @@ describe("validateSource", () => {
       validateSource(null, "f.ts");
       throw new Error("expected a rejection");
     } catch (error) {
-      expect((error as CliError).docsUrl).toContain("README.md#custom-sources");
+      expect((error as CliError).docsUrl).toContain(
+        "docs/guides/development/migrating/custom-source",
+      );
     }
   });
 

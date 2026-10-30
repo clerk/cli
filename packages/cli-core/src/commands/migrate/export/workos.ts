@@ -60,7 +60,7 @@ const USER_PROGRESS_EVERY_PAGES = 10;
 const NO_PROVIDER_LABEL = "no OAuth provider";
 const NOT_READABLE_LABEL = "not readable";
 
-const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/overview";
+const DOCS_URL = "https://clerk.com/docs/guides/development/migrating/workos";
 
 export type ExportWorkOsOptions = {
   apiKey?: string;
@@ -253,7 +253,7 @@ export async function fetchAllWorkOsUsers(options: {
  * returns can be imported, because `POST /v1/users` has no external-accounts
  * field. It is a line in the coverage report, and a record kept in the file.
  *
- * Agent mode, `--json` and `-y` get the flag's answer and no question: there
+ * Agent mode, `--json`, and `-y` get the flag's answer and no question: there
  * is nobody to ask, and `-y` takes the prompt's default, no, rather than
  * committing to one request per user unasked.
  */
@@ -415,7 +415,7 @@ export function buildIdentityReport(
  * they were fetched.
  *
  * A copy rather than the raw record: WorkOS also returns `locale`,
- * `profile_picture_url`, `last_sign_in_at` and `updated_at`, which the import
+ * `profile_picture_url`, `last_sign_in_at`, and `updated_at`, which the import
  * does not carry. `identities` has no target field either and is
  * dropped at validation, so it rides along purely as a record for whoever runs
  * the migration.
