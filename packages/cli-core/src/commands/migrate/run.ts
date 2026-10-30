@@ -1251,6 +1251,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           users,
           skipLegalChecks,
           reserveUnverified,
+          reserveLocked: recordedReserve === false,
           failures,
           unknownFields: loaded.unknownFields,
           ...(supabaseRows ? { supabaseRows } : {}),
