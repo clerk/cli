@@ -1538,7 +1538,7 @@ A run that finishes part-way exits nonzero without throwing, and carries a code 
 | `undo` with deletes left                   | `migrate_undo_incomplete`  | 1    |
 | `export` the platform cut short            | `migrate_export_truncated` | 1    |
 
-`clerk migrate` also adds a `migrate` segment to the `User-Agent` of its Backend API requests (`Clerk-CLI/<version> (…; migrate)`), so Clerk's logs can count the users each migration creates. The CLI follows the same rules as for telemetry: it leaves the segment out when telemetry is off, and until the telemetry notice has shown.
+`clerk migrate` also adds a `migrate` segment to the `User-Agent` of its Backend API requests (`Clerk-CLI/<version> (…; migrate)`), so Clerk's logs can count the users each migration creates. The CLI follows the same rules as for telemetry: it leaves the segment out when telemetry is off and, outside CI, until the telemetry notice has shown.
 
 ## API endpoints
 
