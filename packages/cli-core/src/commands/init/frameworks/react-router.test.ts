@@ -420,6 +420,7 @@ export default {
   if (configAction?.type !== "modify") throw new Error("Expected config modify action");
 
   expect(configAction.content).toContain("v8_middleware: true");
+  expect(configAction.content.endsWith("\n")).toBe(true);
 });
 
 test("does not enable v8_middleware for React Router 8", async () => {
@@ -496,6 +497,7 @@ export default defineConfig({
   expect(viteAction.content).toContain("noExternal");
   expect(viteAction.content).toContain("@clerk/react-router");
   expect(viteAction.content.match(/ssr\s*:/g)?.length).toBe(1);
+  expect(viteAction.content.endsWith("\n")).toBe(true);
 });
 
 test("appends to an existing ssr.noExternal array for React Router 8", async () => {
