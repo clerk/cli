@@ -157,7 +157,12 @@ export const MIGRATE_TELEMETRY_SOURCES = [
 export type MigrateTelemetrySource = (typeof MIGRATE_TELEMETRY_SOURCES)[number];
 
 /** The Clerk app and instance a command acted on. Only real `app_`/`ins_` IDs are kept. */
-type TelemetryTarget = { appId?: string; instanceId?: string };
+type TelemetryTarget = {
+  appId?: string;
+  instanceId?: string;
+  /** A `key_` stand-in: a key Clerk didn't name an instance for, so not the linked app's. */
+  standIn?: true;
+};
 
 /** Structural slice of Commander's Command — avoids its generic types. */
 export type TelemetryCommand = {
@@ -356,6 +361,7 @@ export function setTelemetryTarget(target: { appId?: string; instanceId?: string
   context.target = {
     ...(target.appId?.startsWith("app_") ? { appId: target.appId } : {}),
     ...(target.instanceId?.startsWith("ins_") ? { instanceId: target.instanceId } : {}),
+    ...(target.instanceId?.startsWith("key_") ? { standIn: true as const } : {}),
   };
 }
 
@@ -368,8 +374,9 @@ export function setTelemetryMigrateSource(source: MigrateTelemetrySource): void 
  * The app and workspace an event names. A command's own target wins; a
  * key-only target borrows the linked profile's app when the profile owns its
  * instance; a command that set no target reports the linked profile as
- * before. The workspace is the profile's only when the app is too, so an
- * event never pairs one app's workspace with another app's ID.
+ * before. A `key_` stand-in is a target, so it never borrows the linked
+ * profile's app. The workspace is the profile's only when the app is too, so
+ * an event never pairs one app's workspace with another app's ID.
  */
 function resolveEventApp(
   target: TelemetryTarget,
@@ -377,7 +384,8 @@ function resolveEventApp(
     | { appId: string; workspaceId: string; instances: Record<string, string | undefined> }
     | undefined,
 ): { appId: string | null; workspaceId: string | null } {
-  const targetSet = target.appId !== undefined || target.instanceId !== undefined;
+  const targetSet =
+    target.appId !== undefined || target.instanceId !== undefined || target.standIn === true;
   const profileOwnsInstance =
     target.instanceId !== undefined &&
     profile !== undefined &&
