@@ -1,10 +1,7 @@
-import {
-  MIGRATE_TELEMETRY_SOURCES,
-  setTelemetryMigrateSource,
-  setTelemetryTarget,
-  type MigrateTelemetrySource,
-} from "../../lib/telemetry.ts";
+import { setTelemetryMigrateSource, setTelemetryTarget } from "../../lib/telemetry.ts";
+import { exportPlatformKeys } from "./export/registry.ts";
 import type { RunTarget } from "./lib/run-store.ts";
+import { sourceKeys } from "./sources/registry.ts";
 
 /**
  * Record the Clerk app and instance a migrate command acted on. A `key_`
@@ -28,6 +25,8 @@ export function recordMigrateSource(
   setTelemetryMigrateSource(!options.custom && isBuiltInSource(key) ? key : "custom");
 }
 
-function isBuiltInSource(key: string): key is MigrateTelemetrySource {
-  return key !== "custom" && (MIGRATE_TELEMETRY_SOURCES as readonly string[]).includes(key);
+// The registries, not a list of their own: a new built-in source or export
+// platform reports itself without anyone remembering to add it here.
+function isBuiltInSource(key: string): boolean {
+  return [...sourceKeys(), ...exportPlatformKeys()].includes(key);
 }
