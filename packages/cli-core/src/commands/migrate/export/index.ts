@@ -101,7 +101,7 @@ const DB_PLATFORMS = [
 export function registerMigrateExport(migrateCommand: Command<[], Record<string, unknown>>): void {
   const exportCommand = migrateCommand
     .command("export")
-    .description("Export users from a source platform, ready for `clerk migrate import`")
+    .description("Export users from an auth platform, ready for `clerk migrate import`")
     .setExamples([
       { command: "clerk migrate export", description: "Pick a platform interactively" },
       {

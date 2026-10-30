@@ -15,7 +15,7 @@ import { list as sources } from "./sources/list.ts";
 export function registerMigrate(program: Program): void {
   const migrateCommand = program
     .command("migrate")
-    .description("Migrate users into Clerk from another auth provider or another Clerk instance")
+    .description("Migrate users into Clerk from another auth platform or another Clerk instance")
     .setExamples([
       {
         command: "clerk migrate export supabase",
