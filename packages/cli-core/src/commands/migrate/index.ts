@@ -86,7 +86,7 @@ export function registerMigrate(program: Program): void {
     )
     .option(
       "--reserve-unverified",
-      "Create emails and phones the source never verified as reserved (usable for sign-in, locked to the user) instead of unverified",
+      "Create emails and phones the auth platform never verified as reserved (usable for sign-in, locked to the user) instead of unverified",
     )
     .option(
       "--firebase-signer-key <key>",
