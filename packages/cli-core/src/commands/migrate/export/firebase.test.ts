@@ -585,7 +585,9 @@ describe("exportFirebase", () => {
   // Human runs get a prompt instead; an agent has nobody to ask, so it is told
   // which flag to pass.
   test("agent mode names the flag rather than prompting", async () => {
-    await expect(exportFirebase({})).rejects.toThrow(/needs a service account key file/);
+    await expect(exportFirebase({})).rejects.toThrow(
+      /needs a service account key and cannot prompt here/,
+    );
   });
 
   test("validates the key file before making any request", async () => {
