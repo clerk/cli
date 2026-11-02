@@ -1,7 +1,7 @@
 import { relative } from "node:path";
 import { readKeylessBreadcrumb, clearKeylessBreadcrumb } from "./keyless.ts";
 import { claimApplication, type Application } from "./plapi.ts";
-import { PlapiError, errorMessage } from "./errors.ts";
+import { ApiError, PlapiError, errorMessage } from "./errors.ts";
 import { findClerkKeys, linkApp } from "./autolink.ts";
 import { deriveProjectName } from "./project-name.ts";
 import { buildDashboardUrl } from "./environment.ts";
@@ -184,9 +184,23 @@ const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
   not_found:
     "Claim token is no longer valid - the application may have been claimed from the dashboard.",
   no_organization: "Unable to claim - your account does not have an active organization.",
-  failed:
-    "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
 };
+
+export const CLAIM_OTHER_APP_HINT =
+  "or run `clerk link --app <app_id>` to link a different application.";
+
+/** What `clerk link` and `clerk auth login` advise when a claim failed and kept its token. */
+export const TEMPORARY_CLAIM_ADVICE =
+  "Couldn't claim the application `clerk init` created because of a temporary error. " +
+  `Rerun \`clerk link\` to retry, ${CLAIM_OTHER_APP_HINT}`;
+export const REJECTED_CLAIM_ADVICE =
+  "Clerk rejected the claim of the application `clerk init` created. " +
+  "Run `clerk link --app <app_id>` with the application this folder should use.";
+
+/** A 5xx, a 429 or a network failure may pass on a retry; any other 4xx repeats on every run. */
+export function isTemporaryClaimError(error: Error): boolean {
+  return !(error instanceof ApiError) || error.status >= 500 || error.status === 429;
+}
 
 /** The warning `clerk auth login` and `clerk link` print for a claim that didn't link the folder. */
 export function claimWarning(result: AutoclaimResult): string | undefined {
@@ -195,6 +209,12 @@ export function claimWarning(result: AutoclaimResult): string | undefined {
     return `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."}`;
   }
   if (result.status === "keys_mismatch") return keysMismatchMessage(result);
+  if (result.status === "failed") {
+    const { error } = result;
+    if (isTemporaryClaimError(error)) return TEMPORARY_CLAIM_ADVICE;
+    const status = error instanceof ApiError ? ` (${error.status})` : "";
+    return `${REJECTED_CLAIM_ADVICE} Clerk's reason${status}: ${error.message}`;
+  }
   return CLAIM_WARNINGS[result.status];
 }
 

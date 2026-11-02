@@ -940,6 +940,61 @@ describe("login", () => {
     expect(captured.err).not.toContain("does not have an active organization");
   });
 
+  test("a temporary claim failure gives the same advice as clerk link, and the --app next step", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(503, "Service Unavailable"),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Couldn't claim the application `clerk init` created because of a temporary error. " +
+        "Rerun `clerk link` to retry, or run `clerk link --app <app_id>` to link a different application.",
+    );
+    expect(captured.err).not.toContain("retried on your next `clerk auth login`");
+    expect(captured.err).toContain("Run `clerk auth login` again to retry auto-claim");
+    expect(captured.err).toContain(
+      "Run `clerk link --app <app_id>` to link a different application",
+    );
+    expect(captured.err).not.toContain("Run `clerk link` to connect your application manually");
+  });
+
+  test("a 4xx claim failure says Clerk rejected the claim, and the next steps offer no retry", async () => {
+    // Human mode: only it prints the next steps.
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(
+        400,
+        JSON.stringify({
+          errors: [{ code: "form_param_invalid", message: "Invalid claim token" }],
+        }),
+      ),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Clerk rejected the claim of the application `clerk init` created. " +
+        "Run `clerk link --app <app_id>` with the application this folder should use. " +
+        "Clerk's reason (400): Invalid claim token",
+    );
+    expect(captured.err).not.toContain("temporary error");
+    // The next step; the warning above words the --app advice differently.
+    expect(captured.err).toContain(
+      "Run `clerk link --app <app_id>` to link a different application",
+    );
+    expect(captured.err).not.toContain("Run `clerk auth login` again to retry auto-claim");
+  });
+
   test("falls back to a generic provider when the managed-workspace rejection has no long message", async () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });

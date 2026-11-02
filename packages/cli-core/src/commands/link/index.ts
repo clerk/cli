@@ -23,9 +23,13 @@ import { log } from "../../lib/log.ts";
 import { readKeylessBreadcrumb } from "../../lib/keyless.ts";
 import {
   attemptAutoclaim,
+  CLAIM_OTHER_APP_HINT,
   claimWarning,
+  isTemporaryClaimError,
   keysMismatchMessage,
+  REJECTED_CLAIM_ADVICE,
   reportClaimed,
+  TEMPORARY_CLAIM_ADVICE,
 } from "../../lib/autoclaim.ts";
 
 interface LinkOptions {
@@ -166,8 +170,6 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   await outro(options.showNextSteps === false ? undefined : NEXT_STEPS.LINK);
 }
 
-const OTHER_APP_HINT = "or run `clerk link --app <app_id>` to link a different application.";
-
 type ClaimOutcome =
   | { kind: "no_breadcrumb" }
   | { kind: "linked" }
@@ -198,7 +200,7 @@ async function claimKeylessApp(cwd: string, options: LinkOptions): Promise<Claim
       throw withAdvice(
         result.error,
         `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."} ` +
-          `Switch to a workspace you own and rerun \`clerk link\`, ${OTHER_APP_HINT}`,
+          `Switch to a workspace you own and rerun \`clerk link\`, ${CLAIM_OTHER_APP_HINT}`,
       );
     case "claimed":
       reportClaimed(result);
@@ -219,25 +221,15 @@ async function claimKeylessApp(cwd: string, options: LinkOptions): Promise<Claim
   }
 }
 
-const TEMPORARY_ADVICE =
-  "Couldn't claim the application `clerk init` created because of a temporary error. " +
-  `Rerun \`clerk link\` to retry, ${OTHER_APP_HINT}`;
-
-/**
- * A 5xx, a 429 or a network failure may pass, so the advice is to retry; any other 4xx will
- * repeat on every run, so it points at `--app`.
- */
 function claimFailure(error: Error): Error {
   if (!(error instanceof ApiError)) {
     // Reported like any other network failure; the advice has no other place to go.
-    log.warn(TEMPORARY_ADVICE);
+    log.warn(TEMPORARY_CLAIM_ADVICE);
     return error;
   }
-  if (error.status >= 500 || error.status === 429) return withAdvice(error, TEMPORARY_ADVICE);
   return withAdvice(
     error,
-    "Clerk rejected the claim of the application `clerk init` created. " +
-      "Run `clerk link --app <app_id>` with the application this folder should use",
+    isTemporaryClaimError(error) ? TEMPORARY_CLAIM_ADVICE : REJECTED_CLAIM_ADVICE,
   );
 }
 

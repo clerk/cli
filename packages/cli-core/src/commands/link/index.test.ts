@@ -1438,6 +1438,32 @@ describe("link", () => {
       expect(mockLinkApp).toHaveBeenCalledWith(claimedApp, folder);
     });
 
+    test("agent mode: a spent token (404) warns and continues into autolink, which links the folder", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockClaimApplication.mockRejectedValue(new PlapiError(404, "Not Found"));
+      const autolinked = {
+        path: "github.com/org/repo",
+        profile: { workspaceId: "", appId: "app_auto", instances: { development: "ins_dev" } },
+      };
+      mockAutolink.mockResolvedValue(autolinked);
+
+      const outcome = await runLink({ cwd: folder, claimKeylessApp: true }).then(
+        () => "resolved",
+        (caught: unknown) => caught,
+      );
+
+      expect(outcome).toBe("resolved");
+      expect(captured.err).toContain(
+        "Claim token is no longer valid - the application may have been claimed from the dashboard.",
+      );
+      expect(mockClaimApplication).toHaveBeenCalledTimes(1);
+      expect(mockAutolink).toHaveBeenCalledWith(folder);
+      expect(await mockAutolink.mock.results[0]?.value).toBe(autolinked);
+      expect(captured.err).not.toContain("Cannot select an application");
+      expect(await breadcrumbExists()).toBe(false);
+    });
+
     test("human mode: a spent token warns and falls through to the picker", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
