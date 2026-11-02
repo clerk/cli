@@ -1,8 +1,9 @@
-import { relative } from "node:path";
+import { join } from "node:path";
 import { readKeylessBreadcrumb, clearKeylessBreadcrumb } from "./keyless.ts";
 import { claimApplication, type Application } from "./plapi.ts";
 import { ApiError, PlapiError, errorMessage } from "./errors.ts";
-import { findClerkKeys, linkApp } from "./autolink.ts";
+import { linkApp } from "./autolink.ts";
+import { ENV_FILE_CANDIDATES, parseEnvFile } from "./dotenv.ts";
 import { deriveProjectName } from "./project-name.ts";
 import { buildDashboardUrl } from "./environment.ts";
 import { detectPublishableKeyName } from "./framework.ts";
@@ -89,7 +90,7 @@ export async function attemptAutoclaim(
     if ("unreadable" in check) {
       return { ...result, ...link, envPulled: false, unreadableEnv: check.unreadable };
     }
-    const envPulled = link.linked && (await tryPullEnv());
+    const envPulled = link.linked && (await tryPullEnv(cwd));
     return { ...result, ...link, envPulled };
   }
 
@@ -97,8 +98,10 @@ export async function attemptAutoclaim(
 }
 
 /**
- * Where the folder holds a publishable key for another app, or the env file that couldn't be
- * read. An unreadable file can hide a mismatch, so the caller then writes no keys.
+ * Where the folder holds a publishable key for another app, or the first env file that
+ * couldn't be read. Covers the exported variable and every file `clerk env pull` can write
+ * (`ENV_FILE_CANDIDATES`), each read on its own: any mismatch refuses, and an unreadable file
+ * only matters when no source mismatches, because it could hide one.
  */
 async function checkLocalKeys(
   app: Application,
@@ -109,19 +112,32 @@ async function checkLocalKeys(
     (instance) => instance.environment_type === "development",
   )?.publishable_key;
   if (!expected) return { sources: [] };
-  try {
-    const keys = await findClerkKeys(cwd);
-    return { sources: keys.filter((found) => found.key !== expected).map((found) => found.source) };
-  } catch (error) {
-    log.debug(`autoclaim: could not read local publishable keys: ${errorMessage(error)}`);
-    // The failed read discards keys already found; the exported one needs no file.
-    const name = await detectPublishableKeyName(cwd);
-    const exported = process.env[name];
-    if (exported && exported !== expected) return { sources: [`${name} env var`] };
-    const path = (error as { path?: unknown }).path;
-    const file = typeof path === "string" ? relative(cwd, path) || path : "an env file";
-    return { unreadable: { file, reason: errorMessage(error) } };
+
+  const name = await detectPublishableKeyName(cwd);
+  const sources: string[] = [];
+  let unreadable: UnreadableEnv | undefined;
+
+  const exported = process.env[name];
+  if (exported && exported !== expected) sources.push(`${name} env var`);
+
+  for (const file of ENV_FILE_CANDIDATES) {
+    try {
+      const handle = Bun.file(join(cwd, file));
+      if (!(await handle.exists())) continue;
+      const foreign = parseEnvFile(await handle.text()).some(
+        (line) =>
+          line.type === "entry" && line.key === name && line.value && line.value !== expected,
+      );
+      if (foreign) sources.push(file);
+    } catch (error) {
+      log.debug(`autoclaim: could not read ${file}: ${errorMessage(error)}`);
+      unreadable ??= { file, reason: errorMessage(error) };
+    }
   }
+
+  if (sources.length > 0) return { sources };
+  if (unreadable) return { unreadable };
+  return { sources: [] };
 }
 
 async function tryClaim(claimToken: string, name: string): Promise<ClaimAttempt> {
@@ -149,9 +165,10 @@ async function tryLinkApp(
   }
 }
 
-async function tryPullEnv(): Promise<boolean> {
+// Pulls into `cwd`, the folder the key check read, not the process's working directory.
+async function tryPullEnv(cwd: string): Promise<boolean> {
   try {
-    await pull({});
+    await pull({ cwd });
     return true;
   } catch (error) {
     log.debug(`Auto env pull failed: ${errorMessage(error)}`);
@@ -189,18 +206,32 @@ const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
 export const CLAIM_OTHER_APP_HINT =
   "or run `clerk link --app <app_id>` to link a different application.";
 
-/** What `clerk link` and `clerk auth login` advise when a claim failed and kept its token. */
-export const TEMPORARY_CLAIM_ADVICE =
-  "Couldn't claim the application `clerk init` created because of a temporary error. " +
-  `Rerun \`clerk link\` to retry, ${CLAIM_OTHER_APP_HINT}`;
-export const REJECTED_CLAIM_ADVICE =
-  "Clerk rejected the claim of the application `clerk init` created. " +
-  "Run `clerk link --app <app_id>` with the application this folder should use.";
+/**
+ * Why a claim failed and kept its token. A 5xx, a 429 or a network failure may pass on a
+ * retry. A 401 means the saved sign-in was rejected, so `--app` would fail the same way. Any
+ * other 4xx repeats on every run.
+ */
+export type ClaimFailureKind = "temporary" | "sign_in" | "rejected";
 
-/** A 5xx, a 429 or a network failure may pass on a retry; any other 4xx repeats on every run. */
-export function isTemporaryClaimError(error: Error): boolean {
-  return !(error instanceof ApiError) || error.status >= 500 || error.status === 429;
+export function claimFailureKind(error: Error): ClaimFailureKind {
+  if (!(error instanceof ApiError) || error.status >= 500 || error.status === 429) {
+    return "temporary";
+  }
+  return error.status === 401 ? "sign_in" : "rejected";
 }
+
+/** What `clerk link` and `clerk auth login` advise for each kind of failed claim. */
+export const CLAIM_FAILURE_ADVICE: Record<ClaimFailureKind, string> = {
+  temporary:
+    "Couldn't claim the application `clerk init` created because of a temporary error. " +
+    `Rerun \`clerk link\` to retry, ${CLAIM_OTHER_APP_HINT}`,
+  sign_in:
+    "Clerk rejected the saved sign-in while claiming the application `clerk init` created. " +
+    "Run `clerk auth login` to sign in again, then rerun `clerk link`.",
+  rejected:
+    "Clerk rejected the claim of the application `clerk init` created. " +
+    "Run `clerk link --app <app_id>` with the application this folder should use.",
+};
 
 /** The warning `clerk auth login` and `clerk link` print for a claim that didn't link the folder. */
 export function claimWarning(result: AutoclaimResult): string | undefined {
@@ -211,9 +242,10 @@ export function claimWarning(result: AutoclaimResult): string | undefined {
   if (result.status === "keys_mismatch") return keysMismatchMessage(result);
   if (result.status === "failed") {
     const { error } = result;
-    if (isTemporaryClaimError(error)) return TEMPORARY_CLAIM_ADVICE;
+    const kind = claimFailureKind(error);
+    if (kind !== "rejected") return CLAIM_FAILURE_ADVICE[kind];
     const status = error instanceof ApiError ? ` (${error.status})` : "";
-    return `${REJECTED_CLAIM_ADVICE} Clerk's reason${status}: ${error.message}`;
+    return `${CLAIM_FAILURE_ADVICE.rejected} Clerk's reason${status}: ${error.message}`;
   }
   return CLAIM_WARNINGS[result.status];
 }

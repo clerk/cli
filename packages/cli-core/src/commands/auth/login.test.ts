@@ -995,6 +995,26 @@ describe("login", () => {
     expect(captured.err).not.toContain("Run `clerk auth login` again to retry auto-claim");
   });
 
+  test("a 401 claim failure says to sign in again, with no --app advice in the warning or next steps", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(401, "Unauthorized"),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Clerk rejected the saved sign-in while claiming the application `clerk init` created. " +
+        "Run `clerk auth login` to sign in again, then rerun `clerk link`.",
+    );
+    expect(captured.err).toContain("Run `clerk auth login` to sign in again");
+    expect(captured.err).not.toContain("--app");
+  });
+
   test("falls back to a generic provider when the managed-workspace rejection has no long message", async () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });

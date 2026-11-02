@@ -8,7 +8,7 @@ import * as autolinkMod from "./autolink.ts";
 import * as keylessMod from "./keyless.ts";
 import * as pullMod from "../commands/env/pull.ts";
 import * as credentialStoreMod from "./credential-store.ts";
-import type { Profile } from "./config.ts";
+import { _setConfigDir, type Profile } from "./config.ts";
 import {
   attemptAutoclaim,
   claimWarning,
@@ -114,7 +114,7 @@ describe("attemptAutoclaim", () => {
       expect(result.envPulled).toBe(true);
     }
     expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
-    expect(pullSpy).toHaveBeenCalledWith({});
+    expect(pullSpy).toHaveBeenCalledWith({ cwd: tempDir });
   });
 
   test("returns envPulled false when pull fails", async () => {
@@ -279,6 +279,99 @@ describe("attemptAutoclaim", () => {
     expect(parsed.name).toBe(basename(tempDir));
   });
   describe("publishable keys already in the folder", () => {
+    test.skipIf(process.getuid?.() === 0)(
+      "a foreign key in a readable .env refuses even when .env.local can't be read",
+      async () => {
+        withBreadcrumb();
+        stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+        const envPath = join(tempDir, ".env");
+        const localPath = join(tempDir, ".env.local");
+        await Bun.write(envPath, "CLERK_PUBLISHABLE_KEY=pk_test_other\n");
+        await Bun.write(localPath, "CLERK_PUBLISHABLE_KEY=pk_test_abc\n");
+        await chmod(localPath, 0o000);
+
+        let result: AutoclaimResult;
+        try {
+          result = await run();
+        } finally {
+          await chmod(localPath, 0o600);
+        }
+
+        expect(result).toEqual({
+          status: "keys_mismatch",
+          app: MOCK_APP as never,
+          sources: [".env"],
+        });
+        expect(linkAppSpy).not.toHaveBeenCalled();
+        expect(pullSpy).not.toHaveBeenCalled();
+      },
+    );
+
+    describe("with the real link and env pull", () => {
+      // The claim response carries secret keys, so a real pull writes both keys.
+      const APP_WITH_KEYS = {
+        application_id: "app_claimed",
+        name: "My Claimed App",
+        instances: [
+          {
+            instance_id: "ins_dev",
+            environment_type: "development",
+            publishable_key: "pk_test_abc",
+            secret_key: "sk_test_abc",
+          },
+        ],
+      };
+      let configDir = "";
+      let cwdSpy: ReturnType<typeof spyOn>;
+
+      beforeEach(async () => {
+        // Real `linkApp` saves a profile and real `pull` picks its target file and writes it.
+        linkAppSpy.mockRestore();
+        pullSpy.mockRestore();
+        // Anything that still reads the process's directory lands in the temp folder, not the repo.
+        cwdSpy = spyOn(process, "cwd").mockReturnValue(tempDir);
+        configDir = await mkdtemp(join(tmpdir(), "clerk-autoclaim-config-"));
+        _setConfigDir(configDir);
+        withBreadcrumb();
+        stubFetch(async () => new Response(JSON.stringify(APP_WITH_KEYS), { status: 200 }));
+      });
+
+      afterEach(async () => {
+        cwdSpy.mockRestore();
+        _setConfigDir(undefined);
+        await rm(configDir, { recursive: true, force: true });
+      });
+
+      test("another app's keys in .env.development.local, the file env pull writes first, refuse the claim", async () => {
+        const localPath = join(tempDir, ".env.local");
+        const devLocalPath = join(tempDir, ".env.development.local");
+        const local = "CLERK_PUBLISHABLE_KEY=pk_test_abc\nCLERK_SECRET_KEY=sk_test_abc\n";
+        const devLocal = "CLERK_PUBLISHABLE_KEY=pk_test_bbb\nCLERK_SECRET_KEY=sk_test_bbb\n";
+        await Bun.write(localPath, local);
+        await Bun.write(devLocalPath, devLocal);
+
+        const result = await attemptAutoclaim(tempDir, { checkKeys: true });
+
+        expect(result).toEqual({
+          status: "keys_mismatch",
+          app: APP_WITH_KEYS as never,
+          sources: [".env.development.local"],
+        });
+        expect(await Bun.file(localPath).text()).toBe(local);
+        expect(await Bun.file(devLocalPath).text()).toBe(devLocal);
+      });
+
+      test("the claimed app's own key in .env.development.local links, and the pull writes that file", async () => {
+        const devLocalPath = join(tempDir, ".env.development.local");
+        await Bun.write(devLocalPath, "CLERK_PUBLISHABLE_KEY=pk_test_abc\n");
+
+        const result = await attemptAutoclaim(tempDir, { checkKeys: true });
+
+        expect(result).toMatchObject({ status: "claimed", linked: true, envPulled: true });
+        expect(await Bun.file(devLocalPath).text()).toContain("CLERK_SECRET_KEY=sk_test_abc");
+      });
+    });
+
     test("a key for another app stops before linking or pulling, and the env file is unchanged", async () => {
       withBreadcrumb();
       stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
@@ -324,7 +417,7 @@ describe("attemptAutoclaim", () => {
 
       expect(result.status).toBe("claimed");
       expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
-      expect(pullSpy).toHaveBeenCalledWith({});
+      expect(pullSpy).toHaveBeenCalledWith({ cwd: tempDir });
     });
 
     /** Claims with `.env` made unreadable for the duration; returns the result and the file's content. */
@@ -388,7 +481,7 @@ describe("attemptAutoclaim", () => {
 
       expect(result.status).toBe("claimed");
       expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
-      expect(pullSpy).toHaveBeenCalledWith({});
+      expect(pullSpy).toHaveBeenCalledWith({ cwd: tempDir });
     });
   });
 });

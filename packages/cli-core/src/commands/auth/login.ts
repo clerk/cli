@@ -24,7 +24,7 @@ import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import {
   attemptAutoclaim,
   claimWarning,
-  isTemporaryClaimError,
+  claimFailureKind,
   reportClaimed,
   type AutoclaimResult,
 } from "../../lib/autoclaim.ts";
@@ -314,9 +314,9 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
     return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
   }
   if (result.status === "failed") {
-    return isTemporaryClaimError(result.error)
-      ? NEXT_STEPS.AUTOCLAIM_RETRY
-      : NEXT_STEPS.AUTOCLAIM_REJECTED;
+    const kind = claimFailureKind(result.error);
+    if (kind === "temporary") return NEXT_STEPS.AUTOCLAIM_RETRY;
+    return kind === "sign_in" ? NEXT_STEPS.AUTOCLAIM_SIGN_IN : NEXT_STEPS.AUTOCLAIM_REJECTED;
   }
   if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
   if (

@@ -25,11 +25,10 @@ import {
   attemptAutoclaim,
   CLAIM_OTHER_APP_HINT,
   claimWarning,
-  isTemporaryClaimError,
+  CLAIM_FAILURE_ADVICE,
+  claimFailureKind,
   keysMismatchMessage,
-  REJECTED_CLAIM_ADVICE,
   reportClaimed,
-  TEMPORARY_CLAIM_ADVICE,
 } from "../../lib/autoclaim.ts";
 
 interface LinkOptions {
@@ -224,13 +223,10 @@ async function claimKeylessApp(cwd: string, options: LinkOptions): Promise<Claim
 function claimFailure(error: Error): Error {
   if (!(error instanceof ApiError)) {
     // Reported like any other network failure; the advice has no other place to go.
-    log.warn(TEMPORARY_CLAIM_ADVICE);
+    log.warn(CLAIM_FAILURE_ADVICE.temporary);
     return error;
   }
-  return withAdvice(
-    error,
-    isTemporaryClaimError(error) ? TEMPORARY_CLAIM_ADVICE : REJECTED_CLAIM_ADVICE,
-  );
+  return withAdvice(error, CLAIM_FAILURE_ADVICE[claimFailureKind(error)]);
 }
 
 /**

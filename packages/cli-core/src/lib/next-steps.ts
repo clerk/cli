@@ -31,6 +31,11 @@ export const NEXT_STEPS = {
   ],
   /** After a 4xx claim failure, which a retry would only repeat. */
   AUTOCLAIM_REJECTED: ["Run `clerk link --app <app_id>` to link a different application"],
+  /** After a 401 claim failure: the saved sign-in was rejected, so `--app` would fail too. */
+  AUTOCLAIM_SIGN_IN: [
+    "Run `clerk auth login` to sign in again",
+    "Run `clerk link` to claim the application",
+  ],
   AUTOCLAIM_SWITCH_WORKSPACE: [
     "Select a different workspace in the Clerk Dashboard",
     "Run `clerk auth login` again to proceed",

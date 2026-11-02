@@ -44,14 +44,15 @@ and no `--app` is given:
 
 1. Signs in if needed, without letting sign-in claim the application itself
 2. Claims the application into your account with the token, which deletes `.clerk/keyless.json`
-3. Compares the publishable keys in the env var, `.env`, and `.env.local` with the claimed application's development key
+3. Compares the publishable key in the exported variable and in every env file `clerk env pull` can write (`.env.development.local`, `.env.local`, `.env.development`, `.env`) with the claimed application's development key, reading each file on its own
 4. If they all match (or there are none), links the folder, writes the application's keys to the env file, prints "Claimed and linked application: ..." and the application's Dashboard URL, and stops
-5. If any key belongs to a different application, links nothing, leaves the env files unchanged, and exits 1 with `key_pair_mismatch`. The message names the claimed application and the file, and tells you to run `clerk link --app <app_id>` with the application the folder should use
-6. If an env file can't be read, still compares an exported publishable key, and stops as in step 5 when it belongs to a different application. Otherwise links the folder but writes no keys, and warns with the file and the reason. Run `clerk env pull` once the file is fixed
+5. If any of those keys belongs to a different application, links nothing, leaves the env files unchanged, and exits 1 with `key_pair_mismatch`. The message names the claimed application and the file, and tells you to run `clerk link --app <app_id>` with the application the folder should use
+6. If an env file can't be read and no other source holds a different application's key, links the folder but writes no keys, and warns with the file and the reason. Run `clerk env pull` once the file is fixed. A mismatch in any readable source still stops as in step 5
 7. If the claim succeeds but saving the link fails, prints "Claimed application: ..." and links the claimed application directly, as `clerk link --app <its id>` would. An application with no development instance then fails with "Application has no development instance", and a config write that keeps failing reports its own error
 8. If the claim fails, keeps `.clerk/keyless.json` and exits with the original error. A Platform API error keeps its own code, and the advice is the start of its message ("<advice> (<status>): <reason>"):
    - A 5xx or 429: the error is temporary; rerun `clerk link` to retry, or run `clerk link --app <app_id>` to link a different application
    - A managed workspace (403 `accountless_application_managed_workspace`): switch to a workspace you own and rerun `clerk link`, or use `--app`
+   - A 401: Clerk rejected the saved sign-in; run `clerk auth login` to sign in again, then rerun `clerk link`
    - Any other 4xx: Clerk rejected the claim; run `clerk link --app <app_id>` with the application the folder should use
    - A network failure: the error is reported as is, after a warning that it is temporary and to rerun `clerk link` or use `--app`
 9. If the token is spent (expired, or the account has no organization), prints the same warning `clerk auth login` prints and continues with the normal flow below
