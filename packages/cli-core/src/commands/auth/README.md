@@ -27,6 +27,7 @@ When `clerk init` runs in accountless mode it writes `.clerk/keyless.json` conta
 - **404** — claim token expired or application already deleted; breadcrumb is cleared and a warning is shown.
 - **403** — authenticated account has no active organization; breadcrumb is cleared and a warning is shown.
 - **Any other error** — treated as transient; breadcrumb is preserved so the next login retries.
+- **Publishable key for another application** — the claim succeeds, but a publishable key for a different application is in the framework's publishable key variable (for example `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`), set in the environment, `.env`, or `.env.local`. The folder is not linked and its env files are not changed, because pulling would pair that key with the claimed app's secret key. The breadcrumb is deleted, since the token is spent. `clerk auth login` prints a warning naming the claimed app and the file, and exits 0. To finish, run `clerk link --app <app_id>` with the application the folder should use.
 - **Success** — application is claimed and linked, `.env` is updated via `clerk env pull`, breadcrumb is deleted. The command prints the Dashboard URL of the claimed app's development instance, since this is the first time the app has a home in an account.
 
 #### API Endpoints

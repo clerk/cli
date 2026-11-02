@@ -21,7 +21,7 @@ import { isHuman } from "../../mode.ts";
 import { ERROR_CODE, errorMessage, throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
+import { attemptAutoclaim, claimWarning, type AutoclaimResult } from "../../lib/autoclaim.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
@@ -274,22 +274,6 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   return userInfo;
 }
 
-const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
-  not_found:
-    "Claim token is no longer valid - the application may have been claimed from the dashboard.",
-  no_organization: "Unable to claim - your account does not have an active organization.",
-  failed:
-    "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
-};
-
-function claimWarning(result: AutoclaimResult): string | undefined {
-  if (result.status === "managed_workspace") {
-    // The API message already names the provider and says what to do.
-    return `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."}`;
-  }
-  return CLAIM_WARNINGS[result.status];
-}
-
 async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   const result = await attemptAutoclaim(cwd);
 
@@ -321,7 +305,11 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
   }
   if (result.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
   if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
-  if (result.status === "not_found" || result.status === "no_organization") {
+  if (
+    result.status === "not_found" ||
+    result.status === "no_organization" ||
+    result.status === "keys_mismatch"
+  ) {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }
 

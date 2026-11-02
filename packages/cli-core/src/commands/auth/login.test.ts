@@ -101,7 +101,10 @@ const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<AutoclaimResult>
   status: "not_keyless",
 }));
 
+// The real warning texts, so these tests pin what `clerk auth login` prints.
+const actualAutoclaim = await import("../../lib/autoclaim.ts");
 mock.module("../../lib/autoclaim.ts", () => ({
+  ...actualAutoclaim,
   attemptAutoclaim: (cwd: string) => mockAttemptAutoclaim(cwd),
 }));
 
@@ -691,6 +694,41 @@ describe("login", () => {
     expect(captured.err).toMatch(
       /Your app now lives in your Clerk account:\n[^\n]*? {2}https:\/\/dashboard\.clerk\.com\/apps\/app_claimed\/instances\/ins_dev_claimed/,
     );
+  });
+
+  test("warns, links nothing, and exits 0 when the folder's key belongs to another app", async () => {
+    // Human mode: only it prints the next steps.
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    const exitCodeBefore = process.exitCode;
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "keys_mismatch",
+      sources: [".env.local"],
+      app: {
+        application_id: "app_claimed",
+        name: "bad-agent",
+        instances: [
+          {
+            instance_id: "ins_dev_claimed",
+            environment_type: "development",
+            publishable_key: "pk_test_claimed",
+          },
+        ],
+      } as Application,
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Claimed application `bad-agent` (app_claimed) into your account, but .env.local holds a publishable key for a different application, " +
+        "so this folder wasn't linked and its keys weren't changed. " +
+        "Run `clerk link --app <app_id>` with the application this folder should use.",
+    );
+    expect(captured.err).not.toContain("Claimed and linked application");
+    expect(captured.err).toContain("Run `clerk link` to connect your Clerk application");
+    expect(process.exitCode).toBe(exitCodeBefore);
   });
 
   test("links to the development instance even when production is listed first", async () => {

@@ -8,7 +8,7 @@ import * as autolinkMod from "./autolink.ts";
 import * as keylessMod from "./keyless.ts";
 import * as pullMod from "../commands/env/pull.ts";
 import type { Profile } from "./config.ts";
-import { attemptAutoclaim } from "./autoclaim.ts";
+import { attemptAutoclaim, claimWarning, keysMismatchMessage } from "./autoclaim.ts";
 
 const MOCK_APP = {
   application_id: "app_claimed",
@@ -222,5 +222,88 @@ describe("attemptAutoclaim", () => {
     expect(parsed.token).toBe("my_claim_token");
     // no package.json in tempDir, so basename is used; assert exact value
     expect(parsed.name).toBe(basename(tempDir));
+  });
+  describe("publishable keys already in the folder", () => {
+    const originalKey = process.env.CLERK_PUBLISHABLE_KEY;
+
+    beforeEach(() => {
+      delete process.env.CLERK_PUBLISHABLE_KEY;
+    });
+
+    afterEach(() => {
+      if (originalKey === undefined) delete process.env.CLERK_PUBLISHABLE_KEY;
+      else process.env.CLERK_PUBLISHABLE_KEY = originalKey;
+    });
+
+    test("a key for another app stops before linking or pulling, and the env file is unchanged", async () => {
+      withBreadcrumb();
+      stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+      const envPath = join(tempDir, ".env");
+      const before =
+        "# keep me\nCLERK_PUBLISHABLE_KEY=pk_test_other\nCLERK_SECRET_KEY=sk_test_other\n";
+      await Bun.write(envPath, before);
+
+      const result = await run();
+
+      expect(result).toEqual({
+        status: "keys_mismatch",
+        app: MOCK_APP as never,
+        sources: [".env"],
+      });
+      expect(linkAppSpy).not.toHaveBeenCalled();
+      expect(pullSpy).not.toHaveBeenCalled();
+      expect(await Bun.file(envPath).text()).toBe(before);
+      // The claim happened, so the token is spent either way.
+      expect(clearBreadcrumbSpy).toHaveBeenCalledWith(tempDir);
+    });
+
+    test("an exported key for another app names the env var as the source", async () => {
+      withBreadcrumb();
+      stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+      process.env.CLERK_PUBLISHABLE_KEY = "pk_test_other";
+
+      const result = await run();
+
+      expect(result.status).toBe("keys_mismatch");
+      if (result.status === "keys_mismatch") {
+        expect(result.sources).toEqual(["CLERK_PUBLISHABLE_KEY env var"]);
+      }
+      expect(linkAppSpy).not.toHaveBeenCalled();
+    });
+
+    test("the claimed app's own key links and pulls as before", async () => {
+      withBreadcrumb();
+      stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+      await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_test_abc\n");
+
+      const result = await run();
+
+      expect(result.status).toBe("claimed");
+      expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
+      expect(pullSpy).toHaveBeenCalledWith({});
+    });
+  });
+});
+
+describe("keysMismatchMessage", () => {
+  const app = MOCK_APP as never;
+
+  test("names the one source holding the other app's key", () => {
+    expect(keysMismatchMessage({ status: "keys_mismatch", app, sources: [".env"] })).toBe(
+      "Claimed application `My Claimed App` (app_claimed) into your account, but .env holds a publishable key for a different application, " +
+        "so this folder wasn't linked and its keys weren't changed. " +
+        "Run `clerk link --app <app_id>` with the application this folder should use.",
+    );
+  });
+
+  test("lists several sources", () => {
+    expect(
+      keysMismatchMessage({ status: "keys_mismatch", app, sources: [".env", ".env.local"] }),
+    ).toContain("but .env and .env.local hold publishable keys for a different application");
+  });
+
+  test("is the warning clerk auth login prints for the mismatch", () => {
+    const result = { status: "keys_mismatch" as const, app, sources: [".env"] };
+    expect(claimWarning(result)).toBe(keysMismatchMessage(result));
   });
 });
