@@ -8,7 +8,6 @@
  * `buildDashboardUrl`.
  */
 
-import { join } from "node:path";
 import { readKeylessBreadcrumb, readSdkClaimUrl, SDK_KEYLESS_FILE } from "../../lib/keyless.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
 import { bapiRequest } from "../../lib/bapi.ts";

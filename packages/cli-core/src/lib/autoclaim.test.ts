@@ -327,24 +327,44 @@ describe("attemptAutoclaim", () => {
       expect(pullSpy).toHaveBeenCalledWith({});
     });
 
+    /** Claims with `.env` made unreadable for the duration; returns the result and the file's content. */
+    async function claimWithUnreadableEnv(): Promise<{ result: AutoclaimResult; before: string }> {
+      withBreadcrumb();
+      stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+      const envPath = join(tempDir, ".env");
+      const before = "CLERK_PUBLISHABLE_KEY=pk_test_mine\n";
+      await Bun.write(envPath, before);
+      await chmod(envPath, 0o000);
+      try {
+        return { result: await run(), before };
+      } finally {
+        await chmod(envPath, 0o600);
+      }
+    }
+
     // Root ignores file permissions, so an unreadable file can't be made there.
     test.skipIf(process.getuid?.() === 0)(
-      "an unreadable .env links the folder but writes no keys, even with a foreign key exported",
+      "an unreadable .env with a foreign key exported stops with keys_mismatch and writes nothing",
       async () => {
-        withBreadcrumb();
-        stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
         process.env.CLERK_PUBLISHABLE_KEY = "pk_test_other";
-        const envPath = join(tempDir, ".env");
-        const before = "CLERK_PUBLISHABLE_KEY=pk_test_mine\n";
-        await Bun.write(envPath, before);
-        await chmod(envPath, 0o000);
 
-        let result: AutoclaimResult;
-        try {
-          result = await run();
-        } finally {
-          await chmod(envPath, 0o600);
-        }
+        const { result, before } = await claimWithUnreadableEnv();
+
+        expect(result).toEqual({
+          status: "keys_mismatch",
+          app: MOCK_APP as never,
+          sources: ["CLERK_PUBLISHABLE_KEY env var"],
+        });
+        expect(linkAppSpy).not.toHaveBeenCalled();
+        expect(pullSpy).not.toHaveBeenCalled();
+        expect(await Bun.file(join(tempDir, ".env")).text()).toBe(before);
+      },
+    );
+
+    test.skipIf(process.getuid?.() === 0)(
+      "an unreadable .env with no foreign key exported links the folder but writes no keys",
+      async () => {
+        const { result, before } = await claimWithUnreadableEnv();
 
         expect(result.status).toBe("claimed");
         if (result.status === "claimed") {
@@ -355,7 +375,7 @@ describe("attemptAutoclaim", () => {
         }
         expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
         expect(pullSpy).not.toHaveBeenCalled();
-        expect(await Bun.file(envPath).text()).toBe(before);
+        expect(await Bun.file(join(tempDir, ".env")).text()).toBe(before);
       },
     );
 

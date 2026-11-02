@@ -193,17 +193,13 @@ async function claimKeylessApp(cwd: string, options: LinkOptions): Promise<Claim
     case "keys_mismatch":
       throw new CliError(keysMismatchMessage(result), { code: ERROR_CODE.KEY_PAIR_MISMATCH });
     case "failed":
-      log.warn(
-        "Couldn't claim the application `clerk init` created because of a temporary error. " +
-          `Rerun \`clerk link\` to retry, ${OTHER_APP_HINT}`,
-      );
-      throw withClaimContext(result.error);
+      throw claimFailure(result.error);
     case "managed_workspace":
-      log.warn(
+      throw withAdvice(
+        result.error,
         `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."} ` +
           `Switch to a workspace you own and rerun \`clerk link\`, ${OTHER_APP_HINT}`,
       );
-      throw withClaimContext(result.error);
     case "claimed":
       reportClaimed(result);
       if (!result.linked) return { kind: "claimed_unlinked", app: result.app };
@@ -223,9 +219,34 @@ async function claimKeylessApp(cwd: string, options: LinkOptions): Promise<Claim
   }
 }
 
-/** The API's own error keeps its code for agents; only its prefix names the claim. */
-function withClaimContext(error: Error): Error {
-  if (error instanceof ApiError) error.context = "Failed to claim application";
+const TEMPORARY_ADVICE =
+  "Couldn't claim the application `clerk init` created because of a temporary error. " +
+  `Rerun \`clerk link\` to retry, ${OTHER_APP_HINT}`;
+
+/**
+ * A 5xx, a 429 or a network failure may pass, so the advice is to retry; any other 4xx will
+ * repeat on every run, so it points at `--app`.
+ */
+function claimFailure(error: Error): Error {
+  if (!(error instanceof ApiError)) {
+    // Reported like any other network failure; the advice has no other place to go.
+    log.warn(TEMPORARY_ADVICE);
+    return error;
+  }
+  if (error.status >= 500 || error.status === 429) return withAdvice(error, TEMPORARY_ADVICE);
+  return withAdvice(
+    error,
+    "Clerk rejected the claim of the application `clerk init` created. " +
+      "Run `clerk link --app <app_id>` with the application this folder should use",
+  );
+}
+
+/**
+ * Puts the advice in the API error's prefix, so the agent JSON carries it in `message` next
+ * to the API's own code, printed once: "<advice> (<status>): <reason>".
+ */
+function withAdvice(error: ApiError, advice: string): ApiError {
+  error.context = advice.replace(/\.$/, "");
   return error;
 }
 

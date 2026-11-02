@@ -5,6 +5,7 @@ import { PlapiError, errorMessage } from "./errors.ts";
 import { findClerkKeys, linkApp } from "./autolink.ts";
 import { deriveProjectName } from "./project-name.ts";
 import { buildDashboardUrl } from "./environment.ts";
+import { detectPublishableKeyName } from "./framework.ts";
 import { pull } from "../commands/env/pull.ts";
 import { log } from "./log.ts";
 
@@ -113,6 +114,10 @@ async function checkLocalKeys(
     return { sources: keys.filter((found) => found.key !== expected).map((found) => found.source) };
   } catch (error) {
     log.debug(`autoclaim: could not read local publishable keys: ${errorMessage(error)}`);
+    // The failed read discards keys already found; the exported one needs no file.
+    const name = await detectPublishableKeyName(cwd);
+    const exported = process.env[name];
+    if (exported && exported !== expected) return { sources: [`${name} env var`] };
     const path = (error as { path?: unknown }).path;
     const file = typeof path === "string" ? relative(cwd, path) || path : "an env file";
     return { unreadable: { file, reason: errorMessage(error) } };

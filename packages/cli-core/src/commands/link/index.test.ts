@@ -155,7 +155,8 @@ describe("link", () => {
     }
   });
 
-  afterEach(() => {
+  // Run before each test as well as after, so a test's defaults never depend on the test before it.
+  function resetMocks() {
     _modeOverride = undefined;
     mockIsAgent.mockReset();
     mockGetToken.mockReset();
@@ -186,6 +187,12 @@ describe("link", () => {
     mockOutro.mockReset();
     mockConfirm.mockReset();
     mockInput.mockReset();
+  }
+
+  beforeEach(resetMocks);
+
+  afterEach(() => {
+    resetMocks();
     consoleSpy?.mockRestore();
   });
 
@@ -1258,25 +1265,31 @@ describe("link", () => {
       expect(mockAutolink).not.toHaveBeenCalled();
     });
 
-    test.each(["agent", "human"])(
-      "%s mode: a temporary claim failure stops with the API error and keeps the token",
-      async (mode) => {
+    const TEMPORARY =
+      "Couldn't claim the application `clerk init` created because of a temporary error. " +
+      "Rerun `clerk link` to retry, or run `clerk link --app <app_id>` to link a different application";
+
+    test.each([
+      ["agent", 500],
+      ["human", 500],
+      ["agent", 429],
+    ])(
+      "%s mode: a %d claim response stops with the API error, worded as temporary, and keeps the token",
+      async (mode, status) => {
         mockIsAgent.mockReturnValue(mode === "agent");
         mockGetToken.mockResolvedValue("token");
-        mockClaimApplication.mockRejectedValue(new PlapiError(500, "Internal Server Error"));
+        mockClaimApplication.mockRejectedValue(new PlapiError(status as number, "Server Error"));
 
         const error = await runLink({ cwd: folder, claimKeylessApp: true }).catch(
           (caught: unknown) => caught,
         );
 
+        // The global handler prints "<context> (<status>): <reason>" and the API's code as JSON.
         expect(error).toBeInstanceOf(PlapiError);
-        expect((error as PlapiError).status).toBe(500);
-        expect((error as PlapiError).context).toBe("Failed to claim application");
-        expect(captured.err).toContain(
-          "Couldn't claim the application `clerk init` created because of a temporary error. " +
-            "Rerun `clerk link` to retry, or run `clerk link --app <app_id>` to link a different application.",
-        );
-        expect(captured.err).not.toContain("clerk auth login");
+        expect((error as PlapiError).status).toBe(status);
+        expect((error as PlapiError).context).toBe(TEMPORARY);
+        // The advice lives in the error only, so it prints once.
+        expect(captured.err).not.toContain("temporary error");
         expect(mockAutolink).not.toHaveBeenCalled();
         expect(mockSearch).not.toHaveBeenCalled();
         expect(mockLinkApp).not.toHaveBeenCalled();
@@ -1284,7 +1297,32 @@ describe("link", () => {
       },
     );
 
-    test("a network failure during the claim stops with that error as it is", async () => {
+    test("agent mode: a 400 says Clerk rejected the claim and points at --app, not a retry", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      const body = JSON.stringify({
+        errors: [{ code: "form_param_invalid", message: "Invalid claim token" }],
+      });
+      mockClaimApplication.mockRejectedValue(new PlapiError(400, body));
+
+      const error = await runLink({ cwd: folder, claimKeylessApp: true }).catch(
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toBeInstanceOf(PlapiError);
+      expect((error as PlapiError).code).toBe("form_param_invalid");
+      expect((error as PlapiError).status).toBe(400);
+      expect((error as PlapiError).message).toBe("Invalid claim token");
+      expect((error as PlapiError).context).toBe(
+        "Clerk rejected the claim of the application `clerk init` created. " +
+          "Run `clerk link --app <app_id>` with the application this folder should use",
+      );
+      expect(captured.err).not.toContain("Rerun `clerk link` to retry");
+      expect(mockAutolink).not.toHaveBeenCalled();
+      expect(await breadcrumbExists()).toBe(true);
+    });
+
+    test("a network failure during the claim stops with that error as it is, after a warning", async () => {
       mockIsAgent.mockReturnValue(false);
       mockGetToken.mockResolvedValue("token");
       const networkError = new TypeError("fetch failed");
@@ -1295,38 +1333,42 @@ describe("link", () => {
       );
 
       expect(error).toBe(networkError);
-      expect(captured.err).toContain("Rerun `clerk link` to retry");
+      expect(captured.err).toContain(TEMPORARY);
       expect(mockSearch).not.toHaveBeenCalled();
       expect(await breadcrumbExists()).toBe(true);
     });
 
-    test("a managed workspace stops with the API error and says to switch workspaces", async () => {
-      mockIsAgent.mockReturnValue(false);
-      mockGetToken.mockResolvedValue("token");
-      const body = JSON.stringify({
-        errors: [
-          {
-            code: "accountless_application_managed_workspace",
-            message: "Cannot claim into a managed workspace",
-            long_message: "This workspace is managed by Vercel.",
-          },
-        ],
-      });
-      mockClaimApplication.mockRejectedValue(new PlapiError(403, body));
+    test.each(["agent", "human"])(
+      "%s mode: a managed workspace stops with the API's code and says to switch workspaces",
+      async (mode) => {
+        mockIsAgent.mockReturnValue(mode === "agent");
+        mockGetToken.mockResolvedValue("token");
+        const body = JSON.stringify({
+          errors: [
+            {
+              code: "accountless_application_managed_workspace",
+              message: "Cannot claim into a managed workspace",
+              long_message: "This workspace is managed by Vercel.",
+            },
+          ],
+        });
+        mockClaimApplication.mockRejectedValue(new PlapiError(403, body));
 
-      const error = await runLink({ cwd: folder, claimKeylessApp: true }).catch(
-        (caught: unknown) => caught,
-      );
+        const error = await runLink({ cwd: folder, claimKeylessApp: true }).catch(
+          (caught: unknown) => caught,
+        );
 
-      expect(error).toBeInstanceOf(PlapiError);
-      expect((error as PlapiError).code).toBe("accountless_application_managed_workspace");
-      expect(captured.err).toContain(
-        "Unable to claim - This workspace is managed by Vercel. Switch to a workspace you own and rerun `clerk link`, " +
-          "or run `clerk link --app <app_id>` to link a different application.",
-      );
-      expect(mockSearch).not.toHaveBeenCalled();
-      expect(await breadcrumbExists()).toBe(true);
-    });
+        expect(error).toBeInstanceOf(PlapiError);
+        expect((error as PlapiError).code).toBe("accountless_application_managed_workspace");
+        expect((error as PlapiError).context).toBe(
+          "Unable to claim - This workspace is managed by Vercel. Switch to a workspace you own and rerun `clerk link`, " +
+            "or run `clerk link --app <app_id>` to link a different application",
+        );
+        expect(captured.err).not.toContain("Switch to a workspace");
+        expect(mockSearch).not.toHaveBeenCalled();
+        expect(await breadcrumbExists()).toBe(true);
+      },
+    );
 
     test("a claimed app with no development instance ends in the usual error, not a picker", async () => {
       mockIsAgent.mockReturnValue(true);
