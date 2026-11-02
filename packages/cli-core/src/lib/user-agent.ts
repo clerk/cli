@@ -11,9 +11,10 @@
  *   - `AIAgent/<agent>` segment is appended when an AI agent is detected —
  *     analytics-purposed, so the fetch layer omits it from dev builds and when
  *     telemetry is opted out or not yet disclosed.
- *   - `migrate` segment is appended to `clerk migrate`'s requests, so the
- *     Backend API logs can count a migration's user creates. Analytics too,
- *     so the fetch layer omits it under the same rules as `AIAgent`.
+ *   - `migrate` segment is appended to `clerk migrate`'s Backend API
+ *     requests, so the Backend API logs can count a migration's user
+ *     creates. Analytics too, so the fetch layer omits it under the same
+ *     rules as `AIAgent`.
  */
 
 import { detectAiAgent, type EnvLike } from "./env-signals.ts";

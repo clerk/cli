@@ -53,11 +53,11 @@ describe("AIAgent and migrate segments honor the telemetry opt-out", () => {
   let originalClaudecode: string | undefined;
   let originalCi: string | undefined;
 
-  async function sentUserAgent(): Promise<string> {
+  async function sentUserAgent(tag = "bapi"): Promise<string> {
     globalThis.fetch = mock(
       async () => new Response("ok", { status: 200 }),
     ) as unknown as typeof fetch;
-    await loggedFetch("https://example.test/x", { tag: "test" });
+    await loggedFetch("https://example.test/x", { tag });
     const [, init] = (globalThis.fetch as unknown as ReturnType<typeof mock>).mock.calls[0]!;
     return init.headers.get("User-Agent")!;
   }
@@ -121,6 +121,13 @@ describe("AIAgent and migrate segments honor the telemetry opt-out", () => {
     await markTelemetryNoticeShown();
     markMigrateRequests();
     expect(await sentUserAgent()).toContain("; migrate)");
+  });
+
+  // Only Clerk's Backend API logs count migrations; other hosts never learn of one.
+  test("migrate segment omitted from a request that isn't to the Backend API", async () => {
+    await markTelemetryNoticeShown();
+    markMigrateRequests();
+    expect(await sentUserAgent("update-check")).not.toContain("migrate");
   });
 
   test("migrate segment omitted when nothing marks the requests", async () => {
