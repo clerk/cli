@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, spyOn } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 import { stubFetch, useCaptureLog } from "../test/lib/stubs.ts";
@@ -7,8 +7,26 @@ import { stubFetch, useCaptureLog } from "../test/lib/stubs.ts";
 import * as autolinkMod from "./autolink.ts";
 import * as keylessMod from "./keyless.ts";
 import * as pullMod from "../commands/env/pull.ts";
+import * as credentialStoreMod from "./credential-store.ts";
 import type { Profile } from "./config.ts";
-import { attemptAutoclaim, claimWarning, keysMismatchMessage } from "./autoclaim.ts";
+import {
+  attemptAutoclaim,
+  claimWarning,
+  keysMismatchMessage,
+  reportClaimed,
+  type AutoclaimResult,
+} from "./autoclaim.ts";
+
+/** Shell variables the claim reads; a developer's own must not decide these tests. */
+const SHELL_VARS = ["CLERK_PUBLISHABLE_KEY", "CLERK_PLATFORM_API_KEY", "CLERK_PLATFORM_API_URL"];
+const originalShell = Object.fromEntries(SHELL_VARS.map((name) => [name, process.env[name]]));
+
+function restoreShellVars(): void {
+  for (const name of SHELL_VARS) {
+    if (originalShell[name] === undefined) delete process.env[name];
+    else process.env[name] = originalShell[name];
+  }
+}
 
 const MOCK_APP = {
   application_id: "app_claimed",
@@ -40,9 +58,13 @@ describe("attemptAutoclaim", () => {
   let readBreadcrumbSpy: ReturnType<typeof spyOn>;
   let clearBreadcrumbSpy: ReturnType<typeof spyOn>;
   let pullSpy: ReturnType<typeof spyOn>;
+  let tokenSpy: ReturnType<typeof spyOn>;
 
   beforeEach(async () => {
     tempDir = await mkdtemp(join(tmpdir(), "clerk-autoclaim-test-"));
+    delete process.env.CLERK_PUBLISHABLE_KEY;
+    // The API key keeps PLAPI off the OS keychain; the spy makes sure it stays off.
+    tokenSpy = spyOn(credentialStoreMod, "getValidToken").mockResolvedValue(null);
     process.env.CLERK_PLATFORM_API_KEY = "ak_test_key";
     process.env.CLERK_PLATFORM_API_URL = "https://test-api.clerk.com";
     linkAppSpy = spyOn(autolinkMod, "linkApp").mockResolvedValue({
@@ -55,8 +77,8 @@ describe("attemptAutoclaim", () => {
   });
 
   afterEach(async () => {
-    delete process.env.CLERK_PLATFORM_API_KEY;
-    delete process.env.CLERK_PLATFORM_API_URL;
+    restoreShellVars();
+    tokenSpy.mockRestore();
     globalThis.fetch = originalFetch;
     linkAppSpy.mockRestore();
     readBreadcrumbSpy.mockRestore();
@@ -69,8 +91,8 @@ describe("attemptAutoclaim", () => {
     readBreadcrumbSpy.mockResolvedValue({ claimToken: token, createdAt: new Date().toISOString() });
   }
 
-  function run() {
-    return attemptAutoclaim(tempDir);
+  function run({ checkKeys = true }: { checkKeys?: boolean } = {}) {
+    return attemptAutoclaim(tempDir, { checkKeys });
   }
 
   test("returns not_keyless when no breadcrumb exists", async () => {
@@ -88,6 +110,7 @@ describe("attemptAutoclaim", () => {
     expect(result.status).toBe("claimed");
     if (result.status === "claimed") {
       expect(result.app.application_id).toBe("app_claimed");
+      expect(result.linked).toBe(true);
       expect(result.envPulled).toBe(true);
     }
     expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
@@ -208,6 +231,38 @@ describe("attemptAutoclaim", () => {
     expect(linkAppSpy).not.toHaveBeenCalled();
   });
 
+  test("an app with no development instance is claimed but not linked, and nothing is pulled", async () => {
+    withBreadcrumb();
+    stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+    linkAppSpy.mockResolvedValue(undefined);
+
+    const result = await run();
+
+    expect(result).toMatchObject({
+      status: "claimed",
+      linked: false,
+      linkError: "the application has no development instance",
+      envPulled: false,
+    });
+    expect(pullSpy).not.toHaveBeenCalled();
+  });
+
+  test("a failed link write is reported as not linked with its reason", async () => {
+    withBreadcrumb();
+    stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+    linkAppSpy.mockRejectedValue(new Error("EACCES: permission denied, open 'config.json'"));
+
+    const result = await run();
+
+    expect(result).toMatchObject({
+      status: "claimed",
+      linked: false,
+      linkError: "EACCES: permission denied, open 'config.json'",
+      envPulled: false,
+    });
+    expect(pullSpy).not.toHaveBeenCalled();
+  });
+
   test("sends claim token and app name in request body", async () => {
     withBreadcrumb("my_claim_token");
     let capturedBody: string | undefined;
@@ -224,17 +279,6 @@ describe("attemptAutoclaim", () => {
     expect(parsed.name).toBe(basename(tempDir));
   });
   describe("publishable keys already in the folder", () => {
-    const originalKey = process.env.CLERK_PUBLISHABLE_KEY;
-
-    beforeEach(() => {
-      delete process.env.CLERK_PUBLISHABLE_KEY;
-    });
-
-    afterEach(() => {
-      if (originalKey === undefined) delete process.env.CLERK_PUBLISHABLE_KEY;
-      else process.env.CLERK_PUBLISHABLE_KEY = originalKey;
-    });
-
     test("a key for another app stops before linking or pulling, and the env file is unchanged", async () => {
       withBreadcrumb();
       stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
@@ -271,6 +315,50 @@ describe("attemptAutoclaim", () => {
       expect(linkAppSpy).not.toHaveBeenCalled();
     });
 
+    test("without the key check, a key for another app still links and pulls (clerk init, migrate, doctor)", async () => {
+      withBreadcrumb();
+      stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+      await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_test_other\n");
+
+      const result = await run({ checkKeys: false });
+
+      expect(result.status).toBe("claimed");
+      expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
+      expect(pullSpy).toHaveBeenCalledWith({});
+    });
+
+    // Root ignores file permissions, so an unreadable file can't be made there.
+    test.skipIf(process.getuid?.() === 0)(
+      "an unreadable .env links the folder but writes no keys, even with a foreign key exported",
+      async () => {
+        withBreadcrumb();
+        stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+        process.env.CLERK_PUBLISHABLE_KEY = "pk_test_other";
+        const envPath = join(tempDir, ".env");
+        const before = "CLERK_PUBLISHABLE_KEY=pk_test_mine\n";
+        await Bun.write(envPath, before);
+        await chmod(envPath, 0o000);
+
+        let result: AutoclaimResult;
+        try {
+          result = await run();
+        } finally {
+          await chmod(envPath, 0o600);
+        }
+
+        expect(result.status).toBe("claimed");
+        if (result.status === "claimed") {
+          expect(result.linked).toBe(true);
+          expect(result.envPulled).toBe(false);
+          expect(result.unreadableEnv?.file).toBe(".env");
+          expect(result.unreadableEnv?.reason).toContain("EACCES");
+        }
+        expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
+        expect(pullSpy).not.toHaveBeenCalled();
+        expect(await Bun.file(envPath).text()).toBe(before);
+      },
+    );
+
     test("the claimed app's own key links and pulls as before", async () => {
       withBreadcrumb();
       stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
@@ -305,5 +393,59 @@ describe("keysMismatchMessage", () => {
   test("is the warning clerk auth login prints for the mismatch", () => {
     const result = { status: "keys_mismatch" as const, app, sources: [".env"] };
     expect(claimWarning(result)).toBe(keysMismatchMessage(result));
+  });
+});
+
+describe("reportClaimed", () => {
+  const captured = useCaptureLog();
+  const app = MOCK_APP as never;
+
+  test("a linked claim prints the claim line and where the app now lives", () => {
+    reportClaimed({ status: "claimed", app, linked: true, envPulled: true });
+
+    expect(captured.err).toContain("Claimed and linked application: `My Claimed App`");
+    expect(captured.err).toMatch(
+      /Your app now lives in your Clerk account:\n[^\n]*? {2}https:\/\/dashboard\.clerk\.com\/apps\/app_claimed\/instances\/ins_dev/,
+    );
+  });
+
+  test("an unlinked claim says so, with the caller's hint", () => {
+    reportClaimed(
+      { status: "claimed", app, linked: false, linkError: "disk full", envPulled: false },
+      { unlinkedHint: "Run `clerk link` to finish setup." },
+    );
+
+    expect(captured.err).toContain("Claimed application: `My Claimed App`");
+    expect(captured.err).not.toContain("Claimed and linked");
+    expect(captured.err).toContain(
+      "This folder wasn't linked: disk full. Run `clerk link` to finish setup.",
+    );
+  });
+
+  test("an unlinked claim without a hint prints no warning, for clerk link to link it", () => {
+    reportClaimed({
+      status: "claimed",
+      app,
+      linked: false,
+      linkError: "disk full",
+      envPulled: false,
+    });
+
+    expect(captured.err).not.toContain("wasn't linked");
+  });
+
+  test("an unreadable env file names the file and the reason, and says to pull later", () => {
+    reportClaimed({
+      status: "claimed",
+      app,
+      linked: true,
+      envPulled: false,
+      unreadableEnv: { file: ".env", reason: "EACCES: permission denied" },
+    });
+
+    expect(captured.err).toContain(
+      "Couldn't read .env to check its publishable key (EACCES: permission denied), so this folder's keys weren't written. " +
+        "Run `clerk env pull` once the file is fixed.",
+    );
   });
 });

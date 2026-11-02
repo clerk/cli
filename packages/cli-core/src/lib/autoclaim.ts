@@ -1,21 +1,38 @@
+import { relative } from "node:path";
 import { readKeylessBreadcrumb, clearKeylessBreadcrumb } from "./keyless.ts";
 import { claimApplication, type Application } from "./plapi.ts";
 import { PlapiError, errorMessage } from "./errors.ts";
 import { findClerkKeys, linkApp } from "./autolink.ts";
 import { deriveProjectName } from "./project-name.ts";
+import { buildDashboardUrl } from "./environment.ts";
 import { pull } from "../commands/env/pull.ts";
 import { log } from "./log.ts";
 
-type Claimed = { status: "claimed"; app: Application; envPulled: boolean };
+/** An env file the key check couldn't read, so the claimed app's keys weren't written. */
+type UnreadableEnv = { file: string; reason: string };
+
+type Claimed = {
+  status: "claimed";
+  app: Application;
+  /** Whether the folder's link was saved. `linkError` says why not. */
+  linked: boolean;
+  linkError?: string;
+  envPulled: boolean;
+  unreadableEnv?: UnreadableEnv;
+};
 /** The claim can never succeed with this token; the breadcrumb is cleared. */
 type Terminal = { status: "not_found" | "no_organization" };
 /**
  * The token's workspace is provisioned by an integration (Vercel Marketplace,
  * Stripe), so nothing can be claimed into it. The breadcrumb is kept: the user
- * switches to a workspace they own and the next `clerk auth login` retries.
+ * switches to a workspace they own and the next `clerk auth login` or `clerk link` retries.
  * `longMessage` is the API's `long_message`, which names the provider.
  */
-type ManagedWorkspace = { status: "managed_workspace"; longMessage: string | null };
+type ManagedWorkspace = {
+  status: "managed_workspace";
+  longMessage: string | null;
+  error: PlapiError;
+};
 type Failed = { status: "failed"; error: Error };
 type Skipped = { status: "not_keyless" };
 /**
@@ -43,8 +60,15 @@ const TERMINAL_BY_STATUS: Record<number, Terminal["status"]> = {
   403: "no_organization",
 };
 
-/** Orchestrates post-login claim of a keyless app. Never throws. */
-export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
+/**
+ * Orchestrates the claim of a keyless app. Never throws. `checkKeys` compares the folder's
+ * publishable keys with the claimed app's before linking; `clerk init`, `clerk migrate` and
+ * the `clerk doctor` fix sign in without it, so they keep linking whatever they claim.
+ */
+export async function attemptAutoclaim(
+  cwd: string,
+  { checkKeys }: { checkKeys: boolean },
+): Promise<AutoclaimResult> {
   const breadcrumb = await readKeylessBreadcrumb(cwd);
   if (!breadcrumb) return { status: "not_keyless" };
 
@@ -56,28 +80,42 @@ export async function attemptAutoclaim(cwd: string): Promise<AutoclaimResult> {
   await clearKeylessBreadcrumb(cwd);
 
   if (result.status === "claimed") {
-    const sources = await mismatchingKeySources(result.app, cwd);
-    if (sources.length > 0) return { status: "keys_mismatch", app: result.app, sources };
-    const linked = await tryLinkApp(result.app, cwd);
-    const envPulled = linked && (await tryPullEnv());
-    return { ...result, envPulled };
+    const check = checkKeys ? await checkLocalKeys(result.app, cwd) : { sources: [] };
+    if ("sources" in check && check.sources.length > 0) {
+      return { status: "keys_mismatch", app: result.app, sources: check.sources };
+    }
+    const link = await tryLinkApp(result.app, cwd);
+    if ("unreadable" in check) {
+      return { ...result, ...link, envPulled: false, unreadableEnv: check.unreadable };
+    }
+    const envPulled = link.linked && (await tryPullEnv());
+    return { ...result, ...link, envPulled };
   }
 
   return result;
 }
 
-async function mismatchingKeySources(app: Application, cwd: string): Promise<string[]> {
+/**
+ * Where the folder holds a publishable key for another app, or the env file that couldn't be
+ * read. An unreadable file can hide a mismatch, so the caller then writes no keys.
+ */
+async function checkLocalKeys(
+  app: Application,
+  cwd: string,
+): Promise<{ sources: string[] } | { unreadable: UnreadableEnv }> {
   // Deserialized API JSON: a claim response without instances must not throw here.
   const expected = app.instances?.find(
     (instance) => instance.environment_type === "development",
   )?.publishable_key;
-  if (!expected) return [];
+  if (!expected) return { sources: [] };
   try {
     const keys = await findClerkKeys(cwd);
-    return keys.filter((found) => found.key !== expected).map((found) => found.source);
+    return { sources: keys.filter((found) => found.key !== expected).map((found) => found.source) };
   } catch (error) {
     log.debug(`autoclaim: could not read local publishable keys: ${errorMessage(error)}`);
-    return [];
+    const path = (error as { path?: unknown }).path;
+    const file = typeof path === "string" ? relative(cwd, path) || path : "an env file";
+    return { unreadable: { file, reason: errorMessage(error) } };
   }
 }
 
@@ -91,17 +129,18 @@ async function tryClaim(claimToken: string, name: string): Promise<ClaimAttempt>
 }
 
 // Preserves the orchestrator's never-throws contract. Claim has already
-// succeeded on the server and the breadcrumb is cleared — a local link
+// succeeded on the server and the breadcrumb is cleared, so a local link
 // failure must not surface as a failed login.
-async function tryLinkApp(app: Application, cwd: string): Promise<boolean> {
+async function tryLinkApp(
+  app: Application,
+  cwd: string,
+): Promise<{ linked: boolean; linkError?: string }> {
   try {
-    await linkApp(app, cwd);
-    return true;
+    const linked = await linkApp(app, cwd);
+    if (!linked) return { linked: false, linkError: "the application has no development instance" };
+    return { linked: true };
   } catch (error) {
-    log.warn(
-      `Claim succeeded but linking the project locally failed: ${errorMessage(error)}. Run \`clerk link\` to finish setup.`,
-    );
-    return false;
+    return { linked: false, linkError: errorMessage(error) };
   }
 }
 
@@ -122,7 +161,7 @@ function classifyClaimError(error: unknown): Terminal | ManagedWorkspace | Faile
     error.code === MANAGED_WORKSPACE_CODE
   ) {
     log.debug(`Claim returned 403 ${MANAGED_WORKSPACE_CODE}: classified as managed_workspace`);
-    return { status: "managed_workspace", longMessage: error.longMessage };
+    return { status: "managed_workspace", longMessage: error.longMessage, error };
   }
 
   if (error instanceof PlapiError && error.status in TERMINAL_BY_STATUS) {
@@ -152,6 +191,43 @@ export function claimWarning(result: AutoclaimResult): string | undefined {
   }
   if (result.status === "keys_mismatch") return keysMismatchMessage(result);
   return CLAIM_WARNINGS[result.status];
+}
+
+/**
+ * Prints what a successful claim did. `unlinkedHint` follows the warning when the folder wasn't
+ * linked; `clerk link` passes none because it goes on to link the claimed app itself.
+ */
+export function reportClaimed(
+  result: Extract<AutoclaimResult, { status: "claimed" }>,
+  { unlinkedHint }: { unlinkedHint?: string } = {},
+): void {
+  const label = result.app.name || result.app.application_id;
+  log.success(
+    result.linked
+      ? `Claimed and linked application: \`${label}\``
+      : `Claimed application: \`${label}\``,
+  );
+  // First time this app has a home in an account; say where it is.
+  // Deserialized API JSON; a missing array must not fail a claim that
+  // already succeeded server-side.
+  const development = result.app.instances?.find(
+    (instance) => instance.environment_type === "development",
+  );
+  if (development) {
+    // URL on its own line: with it, the sentence is wider than the frame.
+    log.info("Your app now lives in your Clerk account:");
+    log.info(`  ${buildDashboardUrl(result.app.application_id, development.instance_id)}`);
+  }
+  if (!result.linked && unlinkedHint) {
+    log.warn(`This folder wasn't linked: ${result.linkError}. ${unlinkedHint}`);
+  }
+  if (result.unreadableEnv) {
+    const { file, reason } = result.unreadableEnv;
+    log.warn(
+      `Couldn't read ${file} to check its publishable key (${reason}), so this folder's keys weren't written. ` +
+        "Run `clerk env pull` once the file is fixed.",
+    );
+  }
 }
 
 export function keysMismatchMessage(result: KeysMismatch): string {

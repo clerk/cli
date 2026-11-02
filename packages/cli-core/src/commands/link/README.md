@@ -45,18 +45,24 @@ and no `--app` is given:
 1. Signs in if needed, without letting sign-in claim the application itself
 2. Claims the application into your account with the token, which deletes `.clerk/keyless.json`
 3. Compares the publishable keys in the env var, `.env`, and `.env.local` with the claimed application's development key
-4. If they all match (or there are none), links the folder, writes the application's keys to the env file, prints "Claimed and linked application: ...", and stops
+4. If they all match (or there are none), links the folder, writes the application's keys to the env file, prints "Claimed and linked application: ..." and the application's Dashboard URL, and stops
 5. If any key belongs to a different application, links nothing, leaves the env files unchanged, and exits 1 with `key_pair_mismatch`. The message names the claimed application and the file, and tells you to run `clerk link --app <app_id>` with the application the folder should use
-6. If the claim fails (expired token, no organization, managed workspace, or a temporary error), prints the same warning `clerk auth login` prints and continues with the normal flow below
+6. If an env file can't be read, links the folder but writes no keys, and warns with the file and the reason. Run `clerk env pull` once the file is fixed
+7. If the claim succeeds but saving the link fails, prints "Claimed application: ..." and links the claimed application directly, as `clerk link --app <its id>` would. An application with no development instance then fails with "Application has no development instance", and a config write that keeps failing reports its own error
+8. If the claim fails temporarily (a Platform API error or a network failure), or the workspace is managed by an integration such as Vercel, keeps `.clerk/keyless.json` and exits with the original error. A warning says to rerun `clerk link` to retry (for a managed workspace, after switching to a workspace you own), or to run `clerk link --app <app_id>` to link a different application. A Platform API error keeps its own code, e.g. `accountless_application_managed_workspace`
+9. If the token is spent (expired, or the account has no organization), prints the same warning `clerk auth login` prints and continues with the normal flow below
 
-Neither mode prompts during the claim. `--app` or an existing link skips it.
-Only the `clerk link` command claims: `clerk init`, `clerk migrate`, and the
+Neither mode prompts during the claim. `--app` or an existing link skips this
+step, but when you're signed out, signing in still claims the application
+without the key check, as `clerk auth login` did before it had one. Only the
+`clerk link` command runs this step: `clerk init`, `clerk migrate`, and the
 `clerk doctor` link fix call the same `link()` without the internal
-`claimKeylessApp` option, so their flows never claim.
+`claimKeylessApp` option.
 
-A Clerk SDK in keyless mode writes `.clerk/.tmp/keyless.json` instead, which
-`clerk link` can't claim. Claim that application in the Dashboard with
-`clerk open`, then run `clerk link` and choose it.
+A Clerk SDK in keyless mode writes a claim link to `.clerk/.tmp/keyless.json`
+instead, which `clerk link` can't use. Claim that application in the Dashboard
+with `clerk open`, then run `clerk link` and choose it, or, in agent mode, run
+`clerk apps list --json` and `clerk link --app <app_id>`.
 
 ## Flow
 

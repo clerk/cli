@@ -6,7 +6,7 @@ import {
   revokeToken,
   type UserInfo,
 } from "../../lib/token-exchange.ts";
-import { buildDashboardUrl, getOAuthConfig } from "../../lib/environment.ts";
+import { getOAuthConfig } from "../../lib/environment.ts";
 import {
   createOAuthSession,
   getStoredSession,
@@ -21,7 +21,12 @@ import { isHuman } from "../../mode.ts";
 import { ERROR_CODE, errorMessage, throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { attemptAutoclaim, claimWarning, type AutoclaimResult } from "../../lib/autoclaim.ts";
+import {
+  attemptAutoclaim,
+  claimWarning,
+  reportClaimed,
+  type AutoclaimResult,
+} from "../../lib/autoclaim.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
@@ -36,6 +41,12 @@ interface LoginOptions {
    * because it claims right after signing in and must see the claim's result itself.
    */
   claim?: boolean;
+  /**
+   * Compare the folder's publishable keys with the claimed app's before linking it. Only the
+   * `clerk auth login` command sets this; `clerk init`, `clerk migrate` and `clerk doctor` sign in
+   * through `login()` and must keep linking what they claim.
+   */
+  checkClaimKeys?: boolean;
 }
 
 async function getExistingSession(): Promise<UserInfo | null> {
@@ -209,7 +220,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 }
 
 async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
-  const { showNextSteps = true, yes, claim = true } = options;
+  const { showNextSteps = true, yes, claim = true, checkClaimKeys = false } = options;
   intro("Signing in");
   setTelemetryStage("session_check");
   const existingSession = await withSpinner("Checking session...", async () =>
@@ -220,7 +231,7 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
     setTelemetryStage("done");
     log.success(`Logged in as ${existingSession.email}`);
     const claimResult: AutoclaimResult = claim
-      ? await handleAutoclaim(process.cwd())
+      ? await handleAutoclaim(process.cwd(), checkClaimKeys)
       : { status: "not_keyless" };
     if (showNextSteps) {
       await outro(await loginNextSteps(claimResult));
@@ -271,7 +282,7 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   log.success(`Logged in as ${userInfo.email}`);
 
   const claimResult: AutoclaimResult = claim
-    ? await handleAutoclaim(process.cwd())
+    ? await handleAutoclaim(process.cwd(), checkClaimKeys)
     : { status: "not_keyless" };
 
   if (showNextSteps) {
@@ -283,23 +294,11 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   return userInfo;
 }
 
-async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
-  const result = await attemptAutoclaim(cwd);
+async function handleAutoclaim(cwd: string, checkKeys: boolean): Promise<AutoclaimResult> {
+  const result = await attemptAutoclaim(cwd, { checkKeys });
 
   if (result.status === "claimed") {
-    const label = result.app.name || result.app.application_id;
-    log.success(`Claimed and linked application: \`${label}\``);
-    // First time this app has a home in an account; say where it is.
-    // Deserialized API JSON; a missing array must not fail a claim that
-    // already succeeded server-side.
-    const development = result.app.instances?.find(
-      (instance) => instance.environment_type === "development",
-    );
-    if (development) {
-      // URL on its own line: with it, the sentence is wider than the frame.
-      log.info("Your app now lives in your Clerk account:");
-      log.info(`  ${buildDashboardUrl(result.app.application_id, development.instance_id)}`);
-    }
+    reportClaimed(result, { unlinkedHint: "Run `clerk link` to finish setup." });
   }
 
   const warning = claimWarning(result);
@@ -309,6 +308,7 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
 }
 
 async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[]> {
+  if (result.status === "claimed" && !result.linked) return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   if (result.status === "claimed") {
     return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
   }

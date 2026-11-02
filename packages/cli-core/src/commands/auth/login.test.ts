@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
-import { AuthError, ERROR_CODE, UserAbortError } from "../../lib/errors.ts";
+import { AuthError, ERROR_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 import type { AutoclaimResult } from "../../lib/autoclaim.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -97,15 +97,18 @@ mock.module("../../lib/first-application.ts", () => ({
   ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
-const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<AutoclaimResult> => ({
-  status: "not_keyless",
-}));
+const mockAttemptAutoclaim = mock(
+  async (_cwd: string, _options: { checkKeys: boolean }): Promise<AutoclaimResult> => ({
+    status: "not_keyless",
+  }),
+);
 
 // The real warning texts, so these tests pin what `clerk auth login` prints.
 const actualAutoclaim = await import("../../lib/autoclaim.ts");
 mock.module("../../lib/autoclaim.ts", () => ({
   ...actualAutoclaim,
-  attemptAutoclaim: (cwd: string) => mockAttemptAutoclaim(cwd),
+  attemptAutoclaim: (cwd: string, options: { checkKeys: boolean }) =>
+    mockAttemptAutoclaim(cwd, options),
 }));
 
 const { setLogLevel } = await import("../../lib/log.ts");
@@ -673,6 +676,7 @@ describe("login", () => {
     mockResolveProfile.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
+      linked: true,
       envPulled: true,
       app: {
         application_id: "app_claimed",
@@ -731,6 +735,50 @@ describe("login", () => {
     expect(process.exitCode).toBe(exitCodeBefore);
   });
 
+  test("clerk init's sign-in call claims without the key check", async () => {
+    // `clerk init` calls exactly this (pinned in commands/init/index.test.ts and strategy.test.ts).
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+
+    await runLogin({ showNextSteps: false });
+
+    expect(mockAttemptAutoclaim).toHaveBeenCalledWith(process.cwd(), { checkKeys: false });
+  });
+
+  test("checkClaimKeys turns the key check on, as the clerk auth login command does", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+
+    await runLogin({ checkClaimKeys: true });
+
+    expect(mockAttemptAutoclaim).toHaveBeenCalledWith(process.cwd(), { checkKeys: true });
+  });
+
+  test("a claim that didn't link the folder says so and points at clerk link", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      linked: false,
+      linkError: "the application has no development instance",
+      envPulled: false,
+      app: { application_id: "app_claimed", name: "bad-agent", instances: [] },
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain("Claimed application: `bad-agent`");
+    expect(captured.err).not.toContain("Claimed and linked application");
+    expect(captured.err).toContain(
+      "This folder wasn't linked: the application has no development instance. Run `clerk link` to finish setup.",
+    );
+    expect(captured.err).toContain("Run `clerk link` to connect your Clerk application");
+  });
+
   test("claim: false signs in without claiming, for clerk link to claim itself", async () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();
@@ -757,6 +805,7 @@ describe("login", () => {
     mockResolveProfile.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
+      linked: true,
       envPulled: true,
       app: {
         application_id: "app_claimed",
@@ -792,6 +841,7 @@ describe("login", () => {
     mockResolveProfile.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
+      linked: true,
       envPulled: true,
       // Deliberately shaped like API JSON that dropped the array.
       app: { application_id: "app_claimed", name: "bad-agent" } as Application,
@@ -876,6 +926,7 @@ describe("login", () => {
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
     mockAttemptAutoclaim.mockResolvedValue({
       status: "managed_workspace",
+      error: new PlapiError(403, "{}"),
       longMessage:
         "The target application cannot be claimed into the current workspace. Select a different workspace and try again.",
     });
@@ -893,7 +944,11 @@ describe("login", () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
-    mockAttemptAutoclaim.mockResolvedValue({ status: "managed_workspace", longMessage: null });
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "managed_workspace",
+      longMessage: null,
+      error: new PlapiError(403, "{}"),
+    });
 
     await runLogin();
 
