@@ -23,11 +23,18 @@ async function writeInitBreadcrumb(dir: string): Promise<void> {
   );
 }
 
-async function writeSdkKeylessFile(dir: string): Promise<void> {
+const SDK_FILE = [".clerk", ".tmp", "keyless.json"] as const;
+
+async function writeSdkKeylessFile(dir: string, content?: string): Promise<void> {
   await mkdir(join(dir, ".clerk", ".tmp"), { recursive: true });
   await Bun.write(
-    join(dir, ".clerk", ".tmp", "keyless.json"),
-    JSON.stringify({ claimUrl: "https://dashboard.clerk.com/apps/claim?token=tok_sdk" }),
+    join(dir, ...SDK_FILE),
+    content ??
+      JSON.stringify({
+        claimUrl: "https://dashboard.clerk.com/apps/claim?token=tok_sdk",
+        publishableKey: "pk_test_sdk",
+        secretKey: "sk_test_sdk",
+      }),
   );
 }
 
@@ -43,10 +50,24 @@ describe("classifyUnlinkedFolder", () => {
     expect(await classifyUnlinkedFolder(folder)).toBe("init_app");
   });
 
-  test("an SDK keyless file without a breadcrumb is sdk_app", async () => {
+  test("an SDK keyless file with an https claim link and no breadcrumb is sdk_app", async () => {
     await writeSdkKeylessFile(folder);
     expect(await classifyUnlinkedFolder(folder)).toBe("sdk_app");
   });
+
+  test.each([
+    ["no claim link", "{}"],
+    ["a non-https claim link", JSON.stringify({ claimUrl: "javascript:alert(1)" })],
+    ["malformed JSON", '{"claimUrl": "https://dash'],
+  ])(
+    "an SDK keyless file with %s is plain, because clerk open has nothing to open",
+    async (_label, content) => {
+      await writeSdkKeylessFile(folder, content);
+
+      expect(await classifyUnlinkedFolder(folder)).toBe("plain");
+      expect(await Bun.file(join(folder, ...SDK_FILE)).exists()).toBe(true);
+    },
+  );
 
   test("the breadcrumb wins when both files exist, because clerk link can claim it", async () => {
     await writeInitBreadcrumb(folder);
@@ -82,9 +103,10 @@ describe("notLinkedMessage", () => {
   test("sdk_app says a person claims it with clerk open first", async () => {
     await writeSdkKeylessFile(folder);
     expect(await notLinkedMessage(folder, "clerk deploy")).toBe(
-      "This folder runs on an application a Clerk SDK created that no account owns yet. " +
-        "`clerk link` can't list it until it's claimed: a person must run `clerk open` to claim it in the Dashboard. " +
-        "Then run `clerk link`, choose it, and rerun `clerk deploy`.",
+      "This folder holds a claim link a Clerk SDK wrote to `.clerk/.tmp/keyless.json`. " +
+        "If no account owns that application yet, a person must run `clerk open` to claim it in the Dashboard. " +
+        "Then run `clerk link` and choose it (agents: `clerk auth login` if needed, then `clerk apps list --json` and `clerk link --app <app_id>`), " +
+        "then rerun `clerk deploy`.",
     );
   });
 });

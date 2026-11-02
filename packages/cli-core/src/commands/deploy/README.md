@@ -67,11 +67,11 @@ Agent-mode `clerk deploy` without `--domain` is informational and exits 0 for li
 
 `clerk deploy` and `clerk deploy status` stop with `not_linked` in a folder with no link. The message says which kind of application the folder runs on, because only one kind is listed by `clerk link`:
 
-| Folder holds                                                                   | Message tells you to                                                                                                               |
-| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
-| `.clerk/keyless.json` with a claim token, written by a signed-out `clerk init` | Run `clerk link`, which claims the application into your account and links the folder, then rerun the command.                     |
-| `.clerk/.tmp/keyless.json`, written by a Clerk SDK in keyless mode             | Have a person run `clerk open` to claim the application in the Dashboard, then run `clerk link`, choose it, and rerun the command. |
-| Neither file                                                                   | Run `clerk link`, then rerun the command.                                                                                          |
+| Folder holds                                                                                  | Message tells you to                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.clerk/keyless.json` with a claim token, written by a signed-out `clerk init`                | Run `clerk link`, which claims the application into your account and links the folder, then rerun the command.                                                                                                                                                         |
+| `.clerk/.tmp/keyless.json` with an https claim link, written by a Clerk SDK in keyless mode   | If no account owns the application yet, have a person run `clerk open` to claim it in the Dashboard. Then run `clerk link` and choose it (agents: `clerk auth login` if needed, then `clerk apps list --json` and `clerk link --app <app_id>`), and rerun the command. |
+| Neither, or an SDK file without a usable claim link (`clerk open` would have nothing to open) | Run `clerk link`, then rerun the command.                                                                                                                                                                                                                              |
 
 The error code is `not_linked` in all three cases. Only the message text differs.
 

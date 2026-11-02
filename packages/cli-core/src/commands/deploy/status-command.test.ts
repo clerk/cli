@@ -806,9 +806,10 @@ describe("deploy status", () => {
       "This folder runs on an application `clerk init` created that no account owns yet. " +
       "Run `clerk link` to claim it into your account and link this folder, then rerun `clerk deploy status`.";
     const SDK_APP =
-      "This folder runs on an application a Clerk SDK created that no account owns yet. " +
-      "`clerk link` can't list it until it's claimed: a person must run `clerk open` to claim it in the Dashboard. " +
-      "Then run `clerk link`, choose it, and rerun `clerk deploy status`.";
+      "This folder holds a claim link a Clerk SDK wrote to `.clerk/.tmp/keyless.json`. " +
+      "If no account owns that application yet, a person must run `clerk open` to claim it in the Dashboard. " +
+      "Then run `clerk link` and choose it (agents: `clerk auth login` if needed, then `clerk apps list --json` and `clerk link --app <app_id>`), " +
+      "then rerun `clerk deploy status`.";
     const PLAIN =
       "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy status`.";
 
@@ -835,7 +836,10 @@ describe("deploy status", () => {
       }
       if (state === "sdk_app") {
         await mkdir(join(folder, ".clerk", ".tmp"), { recursive: true });
-        await Bun.write(join(folder, ".clerk", ".tmp", "keyless.json"), "{}");
+        await Bun.write(
+          join(folder, ".clerk", ".tmp", "keyless.json"),
+          JSON.stringify({ claimUrl: "https://dashboard.clerk.com/apps/claim?token=tok_sdk" }),
+        );
       }
     }
 
