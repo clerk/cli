@@ -308,7 +308,7 @@ async function handleAutoclaim(cwd: string, checkKeys: boolean): Promise<Autocla
   return result;
 }
 
-async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[]> {
+async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[] | undefined> {
   if (result.status === "claimed" && !result.linked) return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   if (result.status === "claimed") {
     return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
@@ -316,6 +316,12 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
   if (result.status === "failed") {
     const kind = claimFailureKind(result.error);
     if (kind === "temporary") return NEXT_STEPS.AUTOCLAIM_RETRY;
+    if (kind === "api_key") return NEXT_STEPS.AUTOCLAIM_API_KEY;
+    // The CLI's own error repeats on every run, and `--app` would hit it too. With the API key
+    // set it is usually that key's format; otherwise the error's own message is the only step.
+    if (kind === "cli") {
+      return process.env.CLERK_PLATFORM_API_KEY ? NEXT_STEPS.AUTOCLAIM_API_KEY : undefined;
+    }
     return kind === "sign_in" ? NEXT_STEPS.AUTOCLAIM_SIGN_IN : NEXT_STEPS.AUTOCLAIM_REJECTED;
   }
   if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;

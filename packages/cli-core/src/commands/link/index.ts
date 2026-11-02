@@ -13,6 +13,7 @@ import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import {
   ApiError,
+  AuthError,
   CliError,
   ERROR_CODE,
   throwUsageError,
@@ -221,12 +222,13 @@ async function claimKeylessApp(cwd: string, options: LinkOptions): Promise<Claim
 }
 
 function claimFailure(error: Error): Error {
-  if (!(error instanceof ApiError)) {
-    // Reported like any other network failure; the advice has no other place to go.
-    log.warn(CLAIM_FAILURE_ADVICE.temporary);
-    return error;
-  }
-  return withAdvice(error, CLAIM_FAILURE_ADVICE[claimFailureKind(error)]);
+  const kind = claimFailureKind(error);
+  // The CLI's own errors (an expired session, a malformed key) already say what to do.
+  if (kind === "cli" || error instanceof AuthError) return error;
+  if (error instanceof ApiError) return withAdvice(error, CLAIM_FAILURE_ADVICE[kind]);
+  // A network failure is reported like any other, so its advice can only go in a warning.
+  log.warn(CLAIM_FAILURE_ADVICE[kind]);
+  return error;
 }
 
 /**

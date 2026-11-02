@@ -1,9 +1,9 @@
 import { join } from "node:path";
 import { readKeylessBreadcrumb, clearKeylessBreadcrumb } from "./keyless.ts";
 import { claimApplication, type Application } from "./plapi.ts";
-import { ApiError, PlapiError, errorMessage } from "./errors.ts";
+import { ApiError, AuthError, CliError, PlapiError, errorMessage } from "./errors.ts";
 import { linkApp } from "./autolink.ts";
-import { ENV_FILE_CANDIDATES, parseEnvFile } from "./dotenv.ts";
+import { ENV_FILE_CANDIDATES } from "./dotenv.ts";
 import { deriveProjectName } from "./project-name.ts";
 import { buildDashboardUrl } from "./environment.ts";
 import { detectPublishableKeyName } from "./framework.ts";
@@ -99,8 +99,10 @@ export async function attemptAutoclaim(
 
 /**
  * Where the folder holds a publishable key for another app, or the first env file that
- * couldn't be read. Covers the exported variable and every file `clerk env pull` can write
- * (`ENV_FILE_CANDIDATES`), each read on its own: any mismatch refuses, and an unreadable file
+ * couldn't be read. Covers the exported variable and the development env files
+ * (`ENV_FILE_CANDIDATES`): `clerk env pull` writes `.env.development.local`, `.env.local` or
+ * `.env`, and `.env.development` outranks `.env` in development, so a key there would override
+ * the pulled one. Each file is read on its own: any mismatch refuses, and an unreadable file
  * only matters when no source mismatches, because it could hide one.
  */
 async function checkLocalKeys(
@@ -117,17 +119,25 @@ async function checkLocalKeys(
   const sources: string[] = [];
   let unreadable: UnreadableEnv | undefined;
 
-  const exported = process.env[name];
+  const exported = normalizeKey(process.env[name] ?? "");
   if (exported && exported !== expected) sources.push(`${name} env var`);
+
+  // Its own pattern, not `parseEnvFile`, which reads a CRLF line, an indented line or spaces
+  // around `=` as a comment; frameworks read all three as entries. `name` is an identifier,
+  // so it needs no escaping.
+  const entry = new RegExp(`^\\s*(?:export\\s+)?${name}\\s*=\\s*(.*)$`);
 
   for (const file of ENV_FILE_CANDIDATES) {
     try {
       const handle = Bun.file(join(cwd, file));
       if (!(await handle.exists())) continue;
-      const foreign = parseEnvFile(await handle.text()).some(
-        (line) =>
-          line.type === "entry" && line.key === name && line.value && line.value !== expected,
-      );
+      const lines = (await handle.text()).replace(/\r\n?/g, "\n").split("\n");
+      const foreign = lines.some((line) => {
+        const match = entry.exec(line);
+        if (!match) return false;
+        const value = normalizeKey(match[1] ?? "");
+        return value !== "" && value !== expected;
+      });
       if (foreign) sources.push(file);
     } catch (error) {
       log.debug(`autoclaim: could not read ${file}: ${errorMessage(error)}`);
@@ -138,6 +148,19 @@ async function checkLocalKeys(
   if (sources.length > 0) return { sources };
   if (unreadable) return { unreadable };
   return { sources: [] };
+}
+
+/**
+ * The key as a framework reads it: cutting at the first whitespace drops trailing spaces and an
+ * inline `# comment`, safe because publishable keys contain no spaces; then surrounding quotes go.
+ */
+function normalizeKey(value: string): string {
+  const token = value.trim().split(/\s/)[0] ?? "";
+  const quote = token[0];
+  if ((quote === '"' || quote === "'") && token.length >= 2 && token.at(-1) === quote) {
+    return token.slice(1, -1);
+  }
+  return token;
 }
 
 async function tryClaim(claimToken: string, name: string): Promise<ClaimAttempt> {
@@ -208,26 +231,38 @@ export const CLAIM_OTHER_APP_HINT =
 
 /**
  * Why a claim failed and kept its token. A 5xx, a 429 or a network failure may pass on a
- * retry. A 401 means the saved sign-in was rejected, so `--app` would fail the same way. Any
- * other 4xx repeats on every run.
+ * retry. An `AuthError` (a session that can't be refreshed) or a 401 means the credentials
+ * were rejected, so `--app` would fail the same way; the Platform API client prefers
+ * `CLERK_PLATFORM_API_KEY`, so with it set a 401 rejects the key, not the saved sign-in. Any
+ * other `CliError` (e.g. `invalid_key_format`) is the CLI's own check and repeats on every
+ * run, and its message already says what to fix. Any other 4xx repeats on every run.
  */
-export type ClaimFailureKind = "temporary" | "sign_in" | "rejected";
+export type ClaimFailureKind = "temporary" | "sign_in" | "api_key" | "cli" | "rejected";
 
 export function claimFailureKind(error: Error): ClaimFailureKind {
+  if (error instanceof AuthError) return "sign_in";
+  if (error instanceof CliError) return "cli";
   if (!(error instanceof ApiError) || error.status >= 500 || error.status === 429) {
     return "temporary";
   }
-  return error.status === 401 ? "sign_in" : "rejected";
+  if (error.status === 401) return process.env.CLERK_PLATFORM_API_KEY ? "api_key" : "sign_in";
+  return "rejected";
 }
 
-/** What `clerk link` and `clerk auth login` advise for each kind of failed claim. */
-export const CLAIM_FAILURE_ADVICE: Record<ClaimFailureKind, string> = {
+/**
+ * What `clerk link` and `clerk auth login` advise for each kind of failed claim. A `cli`
+ * failure has none: its own message is the advice.
+ */
+export const CLAIM_FAILURE_ADVICE: Record<Exclude<ClaimFailureKind, "cli">, string> = {
   temporary:
     "Couldn't claim the application `clerk init` created because of a temporary error. " +
     `Rerun \`clerk link\` to retry, ${CLAIM_OTHER_APP_HINT}`,
   sign_in:
     "Clerk rejected the saved sign-in while claiming the application `clerk init` created. " +
     "Run `clerk auth login` to sign in again, then rerun `clerk link`.",
+  api_key:
+    "Clerk rejected `CLERK_PLATFORM_API_KEY` while claiming the application `clerk init` created. " +
+    "Fix or unset it, then rerun `clerk link`.",
   rejected:
     "Clerk rejected the claim of the application `clerk init` created. " +
     "Run `clerk link --app <app_id>` with the application this folder should use.",
@@ -243,6 +278,7 @@ export function claimWarning(result: AutoclaimResult): string | undefined {
   if (result.status === "failed") {
     const { error } = result;
     const kind = claimFailureKind(error);
+    if (kind === "cli") return error.message;
     if (kind !== "rejected") return CLAIM_FAILURE_ADVICE[kind];
     const status = error instanceof ApiError ? ` (${error.status})` : "";
     return `${CLAIM_FAILURE_ADVICE.rejected} Clerk's reason${status}: ${error.message}`;

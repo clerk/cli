@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
-import { AuthError, ERROR_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
+import { AuthError, CliError, ERROR_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 import type { AutoclaimResult } from "../../lib/autoclaim.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -122,7 +122,11 @@ describe("login", () => {
   const origSpawn = Bun.spawn;
   const origStdinIsTTY = process.stdin.isTTY;
 
+  // The claim's failure advice depends on it; a developer's own must not decide these tests.
+  const originalApiKey = process.env.CLERK_PLATFORM_API_KEY;
+
   beforeEach(() => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     // The paste-back prompt only appears on an interactive stdin. Pin it off
     // so the suite doesn't change behaviour when run from a terminal.
@@ -130,6 +134,8 @@ describe("login", () => {
   });
 
   afterEach(() => {
+    if (originalApiKey === undefined) delete process.env.CLERK_PLATFORM_API_KEY;
+    else process.env.CLERK_PLATFORM_API_KEY = originalApiKey;
     mockGetValidToken.mockReset();
     mockStoreToken.mockReset();
     mockCreateOAuthSession.mockReset();
@@ -1013,6 +1019,100 @@ describe("login", () => {
     );
     expect(captured.err).toContain("Run `clerk auth login` to sign in again");
     expect(captured.err).not.toContain("--app");
+  });
+
+  test("a 401 with CLERK_PLATFORM_API_KEY set says to fix or unset the key, not to sign in", async () => {
+    const original = process.env.CLERK_PLATFORM_API_KEY;
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test";
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(401, "Unauthorized"),
+    });
+
+    try {
+      await runLogin();
+    } finally {
+      if (original === undefined) delete process.env.CLERK_PLATFORM_API_KEY;
+      else process.env.CLERK_PLATFORM_API_KEY = original;
+    }
+
+    expect(captured.err).toContain(
+      "Clerk rejected `CLERK_PLATFORM_API_KEY` while claiming the application `clerk init` created. " +
+        "Fix or unset it, then rerun `clerk link`.",
+    );
+    expect(captured.err).toContain(
+      "Fix or unset `CLERK_PLATFORM_API_KEY`, then run `clerk link` to claim the application",
+    );
+    expect(captured.err).not.toContain("sign in again");
+  });
+
+  test("a CLI error with CLERK_PLATFORM_API_KEY set warns with its own message, and the next step is the key", async () => {
+    process.env.CLERK_PLATFORM_API_KEY = "sk_test_wrong_kind";
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new CliError("Expected a Platform API key (ak_...), found a secret key (sk_...).", {
+        code: ERROR_CODE.INVALID_KEY_FORMAT,
+      }),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Expected a Platform API key (ak_...), found a secret key (sk_...).",
+    );
+    expect(captured.err).not.toContain("temporary error");
+    expect(captured.err).not.toContain("Run `clerk auth login` again to retry auto-claim");
+    expect(captured.err).toContain(
+      "Fix or unset `CLERK_PLATFORM_API_KEY`, then run `clerk link` to claim the application",
+    );
+    expect(captured.err).not.toContain("clerk link --app");
+  });
+
+  test("a CLI error without CLERK_PLATFORM_API_KEY set shows no next steps beyond its message", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new CliError(
+        "Expected a secret key starting with `sk_` in .env, found something else.",
+        {
+          code: ERROR_CODE.INVALID_KEY_FORMAT,
+        },
+      ),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain("found something else.");
+    expect(captured.err).not.toContain("Next steps");
+    expect(captured.err).not.toContain("clerk link --app");
+  });
+
+  test("an expired session during the claim gives the sign-in advice", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new AuthError({ reason: "session_expired" }),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Run `clerk auth login` to sign in again, then rerun `clerk link`.",
+    );
+    expect(captured.err).not.toContain("temporary error");
   });
 
   test("falls back to a generic provider when the managed-workspace rejection has no long message", async () => {

@@ -36,6 +36,10 @@ export const NEXT_STEPS = {
     "Run `clerk auth login` to sign in again",
     "Run `clerk link` to claim the application",
   ],
+  /** After a 401 while `CLERK_PLATFORM_API_KEY` is set: the key, not the sign-in, was rejected. */
+  AUTOCLAIM_API_KEY: [
+    "Fix or unset `CLERK_PLATFORM_API_KEY`, then run `clerk link` to claim the application",
+  ],
   AUTOCLAIM_SWITCH_WORKSPACE: [
     "Select a different workspace in the Clerk Dashboard",
     "Run `clerk auth login` again to proceed",

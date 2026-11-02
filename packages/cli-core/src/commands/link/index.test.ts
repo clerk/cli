@@ -11,7 +11,7 @@ import {
   gitStubs,
   listageStubs,
 } from "../../test/lib/stubs.ts";
-import { CliError, ERROR_CODE, EXIT_CODE, PlapiError } from "../../lib/errors.ts";
+import { AuthError, CliError, ERROR_CODE, EXIT_CODE, PlapiError } from "../../lib/errors.ts";
 import "../../lib/help.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 
@@ -1482,6 +1482,65 @@ describe("link", () => {
       expect((error as PlapiError).context).not.toContain("--app");
       expect(captured.err).not.toContain("--app");
       expect(mockAutolink).not.toHaveBeenCalled();
+      expect(await breadcrumbExists()).toBe(true);
+    });
+
+    test("an expired sign-in stops with the session error alone, not a temporary-error warning", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      const expired = new AuthError({ reason: "session_expired" });
+      mockClaimApplication.mockRejectedValue(expired);
+
+      const error = await runLink({ cwd: folder, claimKeylessApp: true }).catch(
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toBe(expired);
+      expect((error as AuthError).message).toContain("clerk auth login");
+      expect(captured.err).not.toContain("temporary error");
+      expect(captured.err).not.toContain("Rerun `clerk link` to retry");
+      expect(mockAutolink).not.toHaveBeenCalled();
+      expect(await breadcrumbExists()).toBe(true);
+    });
+
+    test("a CLI error such as invalid_key_format stops with that error alone, not as temporary", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      const badKey = new CliError(
+        "Expected a Platform API key (ak_...), found a secret key (sk_...).",
+        {
+          code: ERROR_CODE.INVALID_KEY_FORMAT,
+        },
+      );
+      mockClaimApplication.mockRejectedValue(badKey);
+
+      const error = await runLink({ cwd: folder, claimKeylessApp: true }).catch(
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toBe(badKey);
+      expect((error as CliError).code).toBe(ERROR_CODE.INVALID_KEY_FORMAT);
+      expect(captured.err).not.toContain("temporary");
+      expect(captured.err).not.toContain("Rerun `clerk link` to retry");
+      expect(mockAutolink).not.toHaveBeenCalled();
+      expect(await breadcrumbExists()).toBe(true);
+    });
+
+    test("agent mode: a 401 with CLERK_PLATFORM_API_KEY set says the key was rejected, not the sign-in", async () => {
+      process.env.CLERK_PLATFORM_API_KEY = "ak_test";
+      mockIsAgent.mockReturnValue(true);
+      mockClaimApplication.mockRejectedValue(new PlapiError(401, "Unauthorized"));
+
+      const error = await runLink({ cwd: folder, claimKeylessApp: true }).catch(
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toBeInstanceOf(PlapiError);
+      expect((error as PlapiError).context).toBe(
+        "Clerk rejected `CLERK_PLATFORM_API_KEY` while claiming the application `clerk init` created. " +
+          "Fix or unset it, then rerun `clerk link`",
+      );
+      expect((error as PlapiError).context).not.toContain("clerk auth login");
       expect(await breadcrumbExists()).toBe(true);
     });
 

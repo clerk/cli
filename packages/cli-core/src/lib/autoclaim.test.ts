@@ -307,6 +307,106 @@ describe("attemptAutoclaim", () => {
       },
     );
 
+    test.each([
+      ["Windows line endings", "CLERK_PUBLISHABLE_KEY=pk_test_abc\r\nOTHER=1\r\n"],
+      ["a quoted value with Windows line endings", 'CLERK_PUBLISHABLE_KEY="pk_test_abc"\r\n'],
+      ["an inline comment", "CLERK_PUBLISHABLE_KEY=pk_test_abc # dev key\n"],
+      ["trailing spaces", "CLERK_PUBLISHABLE_KEY=pk_test_abc   \n"],
+    ])("the claimed app's own key with %s links", async (_label, content) => {
+      withBreadcrumb();
+      stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+      await Bun.write(join(tempDir, ".env.local"), content);
+
+      const result = await run();
+
+      expect(result.status).toBe("claimed");
+      expect(linkAppSpy).toHaveBeenCalledWith(MOCK_APP, tempDir);
+    });
+
+    test("another app's key in a file with Windows line endings refuses", async () => {
+      withBreadcrumb();
+      stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+      const localPath = join(tempDir, ".env.local");
+      const before = "CLERK_PUBLISHABLE_KEY=pk_test_other\r\nCLERK_SECRET_KEY=sk_test_other\r\n";
+      await Bun.write(localPath, before);
+
+      const result = await run();
+
+      expect(result).toEqual({
+        status: "keys_mismatch",
+        app: MOCK_APP as never,
+        sources: [".env.local"],
+      });
+      expect(linkAppSpy).not.toHaveBeenCalled();
+      expect(pullSpy).not.toHaveBeenCalled();
+      expect(await Bun.file(localPath).text()).toBe(before);
+    });
+
+    test.each([
+      ["spaces around =", " CLERK_PUBLISHABLE_KEY = pk_test_other\n"],
+      ["an indented export", "  export CLERK_PUBLISHABLE_KEY=pk_test_other\n"],
+    ])("another app's key on a line with %s refuses", async (_label, content) => {
+      withBreadcrumb();
+      stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+      const localPath = join(tempDir, ".env.local");
+      await Bun.write(localPath, content);
+
+      const result = await run();
+
+      expect(result).toEqual({
+        status: "keys_mismatch",
+        app: MOCK_APP as never,
+        sources: [".env.local"],
+      });
+      expect(linkAppSpy).not.toHaveBeenCalled();
+      expect(pullSpy).not.toHaveBeenCalled();
+      expect(await Bun.file(localPath).text()).toBe(content);
+    });
+
+    test("a commented-out line with another app's key doesn't refuse", async () => {
+      withBreadcrumb();
+      stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+      await Bun.write(
+        join(tempDir, ".env.local"),
+        "# CLERK_PUBLISHABLE_KEY=pk_test_other\nCLERK_PUBLISHABLE_KEY=pk_test_abc\n",
+      );
+
+      const result = await run();
+
+      expect(result.status).toBe("claimed");
+    });
+
+    test.skipIf(process.getuid?.() === 0)(
+      "mismatches before and after an unreadable file are all named, and nothing is linked",
+      async () => {
+        withBreadcrumb();
+        stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));
+        const localPath = join(tempDir, ".env.local");
+        await Bun.write(
+          join(tempDir, ".env.development.local"),
+          "CLERK_PUBLISHABLE_KEY=pk_test_b\n",
+        );
+        await Bun.write(localPath, "CLERK_PUBLISHABLE_KEY=pk_test_abc\n");
+        await Bun.write(join(tempDir, ".env"), "CLERK_PUBLISHABLE_KEY=pk_test_c\n");
+        await chmod(localPath, 0o000);
+
+        let result: AutoclaimResult;
+        try {
+          result = await run();
+        } finally {
+          await chmod(localPath, 0o600);
+        }
+
+        expect(result).toEqual({
+          status: "keys_mismatch",
+          app: MOCK_APP as never,
+          sources: [".env.development.local", ".env"],
+        });
+        expect(linkAppSpy).not.toHaveBeenCalled();
+        expect(pullSpy).not.toHaveBeenCalled();
+      },
+    );
+
     describe("with the real link and env pull", () => {
       // The claim response carries secret keys, so a real pull writes both keys.
       const APP_WITH_KEYS = {
