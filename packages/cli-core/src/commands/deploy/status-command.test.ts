@@ -803,8 +803,9 @@ describe("deploy status", () => {
   // `test/integration/telemetry.test.ts`.
   describe("not_linked message names the app the folder runs on", () => {
     const INIT_APP =
-      "This folder runs on an application `clerk init` created that no account owns yet. " +
-      "Run `clerk link` to claim it into your account and link this folder, then rerun `clerk deploy status`.";
+      "This folder holds a claim token a signed-out `clerk init` wrote to `.clerk/keyless.json`. " +
+      "If no account owns that application yet, `clerk link` claims it into your account. " +
+      "Run `clerk link` to link this folder, then rerun `clerk deploy status`.";
     const SDK_APP =
       "This folder holds a claim link a Clerk SDK wrote to `.clerk/.tmp/keyless.json`. " +
       "If no account owns that application yet, a person must run `clerk open` to claim it in the Dashboard. " +

@@ -4,7 +4,7 @@ import { peekKeylessBreadcrumb, readSdkClaimUrl } from "./keyless.ts";
  * Who created the application an unlinked folder runs on, when no account owns it yet:
  *
  *  - `init_app`: a signed-out `clerk init` left its claim token in `.clerk/keyless.json`.
- *    `clerk link` can claim it.
+ *    `clerk link` claims it if no account owns it yet; a Dashboard claim can leave the file behind.
  *  - `sdk_app`: a Clerk SDK in keyless mode wrote a usable claim link to
  *    `.clerk/.tmp/keyless.json`. Only the Dashboard claim page (`clerk open`) can claim it.
  *  - `plain`: neither, so the folder is just unlinked. An SDK file without a usable link
@@ -29,8 +29,9 @@ export async function notLinkedMessage(cwd: string, rerun: string): Promise<stri
   switch (await classifyUnlinkedFolder(cwd)) {
     case "init_app":
       return (
-        "This folder runs on an application `clerk init` created that no account owns yet. " +
-        `Run \`clerk link\` to claim it into your account and link this folder, then rerun \`${rerun}\`.`
+        "This folder holds a claim token a signed-out `clerk init` wrote to `.clerk/keyless.json`. " +
+        "If no account owns that application yet, `clerk link` claims it into your account. " +
+        `Run \`clerk link\` to link this folder, then rerun \`${rerun}\`.`
       );
     case "sdk_app":
       return (
