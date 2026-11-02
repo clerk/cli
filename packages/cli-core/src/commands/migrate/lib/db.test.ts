@@ -123,14 +123,22 @@ describe("sqlitePath", () => {
 
 describe("a libsql client", () => {
   const originalFetch = globalThis.fetch;
-  let requests: { url: string; token?: string; body: any; signal?: AbortSignal | null }[] = [];
+  let requests: {
+    url: string;
+    token?: string | null;
+    userAgent?: string | null;
+    body: any;
+    signal?: AbortSignal | null;
+  }[] = [];
 
   function stubFetch(result: unknown) {
     requests = [];
     globalThis.fetch = (async (url: string, init: RequestInit) => {
+      const headers = new Headers(init.headers);
       requests.push({
         url: String(url),
-        token: (init.headers as Record<string, string>).authorization,
+        token: headers.get("authorization"),
+        userAgent: headers.get("user-agent"),
         body: JSON.parse(String(init.body)),
         signal: init.signal,
       });
@@ -171,6 +179,8 @@ describe("a libsql client", () => {
 
     expect(requests[0]?.url).toBe("https://app-org.turso.io/v2/pipeline");
     expect(requests[0]?.token).toBe("Bearer t0ken");
+    // Through loggedFetch, so --verbose, Ctrl-C, and the User-Agent apply.
+    expect(requests[0]?.userAgent).toMatch(/^Clerk-CLI\//);
     expect(requests[0]?.signal).toBeInstanceOf(AbortSignal);
     expect(requests.at(-1)?.body.requests[0].stmt.args).toEqual([{ type: "text", value: "u1" }]);
     expect(rows).toEqual([
