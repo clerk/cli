@@ -31,6 +31,11 @@ import { ensureFirstApplication } from "../../lib/first-application.ts";
 interface LoginOptions {
   showNextSteps?: boolean;
   yes?: boolean;
+  /**
+   * `false` skips claiming the folder's keyless app after sign-in. `clerk link` passes it
+   * because it claims right after signing in and must see the claim's result itself.
+   */
+  claim?: boolean;
 }
 
 async function getExistingSession(): Promise<UserInfo | null> {
@@ -204,7 +209,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 }
 
 async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
-  const { showNextSteps = true, yes } = options;
+  const { showNextSteps = true, yes, claim = true } = options;
   intro("Signing in");
   setTelemetryStage("session_check");
   const existingSession = await withSpinner("Checking session...", async () =>
@@ -214,7 +219,9 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   if (existingSession && !isHuman()) {
     setTelemetryStage("done");
     log.success(`Logged in as ${existingSession.email}`);
-    const claimResult = await handleAutoclaim(process.cwd());
+    const claimResult: AutoclaimResult = claim
+      ? await handleAutoclaim(process.cwd())
+      : { status: "not_keyless" };
     if (showNextSteps) {
       await outro(await loginNextSteps(claimResult));
     } else {
@@ -263,7 +270,9 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   setTelemetryStage("done");
   log.success(`Logged in as ${userInfo.email}`);
 
-  const claimResult = await handleAutoclaim(process.cwd());
+  const claimResult: AutoclaimResult = claim
+    ? await handleAutoclaim(process.cwd())
+    : { status: "not_keyless" };
 
   if (showNextSteps) {
     await outro(await loginNextSteps(claimResult));

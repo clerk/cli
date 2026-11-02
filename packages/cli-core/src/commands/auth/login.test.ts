@@ -731,6 +731,26 @@ describe("login", () => {
     expect(process.exitCode).toBe(exitCodeBefore);
   });
 
+  test("claim: false signs in without claiming, for clerk link to claim itself", async () => {
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+
+    await runLogin({ showNextSteps: false, claim: false });
+
+    expect(mockAttemptAutoclaim).not.toHaveBeenCalled();
+    expect(captured.err).not.toContain("Claimed and linked application");
+  });
+
+  test("claim: false also skips the claim when an agent reuses a session", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+
+    await runLogin({ claim: false });
+
+    expect(mockAttemptAutoclaim).not.toHaveBeenCalled();
+  });
+
   test("links to the development instance even when production is listed first", async () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();

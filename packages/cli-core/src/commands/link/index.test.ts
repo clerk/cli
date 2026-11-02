@@ -1,4 +1,8 @@
-import { test, expect, describe, afterEach, mock, spyOn } from "bun:test";
+import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Command } from "@commander-js/extra-typings";
 import {
   useCaptureLog,
   configStubs,
@@ -7,7 +11,8 @@ import {
   gitStubs,
   listageStubs,
 } from "../../test/lib/stubs.ts";
-import { PlapiError } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, EXIT_CODE, PlapiError } from "../../lib/errors.ts";
+import "../../lib/help.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
 
 const mockIsAgent = mock();
@@ -37,7 +42,10 @@ mock.module("../auth/login.ts", () => ({
 const mockListApplications = mock();
 const mockFetchApplication = mock();
 const mockCreateApplication = mock();
+const mockClaimApplication = mock();
 mock.module("../../lib/plapi.ts", () => ({
+  claimApplication: (...args: unknown[]) => mockClaimApplication(...args),
+  validateKeyPrefix: () => {},
   listApplications: (...args: unknown[]) => mockListApplications(...args),
   fetchApplication: (...args: unknown[]) => mockFetchApplication(...args),
   createApplication: (...args: unknown[]) => mockCreateApplication(...args),
@@ -60,8 +68,10 @@ mock.module("../../lib/config.ts", () => ({
 const mockAutolink = mock();
 const mockFindClerkKeys = mock();
 const mockMatchKeyToApp = mock();
+const mockLinkApp = mock();
 mock.module("../../lib/autolink.ts", () => ({
   ...autolinkStubs,
+  linkApp: (...args: unknown[]) => mockLinkApp(...args),
   autolink: (...args: unknown[]) => mockAutolink(...args),
   findClerkKeys: (...args: unknown[]) => mockFindClerkKeys(...args),
   matchKeyToApp: (...args: unknown[]) => mockMatchKeyToApp(...args),
@@ -101,7 +111,12 @@ mock.module("../../lib/spinner.ts", () => ({
   withSpinner: async (_msg: string, fn: () => Promise<unknown>) => fn(),
 }));
 
-const { link, replacedLink } = await import("./index.ts");
+const mockPull = mock();
+mock.module("../env/pull.ts", () => ({
+  pull: (...args: unknown[]) => mockPull(...args),
+}));
+
+const { link, replacedLink, registerLink } = await import("./index.ts");
 
 const mockApp = {
   application_id: "app_123",
@@ -133,6 +148,9 @@ describe("link", () => {
     mockListApplications.mockReset();
     mockFetchApplication.mockReset();
     mockCreateApplication.mockReset();
+    mockClaimApplication.mockReset();
+    mockLinkApp.mockReset();
+    mockPull.mockReset();
     mockSetProfile.mockReset();
     mockResolveProfile.mockReset();
     mockResolveProfile.mockResolvedValue(undefined);
@@ -1152,6 +1170,212 @@ describe("link", () => {
 
       expect(mockFindClerkKeys).not.toHaveBeenCalled();
       expect(mockSearch).toHaveBeenCalled();
+    });
+  });
+
+  describe("claiming the app a signed-out clerk init created", () => {
+    const claimedApp = {
+      application_id: "app_claimed",
+      name: "My Init App",
+      instances: [
+        {
+          instance_id: "ins_dev",
+          environment_type: "development",
+          publishable_key: "pk_test_init",
+        },
+      ],
+    };
+    let folder = "";
+
+    beforeEach(async () => {
+      folder = await mkdtemp(join(tmpdir(), "clerk-link-claim-test-"));
+      await mkdir(join(folder, ".clerk"), { recursive: true });
+      await Bun.write(
+        join(folder, ".clerk", "keyless.json"),
+        JSON.stringify({ claimToken: "tok_init", createdAt: "2026-11-02T00:00:00.000Z" }),
+      );
+      mockLinkApp.mockResolvedValue({ path: folder, profile: {} });
+      mockPull.mockResolvedValue(undefined);
+      consoleSpy = spyOn(console, "log").mockImplementation(() => {});
+    });
+
+    afterEach(async () => {
+      await rm(folder, { recursive: true, force: true });
+    });
+
+    function breadcrumbExists() {
+      return Bun.file(join(folder, ".clerk", "keyless.json")).exists();
+    }
+
+    test("signed out: signs in without letting login claim, then claims and links once", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue(null);
+      mockLogin.mockResolvedValue({ email: "a@b.c" });
+      mockClaimApplication.mockResolvedValue(claimedApp);
+
+      await runLink({ cwd: folder, claimKeylessApp: true });
+
+      expect(mockLogin).toHaveBeenCalledWith({ showNextSteps: false, claim: false });
+      expect(mockClaimApplication).toHaveBeenCalledTimes(1);
+      expect(mockClaimApplication).toHaveBeenCalledWith("tok_init", expect.any(String));
+      expect(mockLinkApp).toHaveBeenCalledWith(claimedApp, folder);
+      expect(mockPull).toHaveBeenCalledWith({});
+      expect(captured.err).toContain("Claimed and linked application: `My Init App`");
+      expect(mockOutro).toHaveBeenLastCalledWith(NEXT_STEPS.AUTOCLAIMED);
+      expect(mockListApplications).not.toHaveBeenCalled();
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(await breadcrumbExists()).toBe(false);
+    });
+
+    test("agent mode, signed in: claims and links without prompts", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockClaimApplication.mockResolvedValue(claimedApp);
+
+      await runLink({ cwd: folder, claimKeylessApp: true });
+
+      expect(mockLogin).not.toHaveBeenCalled();
+      expect(mockLinkApp).toHaveBeenCalledWith(claimedApp, folder);
+      expect(captured.err).toContain("Claimed and linked application: `My Init App`");
+      expect(mockConfirm).not.toHaveBeenCalled();
+      expect(mockSearch).not.toHaveBeenCalled();
+      expect(mockAutolink).not.toHaveBeenCalled();
+    });
+
+    test("agent mode: a failed claim warns, keeps the token, and ends in today's usage error", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockClaimApplication.mockRejectedValue(new PlapiError(500, "Internal Server Error"));
+
+      await expect(runLink({ cwd: folder, claimKeylessApp: true })).rejects.toThrow(
+        "Cannot select an application in agent mode. Pass --app <id>",
+      );
+
+      expect(captured.err).toContain(
+        "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
+      );
+      expect(mockAutolink).toHaveBeenCalledWith(folder);
+      expect(mockLinkApp).not.toHaveBeenCalled();
+      expect(await breadcrumbExists()).toBe(true);
+    });
+
+    test("human mode: a spent token warns and falls through to the picker", async () => {
+      mockIsAgent.mockReturnValue(false);
+      mockGetToken.mockResolvedValue("token");
+      mockClaimApplication.mockRejectedValue(new PlapiError(404, "Not Found"));
+      mockListApplications.mockResolvedValue([mockApp]);
+      mockSearch.mockResolvedValue("app_123");
+
+      await runLink({ cwd: folder, claimKeylessApp: true });
+
+      expect(captured.err).toContain(
+        "Claim token is no longer valid - the application may have been claimed from the dashboard.",
+      );
+      expect(mockSearch).toHaveBeenCalled();
+      expect(mockSetProfile).toHaveBeenCalledWith(
+        expect.any(String),
+        expect.objectContaining({ appId: "app_123" }),
+      );
+      expect(mockLinkApp).not.toHaveBeenCalled();
+    });
+
+    test.each(["agent", "human"])(
+      "%s mode: a key for another app stops with key_pair_mismatch and changes nothing",
+      async (mode) => {
+        mockIsAgent.mockReturnValue(mode === "agent");
+        mockGetToken.mockResolvedValue("token");
+        mockClaimApplication.mockResolvedValue(claimedApp);
+        mockFindClerkKeys.mockResolvedValue([{ key: "pk_test_other", source: ".env" }]);
+        const envPath = join(folder, ".env");
+        const before = "CLERK_PUBLISHABLE_KEY=pk_test_other\nCLERK_SECRET_KEY=sk_test_other\n";
+        await Bun.write(envPath, before);
+
+        const error = await runLink({ cwd: folder, claimKeylessApp: true }).catch(
+          (caught: unknown) => caught,
+        );
+
+        expect(error).toBeInstanceOf(CliError);
+        expect((error as CliError).code).toBe(ERROR_CODE.KEY_PAIR_MISMATCH);
+        expect((error as CliError).exitCode).toBe(EXIT_CODE.GENERAL);
+        expect((error as CliError).message).toBe(
+          "Claimed application `My Init App` (app_claimed) into your account, but .env holds a publishable key for a different application, " +
+            "so this folder wasn't linked and its keys weren't changed. " +
+            "Run `clerk link --app <app_id>` with the application this folder should use.",
+        );
+        expect(mockLinkApp).not.toHaveBeenCalled();
+        expect(mockPull).not.toHaveBeenCalled();
+        expect(mockSetProfile).not.toHaveBeenCalled();
+        expect(await Bun.file(envPath).text()).toBe(before);
+        expect(await breadcrumbExists()).toBe(false);
+      },
+    );
+
+    test("--app skips the claim and links the named app", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockFetchApplication.mockResolvedValue(mockApp);
+
+      await runLink({ cwd: folder, app: "app_123", claimKeylessApp: true });
+
+      expect(mockClaimApplication).not.toHaveBeenCalled();
+      expect(mockFetchApplication).toHaveBeenCalledWith("app_123");
+      expect(await breadcrumbExists()).toBe(true);
+    });
+
+    test("an existing link skips the claim", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockResolveProfile.mockResolvedValue({
+        path: "/repo/.git",
+        profile: { workspaceId: "", appId: "app_existing", instances: { development: "ins_1" } },
+      });
+
+      await runLink({ cwd: folder, claimKeylessApp: true });
+
+      expect(mockClaimApplication).not.toHaveBeenCalled();
+      expect(captured.err).toContain("Already linked");
+      expect(await breadcrumbExists()).toBe(true);
+    });
+
+    test("clerk init's call (skipIfLinked, createIfMissing) never claims", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockCreateApplication.mockResolvedValue(mockApp);
+
+      await runLink({ cwd: folder, skipIfLinked: true, createIfMissing: "my-app" });
+
+      expect(mockClaimApplication).not.toHaveBeenCalled();
+      expect(mockCreateApplication).toHaveBeenCalledWith("my-app");
+      expect(await breadcrumbExists()).toBe(true);
+    });
+
+    test("clerk doctor's and clerk migrate's calls never claim", async () => {
+      mockIsAgent.mockReturnValue(true);
+
+      await expect(runLink({ cwd: folder })).rejects.toThrow(
+        "Cannot select an application in agent mode",
+      );
+      await runLink({ cwd: folder, skipIfLinked: true }).catch(() => {});
+
+      expect(mockClaimApplication).not.toHaveBeenCalled();
+      expect(await breadcrumbExists()).toBe(true);
+    });
+
+    test("the clerk link command itself claims", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockClaimApplication.mockResolvedValue(claimedApp);
+      const cwdSpy = spyOn(process, "cwd").mockReturnValue(folder);
+      const program = new Command();
+      registerLink(program as never);
+
+      try {
+        await program.parseAsync(["link"], { from: "user" });
+      } finally {
+        cwdSpy.mockRestore();
+      }
+
+      expect(mockClaimApplication).toHaveBeenCalledWith("tok_init", expect.any(String));
+      expect(mockLinkApp).toHaveBeenCalledWith(claimedApp, folder);
     });
   });
 

@@ -24,7 +24,8 @@ In agent mode (`--mode agent` or piped stdout), `clerk link` only runs through
 deterministic paths:
 
 - `clerk link --app app_abc123` links directly
-- bare `clerk link` first tries silent autolink from detected publishable keys
+- bare `clerk link` in a folder a signed-out `clerk init` set up first claims that application (see [Claiming the `clerk init` application](#claiming-the-clerk-init-application))
+- bare `clerk link` then tries silent autolink from detected publishable keys
 - if no unambiguous app can be determined, the command exits with a usage error
   telling the caller to pass `--app`
 
@@ -34,25 +35,49 @@ creates a fresh app named after the project instead of erroring. The CLI does
 not expose `createIfMissing` as a flag — it is library-only and reserved for
 `clerk init`'s flow.
 
+## Claiming the `clerk init` application
+
+A signed-out `clerk init` creates an application that no account owns and
+saves its claim token in `.clerk/keyless.json`. The picker can't list that
+application, so bare `clerk link` claims it first, when the folder has no link
+and no `--app` is given:
+
+1. Signs in if needed, without letting sign-in claim the application itself
+2. Claims the application into your account with the token, which deletes `.clerk/keyless.json`
+3. Compares the publishable keys in the env var, `.env`, and `.env.local` with the claimed application's development key
+4. If they all match (or there are none), links the folder, writes the application's keys to the env file, prints "Claimed and linked application: ...", and stops
+5. If any key belongs to a different application, links nothing, leaves the env files unchanged, and exits 1 with `key_pair_mismatch`. The message names the claimed application and the file, and tells you to run `clerk link --app <app_id>` with the application the folder should use
+6. If the claim fails (expired token, no organization, managed workspace, or a temporary error), prints the same warning `clerk auth login` prints and continues with the normal flow below
+
+Neither mode prompts during the claim. `--app` or an existing link skips it.
+Only the `clerk link` command claims: `clerk init`, `clerk migrate`, and the
+`clerk doctor` link fix call the same `link()` without the internal
+`claimKeylessApp` option, so their flows never claim.
+
+A Clerk SDK in keyless mode writes `.clerk/.tmp/keyless.json` instead, which
+`clerk link` can't claim. Claim that application in the Dashboard with
+`clerk open`, then run `clerk link` and choose it.
+
 ## Flow
 
 1. Resolves the normalized git remote URL (e.g., `github.com/org/repo`) for cross-clone matching
 2. Checks if already linked — if resolved via a remote URL from another clone, prints an auto-link notice
    - With `skipIfLinked` (used by `clerk init`), returns immediately
    - Otherwise, offers to upgrade the profile key to use the git remote if available, or asks to re-link
-3. If `skipIfLinked` and not already linked, tries silent autolink (detect keys → match → persist without prompting)
-4. Checks for authentication (calls `clerk auth login` if needed)
-5. If `--app` is provided, fetches that app directly
-6. Otherwise, fetches the list of applications and scans for publishable keys in env vars / `.env` / `.env.local`
-7. If a key matches an application, suggests it: "We found \<app\>. Link to this application?"
+3. When run as the `clerk link` command with no link and no `--app`, claims the application `clerk init` left a claim token for (see above)
+4. If `skipIfLinked` or agent mode and not already linked, tries silent autolink (detect keys → match → persist without prompting)
+5. Checks for authentication (calls `clerk auth login` if needed)
+6. If `--app` is provided, fetches that app directly
+7. Otherwise, fetches the list of applications and scans for publishable keys in env vars / `.env` / `.env.local`
+8. If a key matches an application, suggests it: "We found \<app\>. Link to this application?"
    - If the user confirms (default), links to the detected app
    - If the user declines, falls through to the interactive picker
-8. If no match (or no apps exist), presents a searchable picker (type to filter by name)
+9. If no match (or no apps exist), presents a searchable picker (type to filter by name)
    - The picker always includes a "+ Create a new application" option pinned at the top
    - Selecting it prompts for a name and creates the app via the Platform API
    - For non-interactive/CI/agent flows, create apps from the Clerk Dashboard or via the Platform API, then pass `--app <id>`
-9. Stores the profile in the config file keyed by the normalized remote URL
-10. Falls back to git-common-dir or the current directory path if no remote is configured
+10. Stores the profile in the config file keyed by the normalized remote URL
+11. Falls back to git-common-dir or the current directory path if no remote is configured
 
 ## Key Detection
 
@@ -81,8 +106,9 @@ Detected publishable keys are matched against all applications returned by
 
 ## API Endpoints
 
-| Method | Endpoint                            | Description                                      |
-| ------ | ----------------------------------- | ------------------------------------------------ |
-| `GET`  | `/v1/platform/applications`         | List all applications for the authenticated user |
-| `GET`  | `/v1/platform/applications/{appId}` | Fetch application details with instance IDs      |
-| `POST` | `/v1/platform/applications`         | Create a new application (interactive picker)    |
+| Method | Endpoint                                      | Description                                                    |
+| ------ | --------------------------------------------- | -------------------------------------------------------------- |
+| `GET`  | `/v1/platform/applications`                   | List all applications for the authenticated user               |
+| `GET`  | `/v1/platform/applications/{appId}`           | Fetch application details with instance IDs                    |
+| `POST` | `/v1/platform/applications`                   | Create a new application (interactive picker)                  |
+| `POST` | `/v1/platform/accountless_applications/claim` | Claim the application `clerk init` created, by its claim token |

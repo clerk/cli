@@ -18,16 +18,16 @@ Before signing in, the command prints a banner: the Clerk logo beside a link to 
 6. Exchanges the code for an access token
 7. Stores the token and user info in local config
 8. If this was a re-authentication over an existing session, revokes the previous grant. The outgoing session is read once the authorization code arrives and just before the token exchange replaces it, and revoked only after the replacement is stored — so an abandoned browser flow leaves the original session intact, and a concurrent refresh has the smallest possible window to rotate the token out from under the revocation. A failure here warns rather than failing the login
-9. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, links it to the project, and pulls environment variables
+9. **Autoclaim**: if `.clerk/keyless.json` exists in the current directory, claims the temporary application, links it to the project, and pulls environment variables. `clerk link` signs in through the same `login()` with claiming turned off (`claim: false`) and then claims the application itself, so it can act on the result
 
 #### Accountless autoclaim breadcrumb lifecycle
 
-When `clerk init` runs in accountless mode it writes `.clerk/keyless.json` containing a claim token. On the next `clerk auth login`:
+When `clerk init` runs in accountless mode it writes `.clerk/keyless.json` containing a claim token. On the next `clerk auth login` (or `clerk link`, which runs the same claim):
 
 - **404** — claim token expired or application already deleted; breadcrumb is cleared and a warning is shown.
 - **403** — authenticated account has no active organization; breadcrumb is cleared and a warning is shown.
 - **Any other error** — treated as transient; breadcrumb is preserved so the next login retries.
-- **Publishable key for another application** — the claim succeeds, but a publishable key for a different application is in the framework's publishable key variable (for example `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`), set in the environment, `.env`, or `.env.local`. The folder is not linked and its env files are not changed, because pulling would pair that key with the claimed app's secret key. The breadcrumb is deleted, since the token is spent. `clerk auth login` prints a warning naming the claimed app and the file, and exits 0. To finish, run `clerk link --app <app_id>` with the application the folder should use.
+- **Publishable key for another application** — the claim succeeds, but a publishable key for a different application is in the framework's publishable key variable (for example `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`), set in the environment, `.env`, or `.env.local`. The folder is not linked and its env files are not changed, because pulling would pair that key with the claimed app's secret key. The breadcrumb is deleted, since the token is spent. `clerk auth login` prints a warning naming the claimed app and the file, and exits 0. `clerk link` prints the same text as a `key_pair_mismatch` error and exits 1. To finish, run `clerk link --app <app_id>` with the application the folder should use.
 - **Success** — application is claimed and linked, `.env` is updated via `clerk env pull`, breadcrumb is deleted. The command prints the Dashboard URL of the claimed app's development instance, since this is the first time the app has a home in an account.
 
 #### API Endpoints

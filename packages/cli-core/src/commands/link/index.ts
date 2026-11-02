@@ -14,6 +14,8 @@ import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
+import { readKeylessBreadcrumb } from "../../lib/keyless.ts";
+import { attemptAutoclaim, claimWarning, keysMismatchMessage } from "../../lib/autoclaim.ts";
 
 interface LinkOptions {
   app?: string;
@@ -28,6 +30,12 @@ interface LinkOptions {
   createIfMissing?: string;
   /** Callers that continue setup themselves (native `clerk init`) skip link's own next steps. */
   showNextSteps?: boolean;
+  /**
+   * Claim the application a signed-out `clerk init` left a claim token for, before listing
+   * apps. Set only by the `clerk link` command: `clerk init`, `clerk migrate` and the
+   * `clerk doctor` fix also call `link()`, and their flows must not claim.
+   */
+  claimKeylessApp?: boolean;
 }
 
 /**
@@ -69,6 +77,13 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     return;
   }
 
+  let introShown = false;
+  if (options.claimKeylessApp && !existing && !options.app) {
+    const outcome = await claimKeylessApp(cwd, options);
+    if (outcome === "claimed") return;
+    introShown = outcome === "not_claimed";
+  }
+
   if (!existing && !options.app && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
     if (autolinked) return;
@@ -80,7 +95,7 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     );
   }
 
-  intro("Linking project");
+  if (!introShown) intro("Linking project");
 
   if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
@@ -132,7 +147,41 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   await outro(options.showNextSteps === false ? undefined : NEXT_STEPS.LINK);
 }
 
-async function ensureAuth() {
+/**
+ * `no_breadcrumb` when there is nothing to claim, `not_claimed` (after printing why) when the
+ * claim didn't link the folder and `link()` should carry on. Throws when the folder's keys
+ * belong to another application.
+ */
+async function claimKeylessApp(
+  cwd: string,
+  options: LinkOptions,
+): Promise<"claimed" | "not_claimed" | "no_breadcrumb"> {
+  const breadcrumb = await readKeylessBreadcrumb(cwd);
+  if (!breadcrumb?.claimToken) return "no_breadcrumb";
+
+  intro("Linking project");
+  // `login()` would claim on its own and swallow a key mismatch as a warning.
+  await ensureAuth({ claim: false });
+  const result = await attemptAutoclaim(cwd);
+
+  if (result.status === "keys_mismatch") {
+    throw new CliError(keysMismatchMessage(result), { code: ERROR_CODE.KEY_PAIR_MISMATCH });
+  }
+
+  if (result.status === "claimed") {
+    const label = result.app.name || result.app.application_id;
+    log.success(`Claimed and linked application: \`${label}\``);
+    const steps = result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
+    await outro(options.showNextSteps === false ? undefined : steps);
+    return "claimed";
+  }
+
+  const warning = claimWarning(result);
+  if (warning) log.warn(warning);
+  return "not_claimed";
+}
+
+async function ensureAuth({ claim }: { claim?: boolean } = {}) {
   // CLERK_PLATFORM_API_KEY is a valid non-interactive auth mechanism.
   // The PLAPI fetch helpers use it directly for API calls, so no OAuth
   // token is needed when this key is present.
@@ -140,7 +189,7 @@ async function ensureAuth() {
   const token = await getToken();
   if (!token) {
     log.info("Not logged in. Authenticating first...");
-    await login({ showNextSteps: false });
+    await login({ showNextSteps: false, claim });
   }
 }
 
@@ -231,5 +280,5 @@ export function registerLink(program: Program): void {
       { command: "clerk link", description: "Pick an app interactively" },
       { command: "clerk link --app app_abc123", description: "Link directly by application ID" },
     ])
-    .action(link);
+    .action(async (options: LinkOptions) => link({ ...options, claimKeylessApp: true }));
 }
