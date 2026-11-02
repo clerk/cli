@@ -12,6 +12,9 @@ const BREADCRUMB_DIR = ".clerk";
 const BREADCRUMB_FILE = "keyless.json";
 const CREATE_TIMEOUT_MS = 15_000;
 
+/** Where a Clerk SDK in keyless mode writes its own app's claim URL and keys. */
+export const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
+
 interface AccountlessAppResponse {
   publishable_key: string;
   secret_key: string;

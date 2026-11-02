@@ -63,6 +63,18 @@ The handoff state is one of:
 
 Agent-mode `clerk deploy` without `--domain` is informational and exits 0 for linked projects. With `--domain` it exits 0 once the instance is created or resumed and the report is printed, and non-zero when it refuses the domain (`production_instance_exists`, `deploy_domain_unchecked`), when Clerk refuses the create, or when the instance's status can't be read afterwards (`deploy_instance_unresolved`, or Clerk's own code). Either way, the pass/fail gate for the deploy itself is `clerk deploy status`.
 
+### An unlinked folder
+
+`clerk deploy` and `clerk deploy status` stop with `not_linked` in a folder with no link. The message says which kind of application the folder runs on, because only one kind is listed by `clerk link`:
+
+| Folder holds                                                                   | Message tells you to                                                                                                               |
+| ------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `.clerk/keyless.json` with a claim token, written by a signed-out `clerk init` | Run `clerk link`, which claims the application into your account and links the folder, then rerun the command.                     |
+| `.clerk/.tmp/keyless.json`, written by a Clerk SDK in keyless mode             | Have a person run `clerk open` to claim the application in the Dashboard, then run `clerk link`, choose it, and rerun the command. |
+| Neither file                                                                   | Run `clerk link`, then rerun the command.                                                                                          |
+
+The error code is `not_linked` in all three cases. Only the message text differs.
+
 ### `clerk deploy status`
 
 `clerk deploy status` is the read-only verification command for agents and automation. It resolves the same live deploy state, triggers a DNS check for active production domains, and reports DNS, SSL, email DNS, and OAuth completeness. Human mode waits with the shared exponential-backoff poll loop; agent mode performs one quick DNS check and returns the resulting status immediately by default. Pass `--wait` in agent mode to wait with the same poll loop: one immediate status read, then up to 5 retries with exponential backoff.

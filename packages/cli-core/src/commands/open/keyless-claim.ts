@@ -9,7 +9,7 @@
  */
 
 import { join } from "node:path";
-import { readKeylessBreadcrumb } from "../../lib/keyless.ts";
+import { readKeylessBreadcrumb, SDK_KEYLESS_FILE } from "../../lib/keyless.ts";
 import { getDashboardUrl } from "../../lib/environment.ts";
 import { bapiRequest } from "../../lib/bapi.ts";
 import { log } from "../../lib/log.ts";
@@ -25,8 +25,6 @@ export interface KeylessInstanceInfo {
   instanceId: string | null;
   environmentType: string | null;
 }
-
-const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
 
 /**
  * The SDKs write their own full `claimUrl` (already pointed at the right
