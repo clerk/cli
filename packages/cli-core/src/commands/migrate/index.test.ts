@@ -360,4 +360,17 @@ describe("what the migrate hooks record for telemetry", () => {
     expect(payload.migrate_source).toBe("supabase");
     expect(payload.stage).toBe("migrate_export_read");
   });
+
+  test("an export with a bad --output records no source or stage", async () => {
+    const payload = await payloadOf([
+      "migrate",
+      "export",
+      "supabase",
+      "--db-url",
+      missingDb,
+      "--output",
+      "users.csv",
+    ]);
+    expect(payload).toMatchObject({ migrate_source: null, stage: null });
+  });
 });

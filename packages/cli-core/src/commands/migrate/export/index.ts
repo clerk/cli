@@ -123,16 +123,16 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
   // extension: an envelope written to users.ndjson could not be imported by
   // run ID. Checked before anything is read.
   exportCommand.hook("preAction", (_thisCommand, actionCommand) => {
-    // The bare picker records both once a platform is chosen.
-    if (actionCommand !== exportCommand) {
-      recordMigrateSource(actionCommand.name());
-      setTelemetryStage("migrate_export_read");
-    }
     const { output } = actionCommand.opts() as { output?: unknown };
     if (typeof output === "string" && !output.toLowerCase().endsWith(".json")) {
       throwUsageError(
         `--output must end in .json: the export is one JSON document, and \`clerk migrate import\` reads a file by its extension. Got ${output}.`,
       );
+    }
+    // The bare picker records both once a platform is chosen.
+    if (actionCommand !== exportCommand) {
+      recordMigrateSource(actionCommand.name());
+      setTelemetryStage("migrate_export_read");
     }
   });
 
