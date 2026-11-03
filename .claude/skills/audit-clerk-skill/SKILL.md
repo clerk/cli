@@ -11,8 +11,8 @@ metadata:
 
 # Audit the clerk-cli Skill
 
-The audit instructions are maintained in [clerk/skills](https://github.com/clerk/skills/blob/main/.agents/skills/audit-clerk-skill/SKILL.md). Read that entire skill before starting; do not use this pointer as a substitute for its workflow.
+Find a local `clerk/skills` checkout containing both `skills/clerk-cli/SKILL.md` and `.agents/skills/audit-clerk-skill/SKILL.md`. If this CLI checkout is a worktree, use the parent of `git rev-parse --path-format=absolute --git-common-dir` to find the main CLI checkout, then look for a skills checkout beside it. If none exists and network access is available, clone [clerk/skills](https://github.com/clerk/skills.git). A temporary clone is fine for a read-only audit; for `--apply`, use a checkout you will keep.
 
-Find a local `clerk/skills` checkout containing `skills/clerk-cli/SKILL.md`; check sibling directories of this CLI checkout first. If none exists and network access is available, clone `https://github.com/clerk/skills.git` into a temporary directory. Run the canonical audit from that checkout, passing this CLI checkout's path with `--source`. Do not look for the target skill in this repository. If you cannot access `clerk/skills`, stop and ask for a checkout instead of relying on a stale copy.
+Read the entire `.agents/skills/audit-clerk-skill/SKILL.md` from the **resolved checkout**, not GitHub `main`, then run that audit from the skills checkout with this CLI checkout's path as `--source`. The [GitHub copy](https://github.com/clerk/skills/blob/main/.agents/skills/audit-clerk-skill/SKILL.md) is for reference only. Do not look for the target skill in this repository. If you cannot access `clerk/skills`, stop and ask for a checkout.
 
-If using `--apply`, keep the skills checkout until its edits are committed or handed off.
+For `--apply`, create a new branch in the skills checkout before making edits. Keep that checkout and give the user its path and branch; do not delete it while it contains work that has not been committed or handed off.
