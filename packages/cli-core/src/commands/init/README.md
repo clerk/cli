@@ -285,11 +285,7 @@ After scaffolding (and after env keys are pulled or accountless instructions are
 - **Human mode**: prompts `Install agent skills? (...)` defaulting to yes. Pass `--no-skills` to suppress the prompt entirely, or `-y/--yes` to accept it without confirmation. When more than one runner is available, a second prompt picks which one to use (the project's package manager wins by default).
 - **Agent mode**: skills are installed non-interactively with `-y -g` flags (no prompt shown). Pass `--no-skills` to skip entirely.
 
-A fixed default set is installed from [`clerk/skills`](https://github.com/clerk/skills), covering the `cli/`, `core/`, and `features/` directories:
-
-- **CLI**: `clerk-cli`
-- **Core**: `clerk-setup`, `clerk-custom-ui`, `clerk-backend-api`
-- **Features**: `clerk-orgs`, `clerk-testing`, `clerk-webhooks`
+A fixed default set is installed from [`clerk/skills`](https://github.com/clerk/skills): `clerk-cli`, `clerk-setup`, `clerk-custom-ui`, `clerk-backend-api`, `clerk-orgs`, `clerk-testing`, and `clerk-webhooks`.
 
 The detected framework dependency adds one more skill on top:
 
