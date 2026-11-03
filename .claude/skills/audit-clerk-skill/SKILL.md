@@ -13,10 +13,10 @@ metadata:
 
 Cross-check the `clerk-cli` skill against the actual CLI source in `packages/cli-core/` and propose precise edits wherever they have drifted. The binary is the source of truth; the skill is documentation that must track it.
 
-**The skill lives in another repo.** #315 removed the bundled copy, so it is now `skills/core/clerk-cli/` in [clerk/skills](https://github.com/clerk/skills), versioned independently of the CLI. This audit reads the CLI here and proposes edits there; they land as a PR against clerk/skills. Set `$SKILL_ROOT` to a local clone before starting, and stop if there is not one:
+**The skill lives in another repo.** #315 removed the bundled copy, so it is now `skills/clerk-cli/` in [clerk/skills](https://github.com/clerk/skills), versioned independently of the CLI. This audit reads the CLI here and proposes edits there; they land as a PR against clerk/skills. Set `$SKILL_ROOT` to a local clone before starting, and stop if there is not one:
 
 ```sh
-SKILL_ROOT=../skills/skills/core/clerk-cli   # adjust to the checkout
+SKILL_ROOT=../skills/skills/clerk-cli   # adjust to the checkout
 ls "$SKILL_ROOT/SKILL.md" || echo "clone clerk/skills first"
 ```
 
