@@ -128,21 +128,20 @@ export async function readSdkClaimUrl(cwd: string): Promise<string | undefined> 
     const claimUrl = typeof parsed.claimUrl === "string" ? parsed.claimUrl : undefined;
     if (!claimUrl) return undefined;
 
-    // Written by another process, so untrusted input: anything but well-formed
-    // https is dropped rather than handed to the browser launcher, which on
-    // Windows goes through `cmd /c start "" "<url>"`, where a `file:`/
-    // `javascript:` scheme or an embedded quote stops being just a URL.
-    let isHttps = false;
+    // Written by another process, so untrusted input. The browser launcher on Windows runs
+    // `cmd /c start "" "<url>"`, so only https goes through, and only as the parsed URL's
+    // `href`, which percent-encodes quotes and spaces: no raw `"` can end the argument.
+    let url: URL | undefined;
     try {
-      isHttps = new URL(claimUrl).protocol === "https:";
+      url = new URL(claimUrl);
     } catch {
       // fall through: not a URL at all
     }
-    if (!isHttps) {
+    if (url?.protocol !== "https:") {
       log.debug(`keyless: ignoring non-https claimUrl in ${SDK_KEYLESS_FILE.join("/")}`);
       return undefined;
     }
-    return claimUrl;
+    return url.href;
   } catch {
     // A half-written file during an SDK refresh isn't worth failing over.
     return undefined;
