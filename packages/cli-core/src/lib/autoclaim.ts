@@ -25,10 +25,9 @@ type Claimed = {
 /** The claim can never succeed with this token; the breadcrumb is cleared. */
 type Terminal = { status: "not_found" | "no_organization" };
 /**
- * The token's workspace is provisioned by an integration (Vercel Marketplace,
- * Stripe), so nothing can be claimed into it. The breadcrumb is kept: the user
- * switches to a workspace they own and the next `clerk auth login` or `clerk link` retries.
- * `longMessage` is the API's `long_message`, which names the provider.
+ * The workspace is provisioned by an integration (Vercel Marketplace, Stripe), so nothing can be
+ * claimed into it; the breadcrumb is kept for a retry from another workspace. `longMessage` is
+ * the API's `long_message`, which names the provider.
  */
 type ManagedWorkspace = {
   status: "managed_workspace";
@@ -38,9 +37,8 @@ type ManagedWorkspace = {
 type Failed = { status: "failed"; error: Error };
 type Skipped = { status: "not_keyless" };
 /**
- * The claim succeeded, but a publishable key in the folder belongs to another application,
- * so linking and pulling would pair that key with the claimed app's secret key. Nothing was
- * linked or written. `sources` names where each mismatching key was found.
+ * The claim succeeded but nothing was linked or written: linking and pulling would pair another
+ * app's publishable key, found in each of `sources`, with the claimed app's secret key.
  */
 export type KeysMismatch = { status: "keys_mismatch"; app: Application; sources: string[] };
 
@@ -63,9 +61,8 @@ const TERMINAL_BY_STATUS: Record<number, Terminal["status"]> = {
 };
 
 /**
- * Orchestrates the claim of a keyless app. Never throws. `checkKeys` compares the folder's
- * publishable keys with the claimed app's before linking; `clerk init`, `clerk migrate` and
- * the `clerk doctor` fix sign in without it, so they keep linking whatever they claim.
+ * Claims, links and pulls the keys of the app `clerk init` left a token for; never throws.
+ * `checkKeys` refuses to link when the folder holds another app's publishable key.
  */
 export async function attemptAutoclaim(
   cwd: string,
@@ -98,12 +95,10 @@ export async function attemptAutoclaim(
 }
 
 /**
- * Where the folder holds a publishable key for another app, or the first env file that
- * couldn't be read. Covers the exported variable and the development env files
- * (`ENV_FILE_CANDIDATES`): `clerk env pull` writes `.env.development.local`, `.env.local` or
- * `.env`, and `.env.development` outranks `.env` in development, so a key there would override
- * the pulled one. Each file is read on its own: any mismatch refuses, and an unreadable file
- * only matters when no source mismatches, because it could hide one.
+ * Where the folder holds a publishable key for another app, or the first env file that couldn't
+ * be read: an unreadable file matters only when nothing mismatches, because it could hide a key.
+ * `.env.development` is checked although `clerk env pull` never writes it, because it outranks
+ * `.env` in development.
  */
 async function checkLocalKeys(
   app: Application,
@@ -179,9 +174,15 @@ async function tryLinkApp(
   app: Application,
   cwd: string,
 ): Promise<{ linked: boolean; linkError?: string }> {
+  const noDevInstance = { linked: false, linkError: "the application has no development instance" };
+  // Deserialized API JSON: without this check, a missing `instances` array reaches `linkApp`
+  // and its raw TypeError becomes the reason `clerk auth login` prints.
+  if (!app.instances?.some((instance) => instance.environment_type === "development")) {
+    return noDevInstance;
+  }
   try {
     const linked = await linkApp(app, cwd);
-    if (!linked) return { linked: false, linkError: "the application has no development instance" };
+    if (!linked) return noDevInstance;
     return { linked: true };
   } catch (error) {
     return { linked: false, linkError: errorMessage(error) };
@@ -230,12 +231,10 @@ export const CLAIM_OTHER_APP_HINT =
   "or run `clerk link --app <app_id>` to link a different application.";
 
 /**
- * Why a claim failed and kept its token. A 5xx, a 429 or a network failure may pass on a
- * retry. An `AuthError` (a session that can't be refreshed) or a 401 means the credentials
- * were rejected, so `--app` would fail the same way; the Platform API client prefers
- * `CLERK_PLATFORM_API_KEY`, so with it set a 401 rejects the key, not the saved sign-in. Any
- * other `CliError` (e.g. `invalid_key_format`) is the CLI's own check and repeats on every
- * run, and its message already says what to fix. Any other 4xx repeats on every run.
+ * Why a claim failed and kept its token: only `temporary` (a 5xx, a 429 or a network failure)
+ * may pass on a retry, and the `sign_in` and `api_key` advice omits `--app` because it would fail
+ * with the same rejected credentials. With `CLERK_PLATFORM_API_KEY` set, a 401 rejects that key,
+ * because the Platform API client uses it before any saved sign-in.
  */
 export type ClaimFailureKind = "temporary" | "sign_in" | "api_key" | "cli" | "rejected";
 

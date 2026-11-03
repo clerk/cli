@@ -43,9 +43,8 @@ interface LoginOptions {
    */
   claim?: boolean;
   /**
-   * Compare the folder's publishable keys with the claimed app's before linking it. Only the
-   * `clerk auth login` command sets this; `clerk init`, `clerk migrate` and `clerk doctor` sign in
-   * through `login()` and must keep linking what they claim.
+   * Refuse to link a claimed app when the folder holds another app's publishable key. Only the
+   * `clerk auth login` command sets it; `clerk init`, `clerk migrate` and `clerk doctor` must not.
    */
   checkClaimKeys?: boolean;
 }
@@ -325,11 +324,8 @@ async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[
     return kind === "sign_in" ? NEXT_STEPS.AUTOCLAIM_SIGN_IN : NEXT_STEPS.AUTOCLAIM_REJECTED;
   }
   if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
-  if (
-    result.status === "not_found" ||
-    result.status === "no_organization" ||
-    result.status === "keys_mismatch"
-  ) {
+  if (result.status === "keys_mismatch") return NEXT_STEPS.AUTOCLAIM_KEYS_MISMATCH;
+  if (result.status === "not_found" || result.status === "no_organization") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }
 

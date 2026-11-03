@@ -131,6 +131,8 @@ describe("login", () => {
     // The paste-back prompt only appears on an interactive stdin. Pin it off
     // so the suite doesn't change behaviour when run from a terminal.
     process.stdin.isTTY = false;
+    // Also set after each test; here too, so the first test doesn't run without it.
+    mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
   });
 
   afterEach(() => {
@@ -737,7 +739,12 @@ describe("login", () => {
         "Run `clerk link --app <app_id>` with the application this folder should use.",
     );
     expect(captured.err).not.toContain("Claimed and linked application");
-    expect(captured.err).toContain("Run `clerk link` to connect your Clerk application");
+    // The next step repeats the warning's advice: if a person ran a bare `clerk link`, picked the
+    // claimed app in the picker and then ran `clerk env pull`, its keys would overwrite the other app's.
+    const advice = "Run `clerk link --app <app_id>` with the application this folder should use";
+    expect(captured.err.split(advice).length - 1).toBe(2);
+    expect(captured.err).not.toContain("Run `clerk link` to connect your Clerk application");
+    expect(captured.err).not.toContain("clerk env pull");
     expect(process.exitCode).toBe(exitCodeBefore);
   });
 

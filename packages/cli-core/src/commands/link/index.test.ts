@@ -1393,6 +1393,26 @@ describe("link", () => {
       expect(mockSetProfile).not.toHaveBeenCalled();
     });
 
+    test("a claim response with no instances ends in the no-development-instance error", async () => {
+      mockIsAgent.mockReturnValue(true);
+      mockGetToken.mockResolvedValue("token");
+      mockClaimApplication.mockResolvedValue({
+        application_id: "app_claimed",
+        name: "My Init App",
+      });
+      // The real `linkApp` throws a TypeError for an app without `instances`.
+      mockLinkApp.mockRejectedValue(new TypeError("linkApp: no instances"));
+
+      const error = await runLink({ cwd: folder, claimKeylessApp: true }).catch(
+        (caught: unknown) => caught,
+      );
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.INSTANCE_NOT_FOUND);
+      expect((error as CliError).message).toBe("Application has no development instance");
+      expect(mockSetProfile).not.toHaveBeenCalled();
+    });
+
     test("a failed link write is retried by linking the claimed app directly", async () => {
       mockIsAgent.mockReturnValue(true);
       mockGetToken.mockResolvedValue("token");

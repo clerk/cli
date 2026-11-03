@@ -247,6 +247,24 @@ describe("attemptAutoclaim", () => {
     expect(pullSpy).not.toHaveBeenCalled();
   });
 
+  test("a claim response with no instances reports a readable reason, the way clerk auth login claims", async () => {
+    withBreadcrumb();
+    const noInstances = { application_id: "app_claimed", name: "My Claimed App" };
+    stubFetch(async () => new Response(JSON.stringify(noInstances), { status: 200 }));
+    // The real `linkApp`, whose failure text `clerk auth login` prints after "This folder wasn't linked:".
+    linkAppSpy.mockRestore();
+
+    const result = await run({ checkKeys: false });
+
+    expect(result).toMatchObject({
+      status: "claimed",
+      linked: false,
+      linkError: "the application has no development instance",
+      envPulled: false,
+    });
+    expect(pullSpy).not.toHaveBeenCalled();
+  });
+
   test("a failed link write is reported as not linked with its reason", async () => {
     withBreadcrumb();
     stubFetch(async () => new Response(JSON.stringify(MOCK_APP), { status: 200 }));

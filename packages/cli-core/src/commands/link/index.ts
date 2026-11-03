@@ -46,11 +46,8 @@ interface LinkOptions {
   /** Callers that continue setup themselves (native `clerk init`) skip link's own next steps. */
   showNextSteps?: boolean;
   /**
-   * Claim the application a signed-out `clerk init` left a claim token for, before listing
-   * apps. Set only by the `clerk link` command; `clerk init`, `clerk migrate` and the
-   * `clerk doctor` fix call `link()` without it. Signing in through `login()` still claims,
-   * without the key check, on every path that doesn't run this step: other callers, and
-   * `clerk link --app` or a relink when signed out.
+   * Claim the app a signed-out `clerk init` left a token for before listing apps; set only by
+   * the `clerk link` command. Without it, signing in through `login()` still claims, unchecked.
    */
   claimKeylessApp?: boolean;
 }
@@ -145,8 +142,10 @@ export async function link(options: LinkOptions = {}): Promise<void> {
           )
         : await resolveApp(cwd, displayPath, !existing));
 
-  const devInstance = app.instances.find((i) => i.environment_type === "development");
-  const prodInstance = app.instances.find((i) => i.environment_type === "production");
+  // A claim response is untrusted JSON and may carry no instances at all.
+  const instances = app.instances ?? [];
+  const devInstance = instances.find((i) => i.environment_type === "development");
+  const prodInstance = instances.find((i) => i.environment_type === "production");
 
   if (!devInstance) {
     throw new CliError("Application has no development instance", {
@@ -248,7 +247,7 @@ async function ensureAuth({ claim }: { claim?: boolean } = {}) {
   const token = await getToken();
   if (!token) {
     log.info("Not logged in. Authenticating first...");
-    await login(claim === false ? { showNextSteps: false, claim } : { showNextSteps: false });
+    await login({ showNextSteps: false, claim });
   }
 }
 

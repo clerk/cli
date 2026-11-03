@@ -25,6 +25,10 @@ export const NEXT_STEPS = {
     "Run `clerk link` to connect your Clerk application",
     "Run `clerk env pull` to fetch your environment variables",
   ],
+  /** No `clerk env pull`: the folder isn't linked until `clerk link --app` picks the application. */
+  AUTOCLAIM_KEYS_MISMATCH: [
+    "Run `clerk link --app <app_id>` with the application this folder should use",
+  ],
   AUTOCLAIM_RETRY: [
     "Run `clerk auth login` again to retry auto-claim",
     "Run `clerk link --app <app_id>` to link a different application",
@@ -77,8 +81,8 @@ export const NEXT_STEPS = {
   SECURITY_FIX_REMAINING: ["Run `clerk security audit` to see what is still open"],
   LOGOUT: ["Run `clerk auth login` to sign in again"],
   WHOAMI: ["Run `clerk link` to connect this directory to an application"],
-  // An unclaimed keyless app can't be `clerk link`ed — nothing in any account
-  // to link to. `clerk open` finds the claim link whichever file minted the app.
+  // `clerk link` claims only an app a signed-out `clerk init` created; an SDK-created app needs
+  // its Dashboard claim page, which `clerk open` finds whichever file minted the app.
   WHOAMI_KEYLESS: [
     "Run `clerk open` to open this application's claim link",
     "Run `clerk auth login` to connect your Clerk account",
