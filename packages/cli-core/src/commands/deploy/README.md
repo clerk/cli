@@ -65,7 +65,7 @@ Agent-mode `clerk deploy` without `--domain` is informational and exits 0 for li
 
 ### An unlinked folder
 
-`clerk deploy` and `clerk deploy status` stop with `not_linked` in a folder with no link. The message says which kind of application the folder runs on, because only one kind is listed by `clerk link`:
+`clerk deploy` and `clerk deploy status` stop with `not_linked` in a folder with no link. The message says which kind of application the folder runs on, because `clerk link` can claim only the kind `clerk init` created:
 
 | Folder holds                                                                                  | Message tells you to                                                                                                                                                                                                                                                   |
 | --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

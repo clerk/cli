@@ -134,7 +134,10 @@ export const ERROR_CODE = {
    * Clerk could not return its domain's status yet (a 404 on the domain).
    */
   DEPLOY_INSTANCE_UNRESOLVED: "deploy_instance_unresolved",
-  /** Local publishable key and secret key address different applications. */
+  /**
+   * Local publishable key and secret key address different applications (`clerk env pull`), or the
+   * folder's publishable key belongs to an app other than the one `clerk link` just claimed.
+   */
   KEY_PAIR_MISMATCH: "key_pair_mismatch",
   /** BAPI returned a response the CLI could not use. */
   BAPI_UNEXPECTED_RESPONSE: "bapi_unexpected_response",
