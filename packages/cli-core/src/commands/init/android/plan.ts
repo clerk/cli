@@ -118,7 +118,9 @@ export function planAndroidSetup(
   // Application class.
   const initCall = `com.clerk.api.Clerk.initialize(this, publishableKey = getString(${selection.namespace}.R.string.${KEY_RESOURCE}))`;
   let initializes = application.initialized !== "none";
-  let registerClass = false;
+  // A class that already initializes Clerk may still be missing from the manifest (a generated
+  // file whose registration was reverted); registering it is what makes it run.
+  let registerClass = application.initialized !== "none" && !application.registered;
   if (application.initialized === "managed")
     actions.push({
       type: "skip",

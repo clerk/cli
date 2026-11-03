@@ -88,6 +88,24 @@ describe("Android setup plan", () => {
     expect(rerun.initializes).toBe(true);
   });
 
+  test("registers a generated Application that initializes Clerk but left the manifest", async () => {
+    const { root, plan: first } = await plan();
+    const path = "app/src/main/java/com/example/myapp/ClerkApplication.kt";
+    await Bun.write(join(root, path), content(first.actions, path)!);
+    const inspection = await inspectAndroidProject({
+      root,
+      sdk: "core",
+      minimumVersion: CLERK_ANDROID_MINIMUM_VERSION,
+    });
+    expect(inspection.application).toMatchObject({ initialized: "managed", registered: false });
+    const result = planAndroidSetup(inspection, FIXTURE_KEY);
+    expect(result.actions.find((action) => action.path === path)).toMatchObject({ type: "skip" });
+    expect(content(result.actions, "app/src/main/AndroidManifest.xml")).toContain(
+      '<application android:name=".ClerkApplication"',
+    );
+    expect(result.initializes).toBe(true);
+  });
+
   test("edits a custom Application after super.onCreate() and keeps its startup work", async () => {
     const { plan: result } = await plan({ application: "custom", internetPermission: true });
     const source = content(result.actions, "app/src/main/java/com/example/myapp/CustomApp.kt")!;
@@ -251,9 +269,11 @@ describe("Android setup plan", () => {
     });
   });
 
-  test("refuses anything but a development key", async () => {
-    const { inspection } = await plan();
-    for (const bad of ["sk_test_secret", "pk_live_prod", "pk_test_<bad>"])
+  test.each(["sk_test_secret", "pk_live_prod", "pk_test_<bad>"])(
+    "refuses %s as the publishable key",
+    async (bad) => {
+      const { inspection } = await plan();
       expect(() => planAndroidSetup(inspection, bad)).toThrow("development publishable key");
-  });
+    },
+  );
 });

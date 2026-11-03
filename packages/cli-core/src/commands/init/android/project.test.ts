@@ -353,6 +353,16 @@ describe("Android project inspection", () => {
     await expect(inspect(root)).rejects.toThrow("doesn't register it");
   });
 
+  test("refuses a foreign unregistered class with the generated name even when it initializes Clerk", async () => {
+    const root = await fixture();
+    await mkdir(join(root, "app/src/main/java/com/example/myapp"), { recursive: true });
+    await writeFile(
+      join(root, "app/src/main/java/com/example/myapp/ClerkApplication.kt"),
+      'package com.example.myapp\nclass ClerkApplication : android.app.Application() {\n    override fun onCreate() {\n        super.onCreate()\n        com.clerk.api.Clerk.initialize(this, publishableKey = "pk_test_x")\n    }\n}\n',
+    );
+    await expect(inspect(root)).rejects.toThrow("doesn't register it");
+  });
+
   test("reads a managed key resource and refuses foreign ones", async () => {
     const root = await fixture({ keyResource: FIXTURE_KEY });
     expect((await inspect(root)).keyResource).toMatchObject({ managed: true, key: FIXTURE_KEY });

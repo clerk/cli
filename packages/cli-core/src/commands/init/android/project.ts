@@ -318,17 +318,16 @@ async function inspectApplicationClass(
     result.editable = true;
     return result;
   }
+  // An unregistered class with the generated name: only our own file can be adopted, whether or
+  // not it already initializes Clerk.
+  if (name === undefined && !source.source.includes(GENERATED))
+    throw unsupported(
+      `${path} exists but the manifest doesn't register it; register it with android:name, or remove it, then rerun clerk init.`,
+    );
   const masked = maskCode(source.source);
   if (/\bClerk\.initialize\s*\(/.test(masked)) {
     result.initialized = /R\.string\.clerk_publishable_key\b/.test(masked) ? "managed" : "custom";
     return result;
-  }
-  if (name === undefined) {
-    // An unregistered class with the generated name: only our own file can be adopted.
-    if (!source.source.includes(GENERATED))
-      throw unsupported(
-        `${path} exists but the manifest doesn't register it; register it with android:name, or remove it, then rerun clerk init.`,
-      );
   }
   const onCreate = [...masked.matchAll(/\boverride\s+fun\s+onCreate\s*\(\s*\)/g)];
   const supers = [...masked.matchAll(/\bsuper\.onCreate\s*\(\s*\)/g)];
