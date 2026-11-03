@@ -302,7 +302,7 @@ The detected framework dependency adds one more skill on top:
 | `nuxt`                  | `clerk-nuxt-patterns`         |
 | `astro`                 | `clerk-astro-patterns`        |
 | `@tanstack/react-start` | `clerk-tanstack-patterns`     |
-| `expo`                  | `clerk-expo-patterns`         |
+| `expo`                  | `clerk-expo`                  |
 
 Express and Fastify projects don't get a framework-specific skill — `clerk-backend-api` (now a default) already covers their needs.
 

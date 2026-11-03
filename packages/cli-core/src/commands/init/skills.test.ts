@@ -20,12 +20,8 @@ describe("resolveUpstreamSkills", () => {
     expect(resolveUpstreamSkills("next")).toEqual([...DEFAULTS, "clerk-nextjs-patterns"]);
   });
 
-  test("appends both the setup and patterns skills for expo", () => {
-    expect(resolveUpstreamSkills("expo")).toEqual([
-      ...DEFAULTS,
-      "clerk-expo",
-      "clerk-expo-patterns",
-    ]);
+  test("appends the clerk-expo skill for expo", () => {
+    expect(resolveUpstreamSkills("expo")).toEqual([...DEFAULTS, "clerk-expo"]);
   });
 
   test("returns just the defaults for express (clerk-backend-api is already a default)", () => {
