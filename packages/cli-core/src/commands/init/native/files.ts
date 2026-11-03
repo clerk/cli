@@ -107,13 +107,28 @@ export function fileOperations(setupError: SetupErrorFactory) {
     }
   }
 
+  /**
+   * Spawns git, or returns undefined when there is no git executable (Bun.spawn throws before the
+   * child starts). A machine without Git is still a valid place to edit a project. The environment
+   * is passed explicitly so the lookup follows the current PATH, not the one at startup.
+   */
+  function spawnGit(root: string, args: string[], stdout: "pipe" | "ignore") {
+    try {
+      return Bun.spawn(["git", ...args], {
+        cwd: root,
+        env: process.env,
+        stdout,
+        stderr: "ignore",
+        timeout: 5_000,
+      });
+    } catch {
+      return undefined;
+    }
+  }
+
   async function gitDirty(root: string, path: string): Promise<boolean> {
-    const child = Bun.spawn(["git", "status", "--porcelain", "--", path], {
-      cwd: root,
-      stdout: "pipe",
-      stderr: "ignore",
-      timeout: 5_000,
-    });
+    const child = spawnGit(root, ["status", "--porcelain", "--", path], "pipe");
+    if (!child) return false;
     const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
     // A non-Git project can still be edited; a backup is always created.
     return code === 0 && output.trim().length > 0;
@@ -121,13 +136,8 @@ export function fileOperations(setupError: SetupErrorFactory) {
 
   /** Whether git tracks the file, so it can restore it; false for untracked, ignored, or non-git files. */
   async function gitTracked(root: string, path: string): Promise<boolean> {
-    const child = Bun.spawn(["git", "ls-files", "--error-unmatch", "--", path], {
-      cwd: root,
-      stdout: "ignore",
-      stderr: "ignore",
-      timeout: 5_000,
-    });
-    return (await child.exited) === 0;
+    const child = spawnGit(root, ["ls-files", "--error-unmatch", "--", path], "ignore");
+    return child !== undefined && (await child.exited) === 0;
   }
 
   /** Removes the backup folders when they hold nothing, so setup leaves no empty folders behind. */

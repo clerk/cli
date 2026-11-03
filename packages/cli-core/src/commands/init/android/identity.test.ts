@@ -40,8 +40,10 @@ describe("fingerprints", () => {
     expect(identity.issues).toEqual([]);
   });
 
-  test("says what to do when the debug certificate can't be read", async () => {
-    for (const status of ["no-keystore", "no-keytool", "failed"] as const) {
+  const UNREADABLE = ["no-keystore", "no-keytool", "failed"] as const;
+  test.each([...UNREADABLE])(
+    "says what to do when the debug certificate can't be read (%s)",
+    async (status) => {
       const identity = await discoverIdentity(
         { applicationId: "com.example.app", applicationIdSource: "gradle" },
         undefined,
@@ -50,7 +52,10 @@ describe("fingerprints", () => {
       expect(identity.fingerprints).toEqual([]);
       expect(identity.issues[0]).toContain("--android-fingerprint");
       expect(debugKeystoreNote(identity.debug)).toBe(identity.issues[0]);
-    }
+    },
+  );
+
+  test("reports no issue when the debug keystore isn't read", async () => {
     const skipped = await discoverIdentity(
       { applicationId: "a.b", applicationIdSource: "gradle" },
       undefined,

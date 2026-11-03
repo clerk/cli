@@ -133,7 +133,7 @@ own remedy:
 | Native registration         | The `applicationId` is registered there. A registration that lacks this machine's debug fingerprint fails with the Dashboard remedy, since the CLI can't update it yet                                                                                          |
 | Debug signing fingerprint   | This machine's debug certificate could be read and is registered (warns when there is no keystore or `keytool` yet)                                                                                                                                             |
 
-Without a linked application the three Clerk checks become one warning.
+Without a linked application the four Clerk checks (development publishable key, Native API, registration, and debug signing fingerprint) become one warning.
 
 ## Auto-Fix (`--fix`)
 
