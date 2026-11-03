@@ -18,6 +18,7 @@
 import { Database } from "bun:sqlite";
 import { SQL } from "bun";
 import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
+import { loggedFetch } from "../../../lib/fetch.ts";
 
 export type DbType = "postgres" | "mysql" | "sqlite";
 
@@ -229,7 +230,8 @@ function libsqlClient(
   return {
     dbType: "sqlite",
     async query<T extends Record<string, unknown>>(query: string, params: unknown[] = []) {
-      const response = await fetch(endpoint, {
+      const response = await loggedFetch(endpoint, {
+        tag: "libsql",
         method: "POST",
         // Generous, since one unpaginated SELECT can be a whole users table.
         signal: AbortSignal.timeout(LIBSQL_TIMEOUT_MS),

@@ -28,6 +28,7 @@ import {
 } from "../lib/target.ts";
 import { resolveClerkSource } from "./clerk-source.ts";
 import { finishExport, startExportRun } from "./shared.ts";
+import { recordMigrateTarget } from "../telemetry.ts";
 
 /** BAPI's maximum page size for `GET /v1/users`. */
 const PAGE_SIZE = 500;
@@ -296,6 +297,13 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
       instanceId: identity.instanceId,
       ...(keySource ? { keySource } : {}),
     };
+    // The source instance: for this command, the one it acts on.
+    // `--app` named the app unless a key overrode it; a linked profile's app
+    // is filled in from its instances.
+    recordMigrateTarget({
+      appId: keyFrom ? undefined : options.app,
+      instanceId: identity.instanceId,
+    });
     if (!options.json) printTarget(target);
 
     const users = await withSpinner("Fetching users from Clerk...", async (spinner) =>

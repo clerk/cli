@@ -1,8 +1,10 @@
 import type { Program } from "../../cli-program.ts";
 import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
+import { markMigrateRequests } from "../../lib/fetch.ts";
 import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { setMode } from "../../mode.ts";
 import { setAssumeYes } from "./lib/assume-yes.ts";
+import { recordMigrateTarget } from "./telemetry.ts";
 import { registerMigrateExport } from "./export/index.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "./lib/run-store.ts";
 import { run } from "./run.ts";
@@ -68,8 +70,16 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     // With globals: `export auth0 --json` lands on the export group's own
     // --json, which the subcommand's opts() never sees.
     const opts = actionCommand.optsWithGlobals();
+    // So the Backend API logs can tell a migration's creates from `clerk users create`.
+    markMigrateRequests();
     setAssumeYes(Boolean(opts.yes));
     if (opts.json && !opts.mode) setMode("agent");
+    // A hint, so a run that fails before its target resolves still names it.
+    // Aliases like `--instance dev` and app labels are dropped.
+    recordMigrateTarget({
+      appId: typeof opts.app === "string" ? opts.app : undefined,
+      instanceId: typeof opts.instance === "string" ? opts.instance : undefined,
+    });
   });
 
   // Named, not `isDefault`. `import` and `export` are the two directions this
