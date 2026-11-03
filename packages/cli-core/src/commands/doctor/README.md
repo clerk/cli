@@ -136,7 +136,7 @@ own remedy:
 | Google Web client ID        | The connection has a custom Web client ID, which the Android SDK reads as the One Tap client ID (fails when Google is enabled without one; warns when Google is off)                                                                                            |
 | Google Cloud Android client | Never passes: a note, while Google is enabled, that Google Cloud must have an Android OAuth client for the package and each signing certificate's SHA-1, which can't be checked from here                                                                       |
 
-Without a linked application the three Clerk checks become one warning.
+Without a linked application the four Clerk checks (development publishable key, Native API, registration, and debug signing fingerprint) become one warning.
 
 ## Auto-Fix (`--fix`)
 

@@ -276,6 +276,25 @@ describe("Android setup workflow", () => {
     expect(await read(root, result.backups[0]!)).toContain("// local edit");
   });
 
+  test("keeps backups when there is no git executable", async () => {
+    const root = await fixture();
+    const { api } = fakeNativeAPI();
+    const deps = { api, debugKeystore: keystore() };
+    // A PATH with no git on it: Bun.spawn throws, which must read as "not a Git project".
+    const path = process.env.PATH;
+    process.env.PATH = root;
+    try {
+      const preview = await prepareSetup(setup(root), deps);
+      expect(preview.dirtyFiles).toEqual([]);
+      const result = await applySetup(preview, deps);
+      expect(result.local).toBe("updated");
+      expect(result.backups).toHaveLength(2);
+      for (const backup of result.backups) expect(backup).toStartWith(".clerk/backups/");
+    } finally {
+      process.env.PATH = path;
+    }
+  });
+
   test("keeps local edits and reports an incomplete registration when Clerk fails", async () => {
     const root = await fixture();
     const { api, state } = fakeNativeAPI();
