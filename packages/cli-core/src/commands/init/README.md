@@ -96,7 +96,7 @@ When running in agent mode (`--mode agent`, `CLERK_MODE=agent`, a recognized age
 13. Prints a summary of created, modified, and skipped files with recommendations
 14. **Authenticated mode**: pulls development instance API keys via `clerk env pull`
 15. **Accountless mode** (unauthenticated runs whose resolved strategy in step 2 is accountless — an unauthenticated human-mode rerun on an existing project resolves to the authenticated flow instead): mints an accountless application and prints instructions for development without API keys and how to connect a Clerk account later — unless an unclaimed accountless app already exists for this project (see [Re-running init on an already-accountless project](#re-running-init-on-an-already-accountless-project)), in which case the existing keys are kept and reported instead
-16. Optionally installs Clerk agent skills (cli + core + features, plus a framework-specific skill) via the project's package runner (see [Agent skills install](#agent-skills-install))
+16. Optionally installs Clerk agent skills (a fixed default set, plus framework-specific skills) via the project's package runner (see [Agent skills install](#agent-skills-install))
 
 ## Framework Detection
 
@@ -285,7 +285,7 @@ After scaffolding (and after env keys are pulled or accountless instructions are
 - **Human mode**: prompts `Install agent skills? (...)` defaulting to yes. Pass `--no-skills` to suppress the prompt entirely, or `-y/--yes` to accept it without confirmation. When more than one runner is available, a second prompt picks which one to use (the project's package manager wins by default).
 - **Agent mode**: skills are installed non-interactively with `-y -g` flags (no prompt shown). Pass `--no-skills` to skip entirely.
 
-A fixed default set is installed from [`clerk/skills`](https://github.com/clerk/skills): `clerk-cli`, `clerk-setup`, `clerk-custom-ui`, `clerk-backend-api`, `clerk-orgs`, `clerk-testing`, and `clerk-webhooks`.
+`clerk init` installs a fixed default set from [`clerk/skills`](https://github.com/clerk/skills): `clerk-cli`, `clerk-setup`, `clerk-custom-ui`, `clerk-backend-api`, `clerk-orgs`, `clerk-testing`, and `clerk-webhooks`.
 
 The detected framework dependency adds one more skill on top:
 
