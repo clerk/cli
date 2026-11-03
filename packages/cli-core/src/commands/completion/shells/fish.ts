@@ -11,7 +11,8 @@ export function generate(binaryName: string): string {
 #   mkdir -p ~/.config/fish/completions
 #   ${binaryName} completion fish > ~/.config/fish/completions/${binaryName}.fish
 
-function __${binaryName}_complete
+function __${binaryName}_prepare_completions
+    set -g __${binaryName}_comp_results
     set -l tokens (commandline -opc)
     set -l current (commandline -ct)
 
@@ -19,23 +20,25 @@ function __${binaryName}_complete
     set -l args $tokens[2..]
     set -l output (${binaryName} __complete $args $current 2>/dev/null)
 
-    if test $status -ne 0
-        return
+    if test $status -ne 0; or test (count $output) -eq 0
+        return 0
     end
 
-    # Last line is the directive — skip it
-    set -l count (count $output)
-    if test $count -le 1
-        return
-    end
+    # Last line is the directive; the rest are the candidates
+    set -l directive (string replace ':' '' -- $output[-1])
+    set -e output[-1]
+    set -g __${binaryName}_comp_results $output
 
-    # Output all lines except the last (directive)
-    for i in (seq 1 (math $count - 1))
-        echo $output[$i]
+    # Nothing starts with what was typed, and the directive allows files (bit 4,
+    # NO_FILE_COMP, clear): false skips the entry below, so fish completes files.
+    set -l names (string replace -r '\\t.*' '' -- $output)
+    if not string match -q -- "$current*" $names; and test (math --scale 0 $directive / 4 % 2) -eq 0
+        return 1
     end
+    return 0
 end
 
-# Disable file completions by default, let __complete control it
-complete -c ${binaryName} -f -a '(__${binaryName}_complete)'
+# The candidates, with files off, whenever __complete has something to offer
+complete -c ${binaryName} -n '__${binaryName}_prepare_completions' -f -a '$__${binaryName}_comp_results'
 `;
 }

@@ -5,8 +5,8 @@ import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import { loadUsersFromFile, normalizeUserData, transformUsers } from "../lib/transform.ts";
 import type { FirebaseHashConfig, User } from "../types.ts";
-import { getSource, sourceKeys, sources } from "./registry.ts";
 import { isAuthJsVerified } from "./authjs.ts";
+import { getSource, isSourcePath, sourceKeys, sources } from "./registry.ts";
 import { isVerified, toIsoDate } from "./shared.ts";
 
 const FIREBASE_HASH: FirebaseHashConfig = {
@@ -76,6 +76,19 @@ describe("registry", () => {
 
   test("throws for an unregistered key", () => {
     expect(() => getSource("okta")).toThrow(/Source not found/);
+  });
+});
+
+describe("isSourcePath", () => {
+  test.each([["./mine.ts"], ["../up/mine.js"], ["/abs/mine.mjs"], ["mine.ts"], ["dir/mine.js"]])(
+    "%s is a path",
+    (value) => {
+      expect(isSourcePath(value)).toBe(true);
+    },
+  );
+
+  test.each([["clerk"], ["betterauth"], ["okta"]])("%s is a key", (value) => {
+    expect(isSourcePath(value)).toBe(false);
   });
 });
 

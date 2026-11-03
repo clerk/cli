@@ -19,6 +19,7 @@ clerk migrate export [source] [-o <path>] [--json]
 clerk migrate import <file|export-run-id> [--source <source>] [--dry-run] [--allow-partial] [--new-run] [--yes] [--json]
 clerk migrate runs [run-id] [--json]
 clerk migrate undo <run-id> [--dry-run] [--yes] [--include-signed-in] [--json]
+clerk migrate sources [source] [--json]
 clerk migrate help
 ```
 
@@ -178,6 +179,24 @@ every run.
 Run folders are created owner-only (`0700`), and export files `0600`: they hold
 password hashes and user data.
 
+#### The import lock
+
+Every import but a dry run also takes a lock outside the run store, before its
+checks and prompts: `clerk-migrate-import-<hash>.lock` in the temp directory
+(`os.tmpdir()`, usually `$TMPDIR` or `/tmp`). The hash covers the file's sha256
+and the instance, not the source, so a second import of the same file into the
+same instance is refused with exit 2 even before either has written a run,
+whichever source and `--runs-dir` each uses. It also takes a lock under its
+key, for when Clerk can't name the instance. When nothing names it (Clerk,
+`--app` or the linked profile), that's the only lock it holds, so an import
+with a second key for that instance doesn't meet it. It lives outside the runs folder because
+nothing may be written there before consent. It holds the importing process's
+PID and is removed when the import finishes. One left by a Ctrl-C or a process that died is
+reclaimed by the next import. Two imports that start together over a stale lock
+can both take it; Clerk still refuses the second create of any email, phone or
+username, so the cost is failed lines, not duplicate users. The refusal names the file, which is safe to
+delete when no `clerk migrate import` is running.
+
 `users.ndjson` writes are synchronous appends, so a run interrupted with Ctrl-C
 still leaves a complete record of everything already processed. A line that
 cannot be written stops that user's create from going out. An export's file
@@ -274,6 +293,23 @@ The file is an envelope around the users:
 `--source`. A Firebase export adds `firebase`, the project's hash
 parameters, when it could read them: the import then needs no `--firebase-*`
 flags. When it couldn't, pass them to the import, or enter them at its prompt.
+
+`--source` with a different built-in name is refused, since it would map the
+users with the wrong fields. `--source` with the path to a
+[source you wrote](#custom-sources) replaces the envelope's: it gets the same
+users, in the platform's own shape, so it can bring across what the built-in
+mapping leaves out, such as a WorkOS `metadata.username`. The import keeps its
+link to the export run, and `run.json` records the source the envelope named
+as `envelopeSource`. A Firebase export keeps its hash parameters through it:
+the envelope's, the `--firebase-*` flags or the variables reach the source's
+`postTransform` as `context.firebaseHashConfig`, as they do the built-in's.
+The checks still read a Supabase export's sign-in providers from its raw rows,
+and count an Auth0 or Auth.js export's the way the built-in does.
+
+An earlier import of the same export into the same instance, through the
+built-in or another source, holds the same users. While it isn't undone, a
+re-run through your source refuses with exit 2 and names it, rather than
+starting a new run beside it: pass `--new-run`, or undo it first.
 
 `--json` prints the result on stdout instead — `{ target, run, output, users,
 skipped, coverage, next }` — and never prompts, so a missing credential exits 2
@@ -682,7 +718,7 @@ clerk migrate import                                          # a human is asked
 | Flag                                    | Description                                                                                       |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `[file\|export-run-id]`                 | The export file, or the ID of the export run that wrote it                                        |
-| `--source <key>`                        | Where the file came from: one of the [sources](#sources)                                          |
+| `--source <key\|path>`                  | Where the file came from: a [source](#sources), or one you wrote                                  |
 | `--dry-run`                             | Run the [checks](#checks) against the instance, and write nothing                                 |
 | `--allow-partial`                       | Import the users that pass, and record the rest as skipped                                        |
 | `--new-run`                             | Start a new run instead of [continuing](#re-running) an earlier one                               |
@@ -753,8 +789,8 @@ which skip the checks too.
 #### Re-running
 
 Running the same import again continues where it left off. The match is the
-file's sha256, the source, and the instance ID; the latest matching import run
-decides what happens:
+file's sha256, the source (and a custom source's content hash), and the
+instance ID; the latest matching import run decides what happens:
 
 | Latest match                              | Re-running does                                                        |
 | ----------------------------------------- | ---------------------------------------------------------------------- |
@@ -1103,6 +1139,29 @@ With `writeFailed` or `stopped`, `run` is the undo run as it stands on disk,
 once one was written: its counts come from its lines, and `state` says how it
 stopped, as in `clerk migrate runs`.
 
+### `clerk migrate sources`
+
+```sh
+clerk migrate sources                 # every source, with what it carries
+clerk migrate sources betterauth      # one source in full
+clerk migrate sources ./my-source.ts  # a source you wrote
+clerk migrate sources --json
+```
+
+| Flag       | Description                                                      |
+| ---------- | ---------------------------------------------------------------- |
+| `[source]` | A built-in key, or the path to a source you wrote, to show fully |
+| `--json`   | The same data, on stdout                                         |
+
+`sources` alone prints the table under [Sources](#sources). `sources <source>`
+shows one source in full: its export command (when `clerk migrate export` has
+one for it), what it carries with a note for each, where each field lands
+(`encrypted_password → password`), its fixed defaults, and any caveats. An
+unknown key exits 2 and lists the valid ones. There is no intro/outro gutter.
+`sources` alone, or with a built-in key, reads a static registry and runs
+nothing. With a path, it loads and runs that file, as `--source` does, to check
+it and show what it maps.
+
 ### `clerk migrate help`
 
 `clerk migrate help` and `clerk migrate <command> --help` print the help for the
@@ -1125,15 +1184,124 @@ brings across. Adding a platform is one file in `sources/` plus one line in
 | `supabase`   | Supabase `auth.users` export  | yes       | no      | partial  |
 | `workos`     | WorkOS User Management API    | no        | no      | yes      |
 
-An unknown `--source` exits 2 with the list of valid keys.
-
 There is no column for social sign-ins, because no source copies them and none
-needs to. Enable the same providers in Clerk, and a user who signs in with one
-is linked to their imported account by verified email. See
+needs to. Every source shows the same note instead: enable the same providers in
+Clerk, and a user who signs in with one is linked to their imported account by
+verified email. See
 [account linking](https://clerk.com/docs/guides/configure/auth-strategies/social-connections/account-linking).
 The import's checks count the providers in a Supabase, Auth0 or Auth.js file and offer
 to enable any that are off. Auth0's come from each `user_id`'s prefix
 (`github|…`), so a user who linked a second provider counts under the first.
+
+### `--source`
+
+`clerk migrate import` takes `--source <key|path>`:
+
+- A value starting with `./`, `../` or `/`, or ending in `.ts`, `.js` or
+  `.mjs`, is loaded as a [custom source](#custom-sources).
+- Anything else must be a built-in key. An unknown key exits 2 with the list of
+  valid keys.
+
+A file `clerk migrate export` wrote names its own source, so it needs none.
+
+### Custom sources
+
+Migrating from a platform with no built-in, without recompiling the CLI:
+
+```sh
+clerk migrate import users.json --source ./my-platform.ts
+```
+
+The file lives in **your** project, not in the CLI, and is imported at runtime.
+It exports the same shape the built-ins use, as plain data. It can't import
+from the CLI, since there is nothing in a compiled binary to import from, but
+it can import your project's own files:
+
+```ts
+export default {
+  key: "myplatform",
+  label: "My Platform",
+  description: "Exports from My Platform's admin console.",
+  transformer: {
+    account_ref: "userId", // required: becomes the Clerk user's external_id
+    // Created verified: map an address the source never confirmed to "unverifiedEmailAddresses".
+    contact_email: "email",
+    pw_bcrypt: "password",
+    // full_name is left unmapped: postTransform splits it below.
+  },
+  carries: {
+    passwords: { level: "yes", note: "bcrypt hashes from the pw_bcrypt column." },
+    mfa: { level: "no", note: "Not exported." },
+    metadata: { level: "no", note: "Not exported." },
+  },
+  defaults: { passwordHasher: "bcrypt" },
+  postTransform: (user) => {
+    // Unmapped columns arrive under their own names.
+    const [first, ...rest] = String(user.full_name ?? "")
+      .trim()
+      .split(/\s+/);
+    if (first) user.firstName = first;
+    if (rest.length) user.lastName = rest.join(" ");
+    delete user.full_name;
+  },
+};
+```
+
+Two optional hooks run around the `transformer` mapping:
+
+- `postTransform(user, context)` runs once per user, after the mapping. `user`
+  holds the mapped fields, plus every column the `transformer` doesn't name,
+  still under its own name. Change `user` in place; the return value is
+  ignored. It must be synchronous: an `async` hook, or one that returns a
+  promise, stops the import, since its changes would arrive after the user
+  was checked. One that throws stops the import with the source's key, the
+  row number and the error. `context` holds per-run values a built-in needs,
+  such as Firebase's hash parameters; a custom source can ignore it.
+- `preTransform(filePath, fileType)` runs once, before the file is read, and
+  may be `async`. `fileType` is `"application/json"`, `"text/csv"` or `""`.
+  Return `{ filePath, data?, csvHeaders? }`: `filePath` is the file to read
+  (the same one, or one you wrote in the same format as `fileType`), `data` is the users when you parsed them
+  yourself and skips reading the file, and `csvHeaders` names the columns of
+  a CSV with no header row. It isn't called for a file from
+  `clerk migrate export`, which holds its users already.
+
+A `transformer` target that isn't a Clerk field, like `full_name: "name"`, is
+only a rename: Clerk won't store it unless `postTransform` moves it.
+
+TypeScript is fine — Bun's transpiler is part of the runtime, so `interface`,
+`satisfies` and `as const` all work in a file the compiled binary imports.
+Plain `.js` works too.
+
+An import run records a custom source's key and a hash of the file, so an
+edited source counts as a different source. A re-run with an edited source,
+or with another source altogether, won't continue the earlier run of the file,
+and won't start a new one beside it unasked either: while that run isn't
+undone, it refuses with exit 2 and names it, since the users it created would
+come back as conflicts. Pass `--new-run` to start
+a new run anyway, or undo the earlier one first. The hash covers that file
+only: a local helper it imports is not part of it, so after editing one, or
+when running a copy of the file beside different helpers, pass `--new-run`
+rather than continue a run made with the old ones.
+
+#### Validation
+
+The file is code the CLI executes, so its shape is checked before use and
+rejected with the specific problem rather than crashing mid-pipeline:
+
+| Problem                                             | Message                                                                                                    |
+| --------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Path does not exist                                 | `No source file at /abs/path.ts.`                                                                          |
+| No default export, but a named one                  | ``has no default export. Found named export `myPlatform` — did you mean `export default`?``                |
+| Does not parse                                      | `Could not load ./f.ts: Expected identifier but found ","`                                                 |
+| Nothing maps to `userId`                            | ``no source field maps to `userId`. Every user needs one — it becomes the Clerk user's external_id``       |
+| No `carries`                                        | `` `carries` must say what the source brings across: { passwords, mfa, metadata }, each { level, note } `` |
+| `key` clashes with a built-in                       | `key is "clerk", which is already a built-in source`                                                       |
+| `preTransform` or `postTransform` is not a function | `` `preTransform` must be a function when present `` (likewise `postTransform`)                            |
+| `caveats` is not a list of strings                  | `` `caveats` must be an array of strings when present ``                                                   |
+
+The `userId` check is the load-bearing one: without it the import would run to
+completion and create every user with no `external_id`, which is what makes a
+migration re-runnable.
 
 ### Metadata
 
@@ -1167,6 +1335,7 @@ Better Auth's scrypt uses the hex salt string as the salt and a 64-byte key,
 which is what `scrypt_werkzeug` verifies once N, r and p are written inline. It
 also normalizes a password to NFKC before hashing, and Clerk does not, so a
 password whose NFKC form differs will not verify and that user resets it.
+`clerk migrate sources betterauth` lists that caveat.
 
 A password Clerk cannot verify is **dropped, not rejected**: dropping it doesn't
 reject the user, who imports without it and can sign in another way or reset
@@ -1233,7 +1402,8 @@ An export with no password hashes needs no parameters at all.
 What a source maps _onto_. Every user is validated against this schema
 before any request is made, so a field a source produces that is not listed
 here is dropped — Zod strips unknown keys — and never reaches Clerk. The checks
-warn about each one (`Clerk won't store: …`).
+warn about each one (`Clerk won't store: …`). Writing a custom source means
+targeting these names exactly.
 
 The schema lives in `validator.ts`; adding a platform means adding a source,
 not editing it.
