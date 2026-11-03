@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { quoteArg } from "../../../lib/json-body.ts";
-import { useCaptureLog } from "../../../test/lib/stubs.ts";
+import { captureTelemetryPayload, useCaptureLog } from "../../../test/lib/stubs.ts";
 import { readEnvelope } from "../lib/export-file.ts";
 import { latestUserLines, readRun } from "../lib/run-store.ts";
 import { finishExport, formatImportCommand, startExportRun } from "./shared.ts";
@@ -194,6 +194,33 @@ describe("finishExport", () => {
     } finally {
       process.exitCode = 0;
     }
+  });
+
+  test("a finished export ends at done", async () => {
+    const { payload } = await captureTelemetryPayload("migrate export auth0", async () => {
+      const run = await startExportRun({ runsDir }, { platform: "auth0" });
+      finishExport({ run, options: {}, users, coverage });
+    });
+    expect(payload).toMatchObject({ outcome: "success", stage: "done" });
+  });
+
+  test("a truncated export is coded", async () => {
+    const { payload } = await captureTelemetryPayload("migrate export auth0", async () => {
+      const run = await startExportRun({ runsDir }, { platform: "auth0" });
+      finishExport({ run, options: {}, users, coverage, truncated: true });
+    });
+    expect(payload).toMatchObject({
+      outcome: "error",
+      stage: "done",
+      error_code: "migrate_export_truncated",
+    });
+  });
+
+  test("starting the export run records migrate_export_write", async () => {
+    const { payload } = await captureTelemetryPayload("migrate export auth0", async () => {
+      await startExportRun({ runsDir }, { platform: "auth0" });
+    });
+    expect(payload.stage).toBe("migrate_export_write");
   });
 
   test("prints the import command by run ID", async () => {

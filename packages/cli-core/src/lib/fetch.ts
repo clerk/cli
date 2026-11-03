@@ -14,32 +14,50 @@ import { withNetworkAccess } from "./host-execution.ts";
 import { buildUserAgent } from "./user-agent.ts";
 import { optOutEnvVar } from "./env-signals.ts";
 import { getTelemetryDisabled, getTelemetryNoticeShown } from "./config.ts";
+import { IS_DEV_BUILD } from "./version.ts";
 
-let userAgentPromise: Promise<string> | undefined;
+let omitAnalyticsPromise: Promise<boolean> | undefined;
+let migrateRequests = false;
 
 /** Test-only: recompute the User-Agent on the next request. */
 export function _resetUserAgentCache(): void {
-  userAgentPromise = undefined;
+  omitAnalyticsPromise = undefined;
+  migrateRequests = false;
 }
 
-// Not `async`: the body hands back a memoized promise, and wrapping it per call
-// would allocate a fresh one on every request for no gain.
-// oxlint-disable-next-line typescript/promise-function-async
-function resolveUserAgent(): Promise<string> {
-  // The AIAgent segment exists purely for analytics classification, so it
-  // honors the telemetry opt-outs (env vars and `clerk telemetry disable`)
-  // and, like the events, stays absent until the disclosure notice has been
-  // shown — CI exempt, matching showTelemetryNoticeOnce.
-  userAgentPromise ??= (async () => {
+/**
+ * Mark the rest of this process's Backend API requests as `clerk migrate`'s:
+ * their User-Agent gains a `migrate` segment, under the same opt-outs as
+ * `AIAgent`.
+ */
+export function markMigrateRequests(): void {
+  migrateRequests = true;
+}
+
+async function resolveUserAgent(tag: string): Promise<string> {
+  // The AIAgent and migrate segments exist purely for analytics, so they
+  // honor the telemetry opt-outs (env vars and `clerk telemetry disable`)
+  // and, like the events, stay absent from dev builds (unless
+  // CLERK_TELEMETRY_URL lifts that, as in telemetryEnabled, which this module
+  // can't import) and until the disclosure notice has been shown — CI exempt,
+  // matching showTelemetryNoticeOnce.
+  omitAnalyticsPromise ??= (async () => {
     const beforeDisclosure =
       !process.env.CI && !(await getTelemetryNoticeShown().catch(() => false));
-    const omitAgentSegment =
+    return (
       optOutEnvVar(process.env) !== null ||
+      (IS_DEV_BUILD && !process.env.CLERK_TELEMETRY_URL) ||
       beforeDisclosure ||
-      (await getTelemetryDisabled().catch(() => true));
-    return buildUserAgent(process.env, { agentToken: !omitAgentSegment });
+      (await getTelemetryDisabled().catch(() => true))
+    );
   })();
-  return userAgentPromise;
+  const omitAnalyticsSegments = await omitAnalyticsPromise;
+  return buildUserAgent(process.env, {
+    agentToken: !omitAnalyticsSegments,
+    // Only Clerk's Backend API logs count migrations, so no other host
+    // learns of one.
+    migrate: migrateRequests && tag === "bapi" && !omitAnalyticsSegments,
+  });
 }
 
 export type LoggedFetchInit = RequestInit & {
@@ -79,7 +97,7 @@ export async function loggedFetch(url: URL | string, options: LoggedFetchInit): 
   const method = init.method ?? "GET";
   const urlStr = url.toString();
   const headers = new Headers(init.headers);
-  if (!headers.has("user-agent")) headers.set("User-Agent", await resolveUserAgent());
+  if (!headers.has("user-agent")) headers.set("User-Agent", await resolveUserAgent(tag));
   log.debug(`${tag}: ${method} ${urlStr}`);
   const signal = interruptSignalFor(init.signal, ignoreInterrupt);
   const response = await withNetworkAccess(

@@ -20,13 +20,10 @@ import type { ProjectContext } from "./frameworks/types.js";
 
 /** Upstream skills from clerk/skills — installed on every project. */
 const DEFAULT_UPSTREAM_SKILLS = [
-  // cli/
   "clerk-cli",
-  // core/
   "clerk-setup",
   "clerk-custom-ui",
   "clerk-backend-api",
-  // features/
   "clerk-orgs",
   "clerk-testing",
   "clerk-webhooks",

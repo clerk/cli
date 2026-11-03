@@ -3,7 +3,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
 import {
   continueRun,
   type RunRecord,
@@ -406,6 +406,17 @@ describe("runs <id>", () => {
     expect(next[0]).toContain("to retry the users it didn't finish");
   });
 
+  // The record has the custom source's hash, not its path.
+  test("a partial import from a source you wrote names the source file to pass", async () => {
+    const record = partialImport({ source: "acme", sourceHash: "abc123" });
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next[0]).toContain(`clerk migrate import ${quoteArg(usersFile())} --source SOURCE_FILE`);
+    expect(next[0]).toContain("with SOURCE_FILE replaced by the path to the source you wrote");
+  });
+
   test("an unknown ID is a usage error", async () => {
     await expect(runs("nope", { runsDir })).rejects.toThrow(/No run `nope`/);
   });
@@ -414,5 +425,27 @@ describe("runs <id>", () => {
     await expect(runs("nope", { runsDir })).rejects.toThrow(
       `clerk migrate runs --runs-dir ${quoteArg(runsDir)}`,
     );
+  });
+});
+
+describe("telemetry", () => {
+  test("showing one run records its source and instance", async () => {
+    const record = partialImport({ target: { ...TARGET, appId: "app_1" } });
+    const { payload } = await captureTelemetryPayload("migrate runs", () =>
+      runs(record.id, { runsDir }),
+    );
+    expect(payload).toMatchObject({
+      migrate_source: "clerk",
+      instance_id: "ins_1",
+      app_id: "app_1",
+    });
+  });
+
+  test("a run imported through a source you wrote records custom", async () => {
+    const record = partialImport({ sourceHash: "abc123" });
+    const { payload } = await captureTelemetryPayload("migrate runs", () =>
+      runs(record.id, { runsDir }),
+    );
+    expect(payload.migrate_source).toBe("custom");
   });
 });

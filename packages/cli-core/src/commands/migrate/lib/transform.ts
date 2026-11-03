@@ -10,7 +10,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import csvParser from "csv-parser";
-import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { CUSTOM_SOURCES_URL } from "../sources/load-custom.ts";
 import { getSource } from "../sources/registry.ts";
 import { normalizeBooleanField, parseDate } from "../sources/shared.ts";
 import { type TransformContext, type SourceEntry, type User } from "../types.ts";
@@ -294,7 +295,7 @@ export function consolidateClerkIdentifiers(user: Record<string, unknown>): void
 // --- Validation ------------------------------------------------------------
 
 /** Every field the import schema declares; anything else is stripped. */
-const SCHEMA_FIELDS: ReadonlySet<string> = new Set(Object.keys(userSchema.shape));
+export const SCHEMA_FIELDS: ReadonlySet<string> = new Set(Object.keys(userSchema.shape));
 
 /**
  * Validates prepared users, dropping each failure from the run and returning
@@ -374,13 +375,35 @@ export function transformUsers(
   const context = options.context ?? {};
   const transformed: Record<string, unknown>[] = [];
 
-  for (const user of users) {
+  for (const [i, user] of users.entries()) {
     const mapped = transformKeys(user, transformer);
 
     // The source's own cleanup first: the Clerk Dashboard's formula-safety TAB
     // has to come off before identifiers are compared, or "\t+1555…" and
     // "+1555…" read as two phones.
-    transformer.postTransform?.(mapped, context);
+    let result: unknown;
+    try {
+      result = transformer.postTransform?.(mapped, context);
+    } catch (error) {
+      // A refusal the source meant, like Firebase's missing hash parameters,
+      // already says what to do and carries its own code.
+      if (error instanceof CliError) throw error;
+      // 1-based, like the validation failures: the second user is row 2.
+      throwUsageError(
+        `The "${key}" source's postTransform failed on row ${i + 1}: ${error instanceof Error ? error.message : String(error)}`,
+        CUSTOM_SOURCES_URL,
+      );
+    }
+    // An async hook's changes after its first await land once this user is
+    // already normalized and validated, so they would be lost without a word.
+    // Any thenable, not only a native Promise: a hook may use another library's.
+    if (typeof (result as PromiseLike<unknown> | undefined)?.then === "function") {
+      Promise.resolve(result).catch(() => undefined);
+      throwUsageError(
+        `The "${key}" source's postTransform returned a promise. It must be synchronous: changes made after an await never reach the import.`,
+        CUSTOM_SOURCES_URL,
+      );
+    }
     if (key === "clerk") {
       consolidateClerkIdentifiers(mapped);
     }
@@ -444,7 +467,13 @@ async function readUsersFromFile(
   // An export's envelope already holds the users in the source's own shape,
   // so there is nothing left for a pre-transform to unwrap.
   if (type === "application/json") {
-    const parsed = readJsonFile(filePath);
+    let parsed: unknown;
+    try {
+      parsed = readJsonFile(filePath);
+    } catch (error) {
+      // Not JSON this CLI reads, and so no envelope: a pre-transform may parse it.
+      if (!transformer.preTransform) throw error;
+    }
     if (isEnvelope(parsed)) return assertUserRows(parsed.users, file);
     if (!transformer.preTransform) return assertUserRows(parsed, file);
   }

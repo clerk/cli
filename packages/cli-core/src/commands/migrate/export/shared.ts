@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
 import { CliError } from "../../../lib/errors.ts";
+import { declareSoftExitOutcome, setTelemetryStage } from "../../../lib/telemetry.ts";
 import { log } from "../../../lib/log.ts";
 import { carryFlags, withFlags } from "../lib/carry-flags.ts";
 import { ENVELOPE_VERSION, type ExportEnvelope } from "../lib/export-file.ts";
@@ -45,6 +46,7 @@ export async function startExportRun(
   options: ExportCommonOptions,
   target: RunTarget,
 ): Promise<Run> {
+  setTelemetryStage("migrate_export_write");
   const runsDir = await resolveRunsDir(options.runsDir, { write: true });
   return startRun(runsDir, { kind: "export", target, source: target.platform });
 }
@@ -199,7 +201,11 @@ export function finishExport(input: FinishExportInput): FinishedExport {
   const skipped = record.counts.skipped ?? 0;
   // Partial, like an import with failures: the file holds what came back, and
   // the exit says it is not everyone, where `truncated` alone is easy to miss.
-  if (input.truncated) process.exitCode = 1;
+  setTelemetryStage("done");
+  if (input.truncated) {
+    process.exitCode = 1;
+    declareSoftExitOutcome("error", "migrate_export_truncated");
+  }
 
   if (options.json) {
     log.data(

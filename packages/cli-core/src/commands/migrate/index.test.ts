@@ -6,6 +6,7 @@ import { getMode, setMode } from "../../mode.ts";
 import { createProgram } from "../../cli-program.ts";
 import { exportPlatformKeys } from "./export/registry.ts";
 import { isAssumeYes, setAssumeYes } from "./lib/assume-yes.ts";
+import { captureTelemetryPayload } from "../../test/lib/stubs.ts";
 
 let saved: string | undefined;
 beforeAll(() => {
@@ -32,12 +33,13 @@ describe("registerMigrate", () => {
     expect(migrate?.description()).toContain("Migrate users");
   });
 
-  test("registers import, export, undo and runs", () => {
+  test("registers import, export, undo, runs and sources", () => {
     expect(findCommand(["migrate"])?.commands.map((cmd) => cmd.name())).toEqual([
       "import",
       "export",
       "undo",
       "runs",
+      "sources",
     ]);
   });
 
@@ -54,6 +56,7 @@ describe("registerMigrate", () => {
       "--new-run",
       "--require-password",
       "--skip-legal-checks",
+      "--reserve-unverified",
       "--firebase-signer-key",
       "--firebase-salt-separator",
       "--firebase-rounds",
@@ -158,6 +161,12 @@ describe("registerMigrate", () => {
     expect(runsCommand?.options.map((option) => option.long)).toEqual(["--json", "--runs-dir"]);
   });
 
+  test("registers sources with an optional source and --json", () => {
+    const sourcesCommand = findCommand(["migrate", "sources"]);
+    expect(sourcesCommand?.registeredArguments[0]?.required).toBe(false);
+    expect(sourcesCommand?.options.map((option) => option.long)).toEqual(["--json"]);
+  });
+
   test("registers undo with a required run ID and its flags", () => {
     const undoCommand = findCommand(["migrate", "undo"]);
     expect(undoCommand?.registeredArguments[0]?.required).toBe(true);
@@ -173,9 +182,9 @@ describe("registerMigrate", () => {
     ]);
   });
 
-  // No `.choices()`: an unknown key reaches resolveSource, whose error lists
-  // the valid ones. Completion offers them through `KNOWN_OPTION_VALUES`.
-  test("--source accepts any value", () => {
+  // It also takes a path, so it cannot use `.choices()`: completion offers the
+  // built-in keys through `KNOWN_OPTION_VALUES` instead.
+  test("--source accepts any value, so a path to a source you wrote gets through", () => {
     const option = findCommand(["migrate", "import"])?.options.find((o) => o.long === "--source");
     expect(option?.argChoices).toBeUndefined();
   });
@@ -292,5 +301,76 @@ describe("the migrate group's -y hook", () => {
   test("records its absence, so a previous run cannot leak into this one", async () => {
     setAssumeYes(true);
     expect(await parse(["migrate", "import", missing, "--secret-key", "sk_test_x"])).toBe(false);
+  });
+});
+
+describe("what the migrate hooks record for telemetry", () => {
+  let missing: string;
+  let missingDb: string;
+  beforeAll(() => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "clerk-migrate-telemetry-"));
+    missing = path.join(dir, "none.json");
+    missingDb = path.join(dir, "none.sqlite");
+  });
+
+  // The action is allowed to fail: only what the hooks record is under test.
+  async function payloadOf(argv: string[]) {
+    const program = createProgram();
+    program.exitOverride();
+    const { payload } = await captureTelemetryPayload(
+      "migrate",
+      () =>
+        program.parseAsync(["node", "clerk", ...argv]).then(
+          () => undefined,
+          () => undefined,
+        ),
+      { result: { outcome: "error", exitCode: 1 } },
+    );
+    return payload;
+  }
+
+  test("--app and --instance IDs are recorded before anything resolves", async () => {
+    const payload = await payloadOf([
+      "migrate",
+      "import",
+      missing,
+      "--app",
+      "app_x",
+      "--instance",
+      "ins_y",
+    ]);
+    expect(payload).toMatchObject({ app_id: "app_x", instance_id: "ins_y" });
+  });
+
+  test("an --instance alias is not an ID, and is dropped", async () => {
+    const payload = await payloadOf([
+      "migrate",
+      "import",
+      missing,
+      "--app",
+      "app_x",
+      "--instance",
+      "dev",
+    ]);
+    expect(payload).toMatchObject({ app_id: "app_x", instance_id: null });
+  });
+
+  test("an export subcommand records its platform as the source", async () => {
+    const payload = await payloadOf(["migrate", "export", "supabase", "--db-url", missingDb]);
+    expect(payload.migrate_source).toBe("supabase");
+    expect(payload.stage).toBe("migrate_export_read");
+  });
+
+  test("an export with a bad --output records no source or stage", async () => {
+    const payload = await payloadOf([
+      "migrate",
+      "export",
+      "supabase",
+      "--db-url",
+      missingDb,
+      "--output",
+      "users.csv",
+    ]);
+    expect(payload).toMatchObject({ migrate_source: null, stage: null });
   });
 });

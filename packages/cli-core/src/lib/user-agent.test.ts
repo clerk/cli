@@ -22,6 +22,11 @@ describe("buildUserAgent", () => {
     expect(ua).not.toMatch(/; ci\)/);
   });
 
+  test("appends a migrate segment for clerk migrate's requests", () => {
+    expect(buildUserAgent({}, { migrate: true })).toMatch(/; migrate\)$/);
+    expect(buildUserAgent({})).not.toContain("migrate");
+  });
+
   test("uses only printable ASCII characters", () => {
     expect(buildUserAgent({})).toMatch(/^[\x20-\x7e]+$/);
   });
