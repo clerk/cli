@@ -266,6 +266,23 @@ describe("Android setup workflow", () => {
     expect(await read(root, result.backups[0]!)).toContain("// local edit");
   });
 
+  test("keeps the backup of an assume-unchanged file, whose edits git status hides", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "app/build.gradle.kts"),
+      `${await read(root, "app/build.gradle.kts")}// local edit\n`,
+    );
+    await Bun.$`git update-index --assume-unchanged app/build.gradle.kts`.cwd(root).quiet();
+    const { api } = fakeNativeAPI();
+    const deps = { api, debugKeystore: keystore() };
+    const preview = await prepareSetup(setup(root), deps);
+    expect(preview.dirtyFiles).toEqual([]);
+    const result = await applySetup(preview, deps);
+    const backup = result.backups.find((path) => path.includes("build.gradle.kts"));
+    expect(backup).toBeDefined();
+    expect(await read(root, backup!)).toContain("// local edit");
+  });
+
   test("keeps backups when the Git status can't be read", async () => {
     const root = await fixture();
     await writeFile(
