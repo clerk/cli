@@ -139,11 +139,11 @@ leaves `.gitignore` alone.
 
 Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 
-| File           | Contents                                                                                                                                           |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, an import's flags, and the counts                           |
-| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending`, `refused`, or `passwordDropped` when present |
-| `lock`         | The PID of the process writing the run, while it runs                                                                                              |
+| File           | Contents                                                                                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, an import's flags, and the counts                                           |
+| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending`, `refused`, `phoneRefused`, or `passwordDropped` when present |
+| `lock`         | The PID of the process writing the run, while it runs                                                                                                              |
 
 On a `failed` line, `code` is the HTTP status, such as `422` or `429`, or
 `unknown`. On a `skipped` line it gives the reason in machine form:
@@ -916,8 +916,9 @@ Any reject stops the import, and it exits 2 with the command that adds
 `--allow-partial`. With `--allow-partial`, the rest import and each reject is
 recorded as `skipped` with its reason. `--dry-run` exits 2 when the real run
 would be refused, and 0 otherwise. A refused dry run says so after the checks,
-with the `--allow-partial` command when any user passes (`refused: true` in
-`--json`).
+with the advice and commands the real run would give: the `--allow-partial`
+command when any user passes, and the earlier run's undo (or continue) when it
+created some of the rejected users (`refused: true` in `--json`).
 
 ```
 Checks
@@ -968,13 +969,16 @@ duplicate secondary email should not undo an otherwise successful user — but
 it is a warning: the summary lists the user under "Imported without an email or
 phone Clerk refused", by kind and Clerk's reason (`result.warnings` in
 `--json`), and the user's line records it under `refused`, which `runs <id>`
-reports too. An attach with no answer stays `pending` for a re-run.
+reports too. An attach with no answer stays `pending` for a re-run, and so
+does one whose error says nothing about the identifier: a `401`, a `403` other
+than `unsupported_country_code`, or a `429` that outlasts the retries.
 
 The first phone gets the same treatment when Clerk refuses it — a country the
 instance does not support, or a number that is not E.164 — and the user has an
 email: the create is retried without the phone. The user counts as imported,
 and the summary lists them under "Imported without their phone", by Clerk's
-reason (`result.warnings` in `--json`).
+reason (`result.warnings` in `--json`). The user's line records the reason
+under `phoneRefused`, which `runs <id>` reports too.
 
 With [reserved](#verified-vs-unverified-identifiers) phones on the create, the
 refused one may be any of them, so the verified phone is retried alone first.
@@ -1037,7 +1041,8 @@ It prints the runs folder first. The listing shows each run's ID, date, kind,
 status, target, file and counts. `runs <id>` adds the error breakdown and the
 users that failed, were skipped, or are `creating` with no answer to confirm the
 create (`unconfirmed` in `--json`). It also warns about users imported without
-an email or phone Clerk refused (`warnings` and `importedWithout` in `--json`).
+their phone, or an email or phone Clerk refused (`warnings` and
+`importedWithout` in `--json`).
 Then it prints the path to the full record, and what
 to run next: for an interrupted or partial import, the import that continues it,
 with the flags it ran with, then the undo. The continue is left out when

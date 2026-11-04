@@ -112,18 +112,22 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
   return [...counts].map(([error, count]) => ({ error, count })).sort((a, b) => b.count - a.count);
 }
 
-/** Users imported without an email or phone Clerk refused, by kind and reason. */
+/**
+ * Users imported without their first phone, or an email or phone Clerk
+ * refused, by reason: worded as the import's `result.warnings`.
+ */
 function warningBreakdown(lines: UserLine[]): { warning: string; count: number }[] {
   const counts = new Map<string, number>();
+  const add = (warning: string) => counts.set(warning, (counts.get(warning) ?? 0) + 1);
   for (const line of lines) {
     if (line.status !== "created") continue;
-    for (const reason of line.refused ?? []) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+    if (line.phoneRefused) add(`imported without their phone: ${line.phoneRefused}`);
+    for (const reason of line.refused ?? []) {
+      add(`imported without an email or phone Clerk refused: ${reason}`);
+    }
   }
   return [...counts]
-    .map(([reason, count]) => ({
-      warning: `imported without an email or phone Clerk refused: ${reason}`,
-      count,
-    }))
+    .map(([warning, count]) => ({ warning, count }))
     .sort((a, b) => b.count - a.count);
 }
 
@@ -255,7 +259,9 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
     warnings: warningBreakdown(lines),
     failed: lines.filter((line) => line.status === "failed"),
     importedWithout: lines.filter(
-      (line) => line.status === "created" && (line.refused?.length ?? 0) > 0,
+      (line) =>
+        line.status === "created" &&
+        (line.phoneRefused !== undefined || (line.refused?.length ?? 0) > 0),
     ),
     skipped: lines.filter((line) => line.status === "skipped"),
     unconfirmed: lines.filter((line) => line.status === "creating"),

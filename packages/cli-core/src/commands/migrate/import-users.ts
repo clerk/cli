@@ -684,11 +684,13 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       return;
     }
 
+    const phoneRefused = created.phoneRefusal && normalizeErrorMessage(created.phoneRefusal);
     const line: UserLine = {
       sourceId: user.userId,
       clerkId: created.clerkUserId,
       status: "created",
       ...(user.passwordDropped ? { passwordDropped: true } : {}),
+      ...(phoneRefused ? { phoneRefused } : {}),
     };
     // One line, pending and all: a run stopped between a `created` line and a
     // later `pending` one would read the user as settled, its extras unsent.
@@ -699,10 +701,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     }));
     const toAttach = [...pendingIdentifiers(identifiers, reserved), ...retried];
     record(toAttach.length > 0 ? { ...line, pending: toAttach } : line);
-    if (created.phoneRefusal) {
-      const reason = normalizeErrorMessage(created.phoneRefusal);
-      droppedPhones.set(reason, (droppedPhones.get(reason) ?? 0) + 1);
-    }
+    if (phoneRefused) droppedPhones.set(phoneRefused, (droppedPhones.get(phoneRefused) ?? 0) + 1);
     await finishUser(line, toAttach, [...created.notes, ...retries]);
     successful++;
     processed++;

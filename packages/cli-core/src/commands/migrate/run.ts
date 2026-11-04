@@ -1359,36 +1359,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       if (!options.json) printChecks(checks);
 
-      if (options.dryRun) {
-        setTelemetryStage("migrate_dry_run");
-        if (options.json) preview({ dryRun: true, ...(refused ? { refused: true } : {}) });
-        else {
-          log.blank();
-          log.info(dim("Dry run: nothing was written."));
-          // Said in words too, or the gutter would close on "Done".
-          if (refused) {
-            const nonePass = checks.importable.length === 0 && attachOnly.length === 0;
-            log.warn(
-              `The import would refuse: ${plural(checks.rejects.length, "user")} would be rejected. ` +
-                (nonePass
-                  ? "Fix them first: with every user rejected, --allow-partial would import nobody."
-                  : `Fix them, or pass --allow-partial to import the other ${plural(checks.importable.length + attachOnly.length, "user")}.`),
-            );
-            if (!nonePass) {
-              setNextSteps([commandFor(options, input.fromExport, ["--allow-partial", "--yes"])]);
-            }
-          }
-        }
-        // The exit code says what the real run would do.
-        if (refused) {
-          process.exitCode = 2;
-          declareSoftExitOutcome("error", "migrate_checks_rejected");
-        }
-        return;
-      }
-
-      if (refused) {
-        if (options.json) preview({ refused: true });
+      // What a refused import says to do next, which the dry run predicts.
+      const refusalAdvice = () => {
         const earlier = earlierRunHolding(runsDir, target.instanceId, checks, sha256);
         const undoEarlier = earlier ? undoCommand(earlier.id, carry) : undefined;
         const earlierRun =
@@ -1423,35 +1395,65 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               `undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again`,
             ].join(", or ")
           : "";
+        const advice = earlier
+          ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from ${earlier.sameFile ? "this file" : "an earlier version of this file"}. ` +
+            (continueEarlier
+              ? `Drop --new-run to continue run ${earlier.id}. Or ${ways}.`
+              : `${ways[0]!.toUpperCase()}${ways.slice(1)}.`)
+          : nonePass
+            ? "Fix them: with every user rejected, --allow-partial would import nobody."
+            : "Fix them, or pass --allow-partial to import the rest and record them as skipped.";
+        const steps = [
+          ...(continueEarlier
+            ? [{ command: continueEarlier, description: `Continue run ${earlier!.id}` }]
+            : []),
+          ...(nonePass
+            ? []
+            : [
+                {
+                  command: commandFor(options, input.fromExport, ["--allow-partial", "--yes"]),
+                  description: "Import the users that pass",
+                },
+              ]),
+          ...(undoEarlier
+            ? [{ command: undoEarlier, description: `Undo run ${earlier!.id} first` }]
+            : []),
+        ];
+        return { advice, steps };
+      };
+
+      if (options.dryRun) {
+        setTelemetryStage("migrate_dry_run");
+        if (options.json) preview({ dryRun: true, ...(refused ? { refused: true } : {}) });
+        else {
+          log.blank();
+          log.info(dim("Dry run: nothing was written."));
+          // Said in words too, or the gutter would close on "Done".
+          if (refused) {
+            const { advice, steps } = refusalAdvice();
+            log.warn(
+              `The import would refuse: ${plural(checks.rejects.length, "user")} would be rejected. ${advice}`,
+            );
+            if (steps.length > 0) setNextSteps(steps.map((step) => step.command));
+          }
+        }
+        // The exit code says what the real run would do.
+        if (refused) {
+          process.exitCode = 2;
+          declareSoftExitOutcome("error", "migrate_checks_rejected");
+        }
+        return;
+      }
+
+      if (refused) {
+        if (options.json) preview({ refused: true });
+        const { advice, steps } = refusalAdvice();
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
-            `${rejectSummary(checks, options.json)} ` +
-            (earlier
-              ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from ${earlier.sameFile ? "this file" : "an earlier version of this file"}. ` +
-                (continueEarlier
-                  ? `Drop --new-run to continue run ${earlier.id}. Or ${ways}.`
-                  : `${ways[0]!.toUpperCase()}${ways.slice(1)}.`)
-              : nonePass
-                ? "Fix them: with every user rejected, --allow-partial would import nobody."
-                : "Fix them, or pass --allow-partial to import the rest and record them as skipped."),
+            `${rejectSummary(checks, options.json)} ${advice}`,
           undefined,
           undefined,
-          [
-            ...(continueEarlier
-              ? [{ command: continueEarlier, description: `Continue run ${earlier!.id}` }]
-              : []),
-            ...(nonePass
-              ? []
-              : [
-                  {
-                    command: commandFor(options, input.fromExport, ["--allow-partial", "--yes"]),
-                    description: "Import the users that pass",
-                  },
-                ]),
-            ...(undoEarlier
-              ? [{ command: undoEarlier, description: `Undo run ${earlier!.id} first` }]
-              : []),
-          ],
+          steps,
         );
       }
 

@@ -132,6 +132,11 @@ export type UserLine = {
    * existed, by kind and Clerk's reason. The user is imported without them.
    */
   refused?: string[];
+  /**
+   * On a `created` line: Clerk's reason for refusing the first phone on the
+   * create, which was retried without it. The user is imported without it.
+   */
+  phoneRefused?: string;
   /** Why a user was skipped. */
   reason?: string;
   error?: string;

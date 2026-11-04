@@ -852,6 +852,8 @@ describe("importUsers", () => {
     expect(lines.at(-1)?.error).toContain(
       `Failed to add phone +31612345678: ${clerkErr.long_message}`,
     );
+    // On the line too, so `runs <id>` warns about it as the summary does.
+    expect(lines.at(-1)).toMatchObject({ status: "created", phoneRefused: clerkErr.long_message });
   });
 
   test("drops a refused phone's statuses with it", async () => {

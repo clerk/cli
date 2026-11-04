@@ -1470,7 +1470,7 @@ describe("run", () => {
       expect(captured.err).toContain("Dry run: nothing was written.");
       // Said in words, not only by the exit code.
       expect(Bun.stripANSI(captured.err)).toContain(
-        "The import would refuse: 1 user would be rejected. Fix them, or pass --allow-partial to import the other 2 users.",
+        "The import would refuse: 1 user would be rejected. Fix them, or pass --allow-partial to import the rest and record them as skipped.",
       );
       expect(process.exitCode).toBe(2);
     });
@@ -2678,6 +2678,31 @@ describe("run", () => {
       expect(error.examples?.map((example) => example.command)).toContain(
         `clerk migrate undo ${first!.id} --secret-key <key>`,
       );
+      expect(created()).toEqual([]);
+    });
+
+    // A dry run predicts the real refusal, the earlier run's undo and all.
+    test("a changed file's refused dry run names the earlier run and its undo", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([export2[0], { ...export2[1], primary_email_address: "fixed@x.dev" }]),
+      );
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+      captured.clear();
+
+      await run({ ...baseOptions, dryRun: true });
+
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain(
+        `The import would refuse: 1 user would be rejected. 1 of them was created by run ${first!.id}, from an earlier version of this file.`,
+      );
+      expect(err).toContain(`clerk migrate undo ${first!.id} --secret-key <key>`);
+      expect(process.exitCode).toBe(2);
       expect(created()).toEqual([]);
     });
 

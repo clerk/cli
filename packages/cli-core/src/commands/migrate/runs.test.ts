@@ -215,6 +215,46 @@ describe("runs <id>", () => {
     expect(err).toContain("Imported without an email or phone Clerk refused (1)");
   });
 
+  // Clerk refused the first phone on the create, retried without it: the
+  // import's summary warned, so `runs <id>` has to as well.
+  test("warns about users imported without their phone", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({
+      sourceId: "a",
+      status: "created",
+      clerkId: "user_a",
+      error: "Failed to add phone +31612345678: Phone numbers from this country are not supported.",
+      phoneRefused: "Phone numbers from this country are not supported.",
+    });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      warnings: [
+        {
+          warning:
+            "imported without their phone: Phone numbers from this country are not supported.",
+          count: 1,
+        },
+      ],
+      importedWithout: [{ sourceId: "a" }],
+    });
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(
+      "1 user: imported without their phone: Phone numbers from this country are not supported.",
+    );
+    expect(err).toContain("Imported without an email or phone Clerk refused (1)");
+  });
+
   // A stopped import's unsent users have no lines: only the count says so.
   test("shows the users a stopped import never sent, in the list and the run", async () => {
     fs.writeFileSync(usersFile(), "[]");
