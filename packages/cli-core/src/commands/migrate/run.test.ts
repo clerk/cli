@@ -31,6 +31,7 @@ import {
   listRuns,
   patchRun,
   readRun,
+  runDir,
   sha256File,
   startRun,
   importLockFile,
@@ -1333,7 +1334,10 @@ describe("run", () => {
     await run(baseOptions);
 
     const [record] = listRuns(runsDir());
-    expect(captured.err.split(`Run ${record?.id}: `)).toHaveLength(2);
+    expect(record).toBeDefined();
+    const line = `Run ${record!.id}: ${runDir(runsDir(), record!.id)}`;
+    expect(captured.err).toContain(line);
+    expect(captured.err.split(line)).toHaveLength(2);
   });
 
   test("exits 1 when some users failed", async () => {
