@@ -10,7 +10,7 @@ export const {
   createFile,
   snapshotFile,
   assertUnchanged,
-  gitDirty,
+  gitStatus,
   gitTracked,
   removeEmptyBackupFolders,
   replaceProject,
