@@ -439,6 +439,26 @@ describe("importUsers", () => {
     expect([...summary.droppedIdentifiers]).toEqual([["additional email: that email is taken", 1]]);
   });
 
+  // A key Clerk stopped accepting says nothing about the email itself.
+  test("notes an attach the key was refused for, without calling it refused", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? clerkError(401, "The provided Clerk Secret Key is invalid.")
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.error).toContain("Failed to add additional email b@x.dev");
+    expect(lines.at(-1)).not.toHaveProperty("refused");
+    expect(summary.droppedIdentifiers.size).toBe(0);
+  });
+
   test("counts each user once per reason Clerk refused its identifiers", async () => {
     stub((url) =>
       url.endsWith("/v1/email_addresses")

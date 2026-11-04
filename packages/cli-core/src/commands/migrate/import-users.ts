@@ -283,10 +283,14 @@ async function attachIdentifier(
     if (error instanceof NotSentError || outcomeUnknown(error)) return { pending: true };
     const kindLabel = `${verified ? "additional" : "unverified"} ${kind}`;
     const { message } = failureOf(error);
-    return {
-      note: `Failed to add ${kindLabel} ${value}: ${message}`,
-      refused: `${kindLabel}: ${normalizeErrorMessage(message)}`,
-    };
+    const note = `Failed to add ${kindLabel} ${value}: ${message}`;
+    // Only Clerk's answer about the identifier itself is a refusal: a key it
+    // no longer accepts, or a 429 that outlasted the retries, says nothing
+    // about the email or phone.
+    const refusal = error instanceof BapiError && error.status !== 401;
+    return refusal
+      ? { note, refused: `${kindLabel}: ${normalizeErrorMessage(message)}` }
+      : { note };
   }
 }
 

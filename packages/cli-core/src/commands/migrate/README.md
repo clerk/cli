@@ -139,11 +139,11 @@ leaves `.gitignore` alone.
 
 Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 
-| File           | Contents                                                                                                                               |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, an import's flags, and the counts               |
-| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending` or `passwordDropped` when present |
-| `lock`         | The PID of the process writing the run, while it runs                                                                                  |
+| File           | Contents                                                                                                                                          |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, an import's flags, and the counts                          |
+| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending`, `refused` or `passwordDropped` when present |
+| `lock`         | The PID of the process writing the run, while it runs                                                                                             |
 
 On a `failed` line, `code` is the HTTP status, such as `422` or `429`, or
 `unknown`. On a `skipped` line it gives the reason in machine form:
@@ -1034,11 +1034,11 @@ clerk migrate runs --json
 | `--runs-dir <path>` | Read runs from somewhere else |
 
 It prints the runs folder first. The listing shows each run's ID, date, kind,
-status, target, file and counts. `runs <id>` adds the error breakdown, the
-warnings for users imported without an email or phone Clerk refused
-(`warnings` and `importedWithout` in `--json`), and the users that failed, were
-skipped, or are `creating` with no answer to confirm the create (`unconfirmed`
-in `--json`), with the path to the full record, then what
+status, target, file and counts. `runs <id>` adds the error breakdown and the
+users that failed, were skipped, or are `creating` with no answer to confirm the
+create (`unconfirmed` in `--json`). It also warns about users imported without
+an email or phone Clerk refused (`warnings` and `importedWithout` in `--json`).
+Then it prints the path to the full record, and what
 to run next: for an interrupted or partial import, the import that continues it,
 with the flags it ran with, then the undo. The continue is left out when
 importing the file again might not reach this run: a newer run of the same file
