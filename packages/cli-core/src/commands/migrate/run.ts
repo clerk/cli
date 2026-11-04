@@ -87,6 +87,7 @@ import {
   openUndoOf,
   patchRun,
   importsOfFile,
+  undoneInFull,
   undosOf,
   withAttempt,
 } from "./lib/run-store.ts";
@@ -501,17 +502,6 @@ function sameFileAndInstance(
     record.file?.sha256 === match.sha256 &&
     (record.target.instanceId === match.instanceId ||
       record.target.instanceId === match.keyInstanceId)
-  );
-}
-
-/** True when a run's users are gone: it is marked undone, or an undo of it finished. */
-function undoneInFull(runsDir: string, record: RunRecord): boolean {
-  return (
-    runState(runsDir, record) === "undone" ||
-    listRuns(runsDir).some(
-      (undo) =>
-        undo.kind === "undo" && undo.undoes === record.id && runState(runsDir, undo) === "complete",
-    )
   );
 }
 
@@ -1440,7 +1430,12 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
             log.warn(
               `The import would refuse: ${plural(checks.rejects.length, "user")} would be rejected. ${advice}`,
             );
-            if (steps.length > 0) setNextSteps(steps.map((step) => step.command));
+            if (steps.length > 0) {
+              const commands = steps.map((step) => step.command);
+              setNextSteps(commands);
+              // With no terminal, the gutter drops what setNextSteps gets.
+              printAgentNextSteps(commands);
+            }
           }
         }
         // The exit code says what the real run would do.
@@ -1452,8 +1447,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
 
       if (refused) {
-        if (options.json) preview({ refused: true });
         const { advice, steps } = refusalAdvice();
+        if (options.json) preview({ refused: true, advice, steps });
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
             `${rejectSummary(checks, options.json)} ${advice}`,

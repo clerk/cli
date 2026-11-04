@@ -15,6 +15,7 @@ import path from "node:path";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { type CliError, EXIT_CODE } from "../../lib/errors.ts";
 import * as plapi from "../../lib/plapi.ts";
+import { _resetMode, setMode } from "../../mode.ts";
 import {
   captureTelemetryPayload,
   credentialStoreStubs,
@@ -1475,6 +1476,26 @@ describe("run", () => {
       expect(process.exitCode).toBe(2);
     });
 
+    // The real run's next step: printed by the gutter for a person, and
+    // straight to the log for an agent, whose gutter drops it.
+    test.each([["human"], ["agent"]] as const)(
+      "a refused --dry-run gives the --allow-partial command (%s)",
+      async (mode) => {
+        fs.writeFileSync(
+          path.join(workDir, "export.json"),
+          JSON.stringify([...export2, { id: "u3" }]),
+        );
+        setMode(mode);
+        try {
+          await run({ ...baseOptions, dryRun: true });
+        } finally {
+          _resetMode();
+        }
+
+        expect(Bun.stripANSI(captured.err)).toMatch(/→ .*--allow-partial --yes/);
+      },
+    );
+
     test("--dry-run --json says the import would be refused", async () => {
       fs.writeFileSync(
         path.join(workDir, "export.json"),
@@ -1768,7 +1789,13 @@ describe("run", () => {
         JSON.stringify([...export2, { id: "u3" }]),
       );
       expect(await exitCodeOf(run({ ...baseOptions, json: true }))).toBe(EXIT_CODE.USAGE);
-      expect(JSON.parse(captured.out)).toMatchObject({ run: null, refused: true });
+      // The dry run's advice and commands, on stdout for an agent to act on.
+      expect(JSON.parse(captured.out)).toMatchObject({
+        run: null,
+        refused: true,
+        advice: "Fix them, or pass --allow-partial to import the rest and record them as skipped.",
+        steps: [{ command: expect.stringContaining("--allow-partial --yes") }],
+      });
       expect(created()).toHaveLength(0);
     });
 
@@ -1899,7 +1926,7 @@ describe("run", () => {
                 { code: "unsupported_country_code", message: "unsupported", long_message: COUNTRY },
               ],
             },
-            { status: 422 },
+            { status: 403 },
           );
         }
         return clerk(input, init);
@@ -1988,15 +2015,24 @@ describe("run", () => {
         ]),
       );
       const clerk = globalThis.fetch;
-      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
-        new URL(input.toString()).pathname === "/v1/email_addresses"
-          ? Response.json(
-              {
-                errors: [{ code: "form_identifier_exists", message: "taken", long_message: TAKEN }],
-              },
-              { status: 422 },
-            )
-          : clerk(input, init)) as typeof fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const { pathname } = new URL(input.toString());
+        if (pathname === "/v1/email_addresses") {
+          return Response.json(
+            { errors: [{ code: "form_identifier_exists", message: "taken", long_message: TAKEN }] },
+            { status: 422 },
+          );
+        }
+        // The lookup a taken attach makes: this user holds only its primary.
+        if (init?.method === "GET" && /^\/v1\/users\/user_[^/]+$/.test(pathname)) {
+          return Response.json({
+            id: pathname.split("/").pop(),
+            email_addresses: [{ email_address: "a@x.dev" }],
+            phone_numbers: [],
+          });
+        }
+        return clerk(input, init);
+      }) as typeof fetch;
     });
 
     test("is counted in the summary", async () => {
@@ -2335,6 +2371,47 @@ describe("run", () => {
       ).toEqual([
         { user_id: "user_found", phone_number: "+31612345678", primary: false, verified: false },
       ]);
+    });
+
+    // The retry without a refused phone was cut off: the continue that adopts
+    // the user reads the reason from that `creating` line, and still warns.
+    test("an adopted user keeps the phone its cut-off retry went without", async () => {
+      const reason = "Phone numbers from this country (Netherlands) are currently not supported.";
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", primary_email_address: "b@x.dev", primary_phone_number: "+31612345678" },
+        ]),
+      );
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating", phoneRefused: reason })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      captured.clear();
+      stubClerk({
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+        phoneRefused: reason,
+      });
+      expect(Bun.stripANSI(captured.err)).toContain(
+        `Imported without their phone:\n  1 user: ${reason}`,
+      );
     });
 
     // A reserved create with no answer: its latest line has to keep `reserved`,

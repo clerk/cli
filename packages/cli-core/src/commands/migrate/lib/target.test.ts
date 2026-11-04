@@ -179,9 +179,11 @@ describe("fetchInstanceIdentity", () => {
         { status: 401 },
       )) as unknown as typeof fetch;
 
-    await expect(fetchInstanceIdentity("sk_test_bad")).rejects.toMatchObject({
-      status: 401,
-      code: "clerk_key_invalid",
+    await expect(fetchInstanceIdentity("sk_test_bad", "--secret-key")).rejects.toMatchObject({
+      code: "auth_required",
+      message: expect.stringContaining(
+        "Clerk rejected the secret key from --secret-key (401): The provided Clerk Secret Key is invalid.",
+      ),
     });
   });
 });

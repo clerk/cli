@@ -153,6 +153,7 @@ describe("runs <id>", () => {
       sourceId: "b",
       status: "created",
       clerkId: "user_b",
+      error: "Not added yet: additional email b2@x.dev: Unauthorized request",
       pending: [{ kind: "email", value: "b2@x.dev", verified: true }],
     });
     const record = run.finish();
@@ -162,6 +163,7 @@ describe("runs <id>", () => {
       run: { state: "partial", counts: { creating: 1, pending: 1 } },
       errors: [{ error: "bad gateway (a re-run checks)", count: 1 }],
       unconfirmed: [{ sourceId: "a" }],
+      leftToAttach: [{ sourceId: "b" }],
     });
 
     captured.clear();
@@ -170,6 +172,9 @@ describe("runs <id>", () => {
     expect(err).toContain("1 created, 1 left to attach, 1 not confirmed");
     expect(err).toContain("Not confirmed (Clerk may have created them; a continue checks) (1)");
     expect(err).toContain("1 user: bad gateway (a re-run checks)");
+    // And why each extra is still unattached.
+    expect(err).toContain("Identifiers left to attach (1)");
+    expect(err).toContain("b  Not added yet: additional email b2@x.dev: Unauthorized request");
   });
 
   // Imported, so not failed, but without an email or phone Clerk refused once
@@ -212,7 +217,7 @@ describe("runs <id>", () => {
     expect(err).toContain(
       "1 user: imported without an email or phone Clerk refused: unverified phone: That phone number is taken.",
     );
-    expect(err).toContain("Imported without an email or phone (1)");
+    expect(err).toContain("Imported without an email or phone Clerk refused (1)");
   });
 
   // Clerk refused the first phone on the create, retried without it: the
@@ -252,7 +257,39 @@ describe("runs <id>", () => {
     expect(err).toContain(
       "1 user: imported without their phone: Phone numbers from this country are not supported.",
     );
-    expect(err).toContain("Imported without an email or phone (1)");
+    expect(err).toContain("Imported without an email or phone Clerk refused (1)");
+  });
+
+  // Undo writes its `deleted` lines to its own run: the import's still end on
+  // `created`, for users that no longer exist.
+  test("warns about nothing once the run is undone in full", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({
+      sourceId: "a",
+      status: "created",
+      clerkId: "user_a",
+      error: "Failed to add unverified phone +15555550100: That phone number is taken.",
+      refused: ["unverified phone: That phone number is taken."],
+    });
+    const record = run.finish();
+    const undo = startRun(runsDir, { kind: "undo", target: TARGET, undoes: record.id });
+    undo.append({ sourceId: "a", status: "deleted", clerkId: "user_a" });
+    undo.finish();
+
+    await runs(record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({ warnings: [], importedWithout: [] });
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    const err = Bun.stripANSI(captured.err);
+    expect(err).not.toContain("Warnings");
+    expect(err).not.toContain("Imported without");
   });
 
   // A stopped import's unsent users have no lines: only the count says so.

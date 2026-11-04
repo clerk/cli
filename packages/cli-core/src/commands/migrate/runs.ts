@@ -18,6 +18,7 @@ import {
   latestUserLines,
   listRuns,
   importsOfFile,
+  undoneInFull,
   undosOf,
   readRun,
   resolveRunsDir,
@@ -251,18 +252,22 @@ function printList(runsDir: string, records: RunRecord[]): void {
 function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const lines = [...latestUserLines(runsDir, record.id).values()];
   const state = runState(runsDir, record);
+  // The undo's `deleted` lines are its own run's: these users are gone, so
+  // nothing they were imported without is worth a warning.
+  const created = undoneInFull(runsDir, record)
+    ? []
+    : lines.filter((line) => line.status === "created");
   return {
     runsDir,
     run: { ...record, state },
     next: nextCommands(runsDir, record, state, carry, lines),
     errors: errorBreakdown(lines),
-    warnings: warningBreakdown(lines),
+    warnings: warningBreakdown(created),
     failed: lines.filter((line) => line.status === "failed"),
-    importedWithout: lines.filter(
-      (line) =>
-        line.status === "created" &&
-        (line.phoneRefused !== undefined || (line.refused?.length ?? 0) > 0),
+    importedWithout: created.filter(
+      (line) => line.phoneRefused !== undefined || (line.refused?.length ?? 0) > 0,
     ),
+    leftToAttach: created.filter((line) => (line.pending?.length ?? 0) > 0),
     skipped: lines.filter((line) => line.status === "skipped"),
     unconfirmed: lines.filter((line) => line.status === "creating"),
   };
@@ -323,7 +328,8 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
   }
 
   printUsers("Failed", view.failed, usersFile);
-  printUsers("Imported without an email or phone", view.importedWithout, usersFile);
+  printUsers("Imported without an email or phone Clerk refused", view.importedWithout, usersFile);
+  printUsers("Identifiers left to attach", view.leftToAttach, usersFile);
   printUsers(
     "Not confirmed (Clerk may have created them; a continue checks)",
     view.unconfirmed,
