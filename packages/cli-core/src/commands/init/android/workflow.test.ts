@@ -266,6 +266,43 @@ describe("Android setup workflow", () => {
     expect(await read(root, result.backups[0]!)).toContain("// local edit");
   });
 
+  test("keeps the backup of an assume-unchanged file, whose edits git status hides", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "app/build.gradle.kts"),
+      `${await read(root, "app/build.gradle.kts")}// local edit\n`,
+    );
+    await Bun.$`git update-index --assume-unchanged app/build.gradle.kts`.cwd(root).quiet();
+    const { api } = fakeNativeAPI();
+    const deps = { api, debugKeystore: keystore() };
+    const preview = await prepareSetup(setup(root), deps);
+    expect(preview.dirtyFiles).toEqual([]);
+    const result = await applySetup(preview, deps);
+    const backup = result.backups.find((path) => path.includes("build.gradle.kts"));
+    expect(backup).toBeDefined();
+    expect(await read(root, backup!)).toContain("// local edit");
+  });
+
+  test("keeps backups when the Git status can't be read", async () => {
+    const root = await fixture();
+    await writeFile(
+      join(root, "app/build.gradle.kts"),
+      `${await read(root, "app/build.gradle.kts")}// local edit\n`,
+    );
+    // A config git status rejects but git ls-files ignores: the file is tracked, yet whether it
+    // was clean is unknown, so its backup must survive.
+    await Bun.$`git config status.showUntrackedFiles bogus`.cwd(root).quiet();
+    const { api } = fakeNativeAPI();
+    const deps = { api, debugKeystore: keystore() };
+    const preview = await prepareSetup(setup(root), deps);
+    expect(preview.dirtyFiles).toEqual([]);
+    expect(preview.cleanGitFiles).toEqual([]);
+    const result = await applySetup(preview, deps);
+    const backup = result.backups.find((path) => path.includes("build.gradle.kts"));
+    expect(backup).toBeDefined();
+    expect(await read(root, backup!)).toContain("// local edit");
+  });
+
   test("keeps backups when there is no git executable", async () => {
     const root = await fixture();
     const { api } = fakeNativeAPI();

@@ -126,18 +126,29 @@ export function fileOperations(setupError: SetupErrorFactory) {
     }
   }
 
-  async function gitDirty(root: string, path: string): Promise<boolean> {
+  /**
+   * Whether the file has uncommitted changes. "unknown" when git is missing, the project isn't a
+   * repository, or `git status` fails or times out: setup still proceeds (a backup is always
+   * created), but nothing may treat the file as clean.
+   */
+  async function gitStatus(root: string, path: string): Promise<"clean" | "dirty" | "unknown"> {
     const child = spawnGit(root, ["status", "--porcelain", "--", path], "pipe");
-    if (!child) return false;
+    if (!child) return "unknown";
     const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
-    // A non-Git project can still be edited; a backup is always created.
-    return code === 0 && output.trim().length > 0;
+    if (code !== 0) return "unknown";
+    return output.trim().length > 0 ? "dirty" : "clean";
   }
 
-  /** Whether git tracks the file, so it can restore it; false for untracked, ignored, or non-git files. */
+  /**
+   * Whether git tracks the file as a normal entry, so it can restore it; false for untracked,
+   * ignored, or non-git files, and for entries whose edits `git status` hides (assume-unchanged,
+   * skip-worktree), since restoring those would drop the edits.
+   */
   async function gitTracked(root: string, path: string): Promise<boolean> {
-    const child = spawnGit(root, ["ls-files", "--error-unmatch", "--", path], "ignore");
-    return child !== undefined && (await child.exited) === 0;
+    const child = spawnGit(root, ["ls-files", "-v", "--error-unmatch", "--", path], "pipe");
+    if (!child) return false;
+    const [output, code] = await Promise.all([new Response(child.stdout).text(), child.exited]);
+    return code === 0 && output.startsWith("H ");
   }
 
   /** Removes the backup folders when they hold nothing, so setup leaves no empty folders behind. */
@@ -229,7 +240,7 @@ export function fileOperations(setupError: SetupErrorFactory) {
     createFile,
     snapshotFile,
     assertUnchanged,
-    gitDirty,
+    gitStatus,
     gitTracked,
     removeEmptyBackupFolders,
     replaceProject,
