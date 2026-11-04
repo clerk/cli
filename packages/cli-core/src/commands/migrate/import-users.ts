@@ -615,7 +615,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   // Attach-only users count towards the bar too: a continue with only those
   // left would otherwise sit at 0/0.
   let attachedUsers = 0;
-  // Of those, the ones with nothing left pending.
+  // Of those, the ones whose identifiers all attached.
   let finishedAttaching = 0;
   const progress = () =>
     report?.({ done: processed + attachedUsers, ok: successful + finishedAttaching, failed });
@@ -651,7 +651,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
    * Attaches a created user's extra identifiers. The user is already on record
    * with them `pending`, so a run stopped before they attach can finish them.
    */
-  /** @returns Whether every identifier attached, leaving nothing pending. */
+  /** @returns Whether every identifier attached: none refused, none pending. */
   const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
     const { error: _error, pending: _pending, refused: earlier = [], ...base } = line;
     const attached = await attachAll(ctx, base.clerkId ?? "", toAttach);
@@ -672,7 +672,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         ...(attached.pending.length > 0 ? { pending: attached.pending } : {}),
       });
     }
-    return attached.pending.length === 0;
+    return attached.pending.length === 0 && attached.notes.length === 0;
   };
 
   /**

@@ -47,7 +47,7 @@ export type ImportSummary = {
   successful: number;
   /**
    * Users the run's earlier attempt created whose remaining identifiers this
-   * one attached, leaving none pending. Not in `successful`: they were
+   * one attached, every one of them: none refused, none left pending. Not in `successful`: they were
    * imported before.
    */
   attached: number;

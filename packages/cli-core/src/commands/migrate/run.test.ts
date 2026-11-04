@@ -2241,6 +2241,23 @@ describe("run", () => {
       expect(err).toContain("Identifiers left to attach: 1 user");
     });
 
+    // Refused, not attached: nothing is pending, but nothing finished either.
+    test("a continue doesn't count an attach Clerk refuses as finished", async () => {
+      await partialRun();
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+        new URL(input.toString()).pathname === "/v1/email_addresses"
+          ? Response.json(
+              { errors: [{ code: "form_identifier_exists", message: "That email is taken." }] },
+              { status: 422 },
+            )
+          : clerk(input, init)) as typeof fetch;
+
+      await run(baseOptions);
+
+      expect(Bun.stripANSI(captured.err)).not.toContain("Finished attaching");
+    });
+
     test("a continue puts a user it only attaches to under result.attached in --json", async () => {
       await partialRun();
 
