@@ -459,6 +459,51 @@ describe("importUsers", () => {
     expect(summary.droppedIdentifiers.size).toBe(0);
   });
 
+  test("leaves an attach pending on a 403 that isn't about the phone", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? clerkError(403, "You are not authorized to perform this request.")
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
+    expect(summary.droppedIdentifiers.size).toBe(0);
+  });
+
+  // A country Clerk doesn't support is about the phone, so it is a refusal.
+  test("counts a 403 for the phone's country as refused", async () => {
+    const country = "Phone numbers from this country (Netherlands) are currently not supported.";
+    stub((url) =>
+      url.endsWith("/v1/phone_numbers")
+        ? new Response(
+            JSON.stringify({
+              errors: [
+                { code: "unsupported_country_code", message: "unsupported", long_message: country },
+              ],
+            }),
+            { status: 403 },
+          )
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev"], unverifiedPhoneNumbers: ["+31612345678"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+    expect([...summary.droppedIdentifiers]).toEqual([[`unverified phone: ${country}`, 1]]);
+  });
+
   test("counts each user once per reason Clerk refused its identifiers", async () => {
     stub((url) =>
       url.endsWith("/v1/email_addresses")

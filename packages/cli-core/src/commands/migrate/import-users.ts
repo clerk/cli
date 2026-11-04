@@ -281,9 +281,13 @@ async function attachIdentifier(
     return {};
   } catch (error) {
     if (error instanceof NotSentError || outcomeUnknown(error)) return { pending: true };
-    // A key Clerk stopped accepting, or a 429 that outlasted the retries, says
-    // nothing about the email or phone: left pending, a re-run attaches it.
-    if (!(error instanceof BapiError) || error.status === 401) return { pending: true };
+    // A key Clerk stopped accepting or doesn't permit, or a 429 that outlasted
+    // the retries, says nothing about the email or phone: left pending, a
+    // re-run attaches it. A country Clerk doesn't support is about the phone.
+    const aboutTheKey =
+      error instanceof BapiError &&
+      (error.status === 401 || (error.status === 403 && error.code !== "unsupported_country_code"));
+    if (!(error instanceof BapiError) || aboutTheKey) return { pending: true };
     const kindLabel = `${verified ? "additional" : "unverified"} ${kind}`;
     const { message } = failureOf(error);
     return {
