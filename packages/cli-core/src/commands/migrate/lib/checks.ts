@@ -35,7 +35,7 @@ import {
 } from "./clerk-config.ts";
 import { resolveUserLimit, type UserLimitSource } from "./instance.ts";
 import { buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
-import { acceptsIdentifier, buildReadinessReport } from "./readiness.ts";
+import { acceptsIdentifier, buildReadinessReport, type ReadinessItem } from "./readiness.ts";
 import type { ApiScheduler } from "./scheduler.ts";
 import {
   countSocialProviders,
@@ -926,8 +926,13 @@ function quoteJson(payload: unknown): string {
  *
  * These are offers, not corrections: an instance that requires an email is
  * configured as its owner intended, and fixing the export may be the answer.
+ *
+ * @param users - Everyone a fix could clear a reject for.
+ * @param importable - The users the import sends: a name or password only
+ *   rejected users carry isn't brought across, so a fix that keeps it helps
+ *   nobody.
  */
-function buildFixes(input: CheckInput, users: User[]): Fix[] {
+function buildFixes(input: CheckInput, users: User[], importable: User[]): Fix[] {
   if (!input.settings || users.length === 0) return [];
 
   const report = buildReadinessReport({
@@ -945,7 +950,17 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
       const identifiers = splitIdentifiers(user);
       return !identifiers.primaryEmail && identifiers.unverifiedEmails.length > 0;
     });
-  const flagged = report.blocking.slice();
+  // A name or password row that only keeps data clears no reject: what a
+  // rejected user carries isn't brought across, so only the users the import
+  // sends count for it. A row that rejects (a required name) counts everyone.
+  const keepsData = (item: ReadinessItem) =>
+    item.consequence !== "rejects" && (item.section === "model" || item.section === "auth");
+  const kept = new Set(
+    buildReadinessReport({ analysis: analyzeFields(importable), settings: input.settings })
+      .blocking.filter(keepsData)
+      .map((item) => item.key),
+  );
+  const flagged = report.blocking.filter((item) => !keepsData(item) || kept.has(item.key));
   if (
     unverifiedOnly &&
     isRequired(input.settings, "email_address") &&
@@ -1262,6 +1277,9 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     }
   }
 
+  // The users the import sends, with the fields a disabled setting strips put
+  // back, so the warnings and fixes can name what would be lost.
+  const unstrippedImportable = candidates.map((user) => unstripped.get(user) ?? user);
   return {
     total: input.users.length + input.failures.length,
     importable: candidates.map((user) =>
@@ -1272,10 +1290,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     skipped,
     skippedReasons: countReasons(skipped),
     warnings: [
-      ...buildWarnings(
-        input,
-        candidates.map((user) => unstripped.get(user) ?? user),
-      ),
+      ...buildWarnings(input, unstrippedImportable),
       ...placeholderWarning(candidates.filter((user) => placeholderEmails.has(user.userId)).length),
       ...refusedNameWarning(candidates.filter((user) => refusedNames.has(user.userId)).length),
       ...refusedUsernameWarning(
@@ -1296,6 +1311,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     fixes: buildFixes(
       input,
       input.users.filter((user) => !duplicates.has(user)),
+      unstrippedImportable,
     ),
     ...(quota ? { quota } : {}),
     settingsUnavailable: input.settings === null,

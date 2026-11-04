@@ -953,7 +953,11 @@ instance (a `key_…` fallback ID), the fix points at the Dashboard instead: in
 `--json` it carries `url` in place of `command`.
 
 The fixes are offers, not corrections: an instance that requires an email is
-configured as its owner intended, and fixing the export may be the answer. When
+configured as its owner intended, and fixing the export may be the answer. A
+fix that only keeps a name or a password counts the users that pass the
+checks: a rejected user brings neither across, so it isn't offered for them. A
+fix that clears a reject, such as making a required name optional, counts
+every user. When
 the instance settings cannot be read (BAPI `/v1/domains` → the instance's
 Frontend API `/v1/environment`), required fields are not checked and the run
 says so. When a development instance's user count cannot be read, the run says

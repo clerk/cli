@@ -1170,6 +1170,59 @@ describe("warnings", () => {
     expect(checks.fixes.map((fix) => fix.label)).toEqual(["Enable First name"]);
   });
 
+  // A rejected user brings no name across, so turning names on helps nobody.
+  test("names no fix for a name only rejected users carry", async () => {
+    const checks = await checkImport(
+      input({
+        settings: bare({
+          email_address: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          password: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          first_name: { enabled: false },
+        }),
+        users: [user("a", { firstName: "Ada" })],
+      }),
+    );
+    expect(checks.rejects).toEqual([
+      { sourceId: "a", reason: "no password, and password is this instance's only way to sign in" },
+    ]);
+    expect(checks.warnings).toEqual([]);
+    expect(checks.fixes).toEqual([]);
+  });
+
+  // A required name rejects the users without one, and making it optional
+  // clears that reject, so the fix counts them.
+  test("still offers to make a required name optional for the users it rejects", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({
+          email_address: { enabled: true },
+          first_name: { enabled: true, required: true },
+        }),
+        users: [user("a"), user("b", { firstName: "Ada" })],
+      }),
+    );
+    expect(checks.rejects).toEqual([
+      { sourceId: "a", reason: "no first name, which this instance requires" },
+    ]);
+    expect(checks.fixes.map((fix) => fix.label)).toEqual(["Make First name optional at sign-up"]);
+  });
+
+  // Turning passwords on keeps a password, but a rejected user brings none.
+  test("names no password fix for a password only rejected users carry", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({
+          email_address: { enabled: true },
+          phone_number: { enabled: true, required: true },
+          password: { enabled: false },
+        }),
+        users: [user("a", { password: BCRYPT, passwordHasher: "bcrypt" })],
+      }),
+    );
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["a"]);
+    expect(checks.fixes.map((fix) => fix.label)).toEqual(["Make Phone optional at sign-up"]);
+  });
+
   test("says a password is kept, not dropped, when passwords are off", async () => {
     const checks = await checkImport(
       input({
