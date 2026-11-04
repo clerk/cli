@@ -440,7 +440,7 @@ describe("importUsers", () => {
   });
 
   // A key Clerk stopped accepting says nothing about the email itself.
-  test("notes an attach the key was refused for, without calling it refused", async () => {
+  test("leaves an attach the key was refused for pending, not refused", async () => {
     stub((url) =>
       url.endsWith("/v1/email_addresses")
         ? clerkError(401, "The provided Clerk Secret Key is invalid.")
@@ -454,7 +454,7 @@ describe("importUsers", () => {
       record,
     });
 
-    expect(lines.at(-1)?.error).toContain("Failed to add additional email b@x.dev");
+    expect(lines.at(-1)?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
     expect(lines.at(-1)).not.toHaveProperty("refused");
     expect(summary.droppedIdentifiers.size).toBe(0);
   });
