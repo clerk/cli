@@ -39,3 +39,8 @@ export function normalizeErrorMessage(message: string): string {
     return `[${names.map((name) => `"${name}"`).join(" ")}]`;
   });
 }
+
+/** How `result.warnings` and `runs <id>` word a user imported without their first phone. */
+export const WITHOUT_PHONE_WARNING = "imported without their phone: ";
+/** How they word a user imported without an extra email or phone Clerk refused. */
+export const WITHOUT_IDENTIFIER_WARNING = "imported without an email or phone Clerk refused: ";

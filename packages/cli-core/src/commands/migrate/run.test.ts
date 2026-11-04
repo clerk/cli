@@ -1483,7 +1483,18 @@ describe("run", () => {
 
       await run({ ...baseOptions, dryRun: true, json: true });
 
-      expect(JSON.parse(captured.out)).toMatchObject({ dryRun: true, refused: true });
+      // The real run's advice and commands, for an agent to act on.
+      expect(JSON.parse(captured.out)).toMatchObject({
+        dryRun: true,
+        refused: true,
+        advice: "Fix them, or pass --allow-partial to import the rest and record them as skipped.",
+        steps: [
+          {
+            command: expect.stringContaining("--allow-partial --yes"),
+            description: "Import the users that pass",
+          },
+        ],
+      });
     });
 
     test("--dry-run exits 0 when nothing would be rejected", async () => {
@@ -1862,6 +1873,52 @@ describe("run", () => {
       expect(err).toContain("Not sent: 1");
       expect(err).toContain(
         "No more users were sent. Once the limit is raised, run the import again to send them.",
+      );
+    });
+  });
+
+  // An unverified phone attached after the create, refused for its country:
+  // the user imports without it, and the summary explains the blocklist.
+  describe("an attached phone Clerk refuses for its country", () => {
+    const COUNTRY =
+      "Phone numbers from this country (France) are currently not supported. For more information, please contact support.";
+
+    beforeEach(() => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev", unverified_phone_numbers: "+33612345678" },
+        ]),
+      );
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "POST" && new URL(input.toString()).pathname === "/v1/phone_numbers") {
+          return Response.json(
+            {
+              errors: [
+                { code: "unsupported_country_code", message: "unsupported", long_message: COUNTRY },
+              ],
+            },
+            { status: 422 },
+          );
+        }
+        return clerk(input, init);
+      }) as typeof fetch;
+    });
+
+    test("adds the SMS note to the summary", async () => {
+      await run(baseOptions);
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain("Failed: 0");
+      expect(err).toContain("Imported without an email or phone Clerk refused:");
+      expect(err).toContain("Development instances block SMS");
+    });
+
+    test("adds the SMS note to result.notes in --json", async () => {
+      await run({ ...baseOptions, json: true });
+      const { result } = JSON.parse(captured.out) as { result: { notes: string[] } };
+      expect(result.notes.some((note) => note.includes("Development instances block SMS"))).toBe(
+        true,
       );
     });
   });

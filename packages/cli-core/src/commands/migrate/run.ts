@@ -112,6 +112,7 @@ import { getSource, resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
 import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
 import { recordMigrateSource, recordMigrateTarget } from "./telemetry.ts";
+import { WITHOUT_IDENTIFIER_WARNING, WITHOUT_PHONE_WARNING } from "./lib/failures.ts";
 import { declareSoftExitOutcome, setTelemetryStage } from "../../lib/telemetry.ts";
 import { login } from "../auth/login.ts";
 import { link } from "../link/index.ts";
@@ -1152,10 +1153,14 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       const inFlight: string[] = [];
       const inFlightReserved = new Set<string>();
       const inFlightPending = new Map<string, string[]>();
+      const inFlightPhoneRefused = new Map<string, string>();
       if (continued) {
         for (const line of latestUserLines(runsDir, continued.id).values()) {
           if (line.status === "creating") inFlight.push(line.sourceId);
           if (line.status === "creating" && line.reserved) inFlightReserved.add(line.sourceId);
+          if (line.status === "creating" && line.phoneRefused) {
+            inFlightPhoneRefused.set(line.sourceId, line.phoneRefused);
+          }
           if (line.status === "creating" && line.pending?.length) {
             inFlightPending.set(
               line.sourceId,
@@ -1424,8 +1429,9 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       if (options.dryRun) {
         setTelemetryStage("migrate_dry_run");
-        if (options.json) preview({ dryRun: true, ...(refused ? { refused: true } : {}) });
-        else {
+        if (options.json) {
+          preview({ dryRun: true, ...(refused ? { refused: true, ...refusalAdvice() } : {}) });
+        } else {
           log.blank();
           log.info(dim("Dry run: nothing was written."));
           // Said in words too, or the gutter would close on "Done".
@@ -1581,6 +1587,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                   adopted,
                   adoptedReserved: inFlightReserved,
                   adoptedPending: inFlightPending,
+                  adoptedPhoneRefused: inFlightPhoneRefused,
                   skipPasswordRequirement: !options.requirePassword,
                   reserveUnverified,
                   progress,
@@ -1630,11 +1637,11 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
                 warnings: [
                   ...[...summary.droppedPhones].map(([reason, count]) => ({
-                    warning: `imported without their phone: ${reason}`,
+                    warning: `${WITHOUT_PHONE_WARNING}${reason}`,
                     count,
                   })),
                   ...[...summary.droppedIdentifiers].map(([reason, count]) => ({
-                    warning: `imported without an email or phone Clerk refused: ${reason}`,
+                    warning: `${WITHOUT_IDENTIFIER_WARNING}${reason}`,
                     count,
                   })),
                 ],

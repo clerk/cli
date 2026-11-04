@@ -190,6 +190,21 @@ function isPhoneRefusal(error: unknown): error is BapiError {
   );
 }
 
+/** True when the user Clerk returned already has this email or phone. */
+function userHolds(user: unknown, kind: PendingIdentifier["kind"], value: string): boolean {
+  const record = (user ?? {}) as {
+    email_addresses?: { email_address?: string }[];
+    phone_numbers?: { phone_number?: string }[];
+  };
+  if (kind === "email") {
+    const wanted = value.toLowerCase();
+    return (record.email_addresses ?? []).some(
+      (entry) => entry.email_address?.toLowerCase() === wanted,
+    );
+  }
+  return (record.phone_numbers ?? []).some((entry) => entry.phone_number === value);
+}
+
 /** A request a stop kept from going out: neither a failure nor unknown. */
 class NotSentError extends Error {}
 
@@ -244,8 +259,10 @@ export function pendingIdentifiers(
 /**
  * Attaches one extra identifier, backing off on a 429.
  *
- * @returns A note when Clerk refused it, `pending` when nothing says whether
- *   it attached. Never throws: the user itself was already created.
+ * @returns A note and the `refused` reason when Clerk refused the identifier.
+ *   `pending` when nothing says whether it attached, or when the error is
+ *   about the key or the rate limit, not the identifier. Never throws: the
+ *   user itself was already created.
  */
 async function attachIdentifier(
   ctx: CreateContext,
@@ -261,26 +278,39 @@ async function attachIdentifier(
   // A Ctrl-C or a halt ends the wait for a slot or a backoff, and the attach is
   // left pending for a re-run. The quota does not: the user exists already.
   const stop = AbortSignal.any([interruptSignal(), ctx.halt]);
-  try {
-    await retryOn429(
+  const send = async (method: "GET" | "POST", requestPath: string, requestBody?: string) =>
+    retryOn429(
       async () =>
         ctx.schedule(
           async () => {
             if (stop.aborted) throw new NotSentError();
             return bapiRequest({
-              method: "POST",
-              path,
+              method,
+              path: requestPath,
               secretKey: ctx.secretKey,
-              body: JSON.stringify(body),
+              ...(requestBody ? { body: requestBody } : {}),
             });
           },
           { first: true, stop },
         ),
       { signal: stop, onRetry: ({ delaySeconds }) => ctx.schedule.pause(delaySeconds * 1000) },
     );
+  try {
+    await send("POST", path, JSON.stringify(body));
     return {};
   } catch (error) {
     if (error instanceof NotSentError || outcomeUnknown(error)) return { pending: true };
+    // Taken may mean taken by this user: an earlier attach with no answer, or
+    // one a stopped run never wrote down, landed. Its retry is no refusal.
+    if (error instanceof BapiError && error.code === "form_identifier_exists") {
+      try {
+        const held = await send("GET", `/v1/users/${encodeURIComponent(clerkUserId)}`);
+        if (userHolds(held.body, kind, value)) return {};
+      } catch {
+        // No answer to say it attached: a re-run tries again.
+        return { pending: true };
+      }
+    }
     // A key Clerk stopped accepting or doesn't permit, or a 429 that outlasted
     // the retries, says nothing about the email or phone: left pending, a
     // re-run attaches it. A country Clerk doesn't support is about the phone.
@@ -340,16 +370,19 @@ async function createUser(
   user: User,
   identifiers: Identifiers,
   skipPasswordRequirement: boolean,
-  /** Called as each attempt goes out, with what it sends. */
-  sending: (body: Record<string, unknown>) => void,
+  /**
+   * Called as each attempt goes out, with what it sends and, on a retry
+   * without the phone, Clerk's reason the user would be imported without it.
+   */
+  sending: (body: Record<string, unknown>, phoneRefusal?: string) => void,
 ): Promise<CreatedUser> {
   // A Ctrl-C or a full instance hands the slot on to queued creates; none
   // of them is sent, and none waits for a paced turn to find that out.
-  const create = async (body: Record<string, unknown>) =>
+  const create = async (body: Record<string, unknown>, phoneRefusal?: string) =>
     ctx.schedule(
       async () => {
         if (ctx.stop.aborted) throw new NotSentError();
-        sending(body);
+        sending(body, phoneRefusal);
         return bapiRequest({
           method: "POST",
           path: "/v1/users",
@@ -393,12 +426,30 @@ async function createUser(
     } = body;
     let refusal = error;
     let dropped = sent as string[];
+    // Which reserved phone was refused is unknown when there are several, or
+    // when the verified one was refused alone: each is attached on its own once
+    // the user exists, unverified, so only a refused one is lost. Worked out
+    // before each retry too, so its line says what a create cut off would lose.
+    const settle = (left: string[], why: BapiError) => {
+      const reservedLeft = left.filter((phone) => phone !== identifiers.primaryPhone);
+      const later = statuses && (why !== error || reservedLeft.length > 1) ? reservedLeft : [];
+      const lost = left.filter((phone) => !later.includes(phone));
+      return {
+        later,
+        lost,
+        reason: lost.length > 0 ? (why.longMessage ?? why.message) : undefined,
+      };
+    };
     // With reserved phones on the create, any one of them may be the refused
     // one: the verified phone alone goes first, so it is not lost with them.
     if (statuses && identifiers.primaryPhone) {
+      const withPrimary = dropped.filter((phone) => phone !== identifiers.primaryPhone);
       try {
-        response = await create({ ...withoutPhone, phone_number: [identifiers.primaryPhone] });
-        dropped = dropped.filter((phone) => phone !== identifiers.primaryPhone);
+        response = await create(
+          { ...withoutPhone, phone_number: [identifiers.primaryPhone] },
+          settle(withPrimary, error).reason,
+        );
+        dropped = withPrimary;
       } catch (retryError) {
         if (!isPhoneRefusal(retryError)) throw retryError;
         refusal = retryError;
@@ -406,19 +457,13 @@ async function createUser(
     }
     if (!response) {
       if (!body.email_address) throw refusal;
-      response = await create(withoutPhone);
+      response = await create(withoutPhone, settle(dropped, refusal).reason);
     }
-    // Which reserved phone was refused is unknown when there are several, or
-    // when the verified one was refused alone: each is attached on its own once
-    // the user exists, unverified, so only a refused one is lost.
-    const reservedDropped = dropped.filter((phone) => phone !== identifiers.primaryPhone);
-    if (statuses && (refusal !== error || reservedDropped.length > 1)) {
-      attachLater = reservedDropped;
-      dropped = dropped.filter((phone) => !attachLater.includes(phone));
-    }
-    if (dropped.length > 0) {
-      phoneRefusal = refusal.longMessage ?? refusal.message;
-      notes.push(`Failed to add phone ${dropped.join(", ")}: ${phoneRefusal}`);
+    const settled = settle(dropped, refusal);
+    attachLater = settled.later;
+    if (settled.reason) {
+      phoneRefusal = settled.reason;
+      notes.push(`Failed to add phone ${settled.lost.join(", ")}: ${phoneRefusal}`);
     }
   }
 
@@ -467,6 +512,11 @@ export type ImportUsersOptions = {
    * the user is adopted, unverified, as they would have been.
    */
   adoptedPending?: Map<string, string[]>;
+  /**
+   * Clerk's reason for refusing an adopted user's first phone, from its
+   * `creating` line: the create that landed was the retry without it.
+   */
+  adoptedPhoneRefused?: Map<string, string>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Create the identifiers the source never verified as reserved. */
@@ -495,6 +545,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     adopted = new Map<string, string>(),
     adoptedReserved = new Set<string>(),
     adoptedPending = new Map<string, string[]>(),
+    adoptedPhoneRefused = new Map<string, string>(),
     skipPasswordRequirement = true,
     reserveUnverified = false,
     validationFailed = 0,
@@ -562,6 +613,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       status: unknown ? "creating" : "failed",
       ...(unknown && attempt?.reserved ? { reserved: true } : {}),
       ...(unknown && attempt?.pending ? { pending: attempt.pending } : {}),
+      ...(unknown && attempt?.phoneRefused ? { phoneRefused: attempt.phoneRefused } : {}),
       error: [message, ...notes].join("; "),
       code,
     });
@@ -583,7 +635,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     }
     const refused = [...new Set([...earlier, ...attached.refused])];
     // A second line, which wins as the latest, adds what happened on the way.
-    if (toAttach.length > 0 || error) {
+    // With nothing to attach, the first line already says it all.
+    if (toAttach.length > 0) {
       record({
         ...base,
         ...(error ? { error } : {}),
@@ -591,6 +644,20 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         ...(attached.pending.length > 0 ? { pending: attached.pending } : {}),
       });
     }
+  };
+
+  /**
+   * A user a stopped run's create made: only its extras are left. When that
+   * create was the retry without a refused phone, the phone is still lost.
+   */
+  const adoptedUser = (clerkUserId: string, sourceId: string): CreatedUser => {
+    const phoneRefusal = adoptedPhoneRefused.get(sourceId);
+    return {
+      clerkUserId,
+      notes: phoneRefusal ? [`Failed to add phone: ${phoneRefusal}`] : [],
+      attachLater: adoptedPending.get(sourceId) ?? [],
+      ...(phoneRefusal ? { phoneRefusal } : {}),
+    };
   };
 
   const processUser = async (user: User): Promise<void> => {
@@ -609,10 +676,10 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     let attempt: UserLine | undefined;
     try {
       created = adoptedId
-        ? { clerkUserId: adoptedId, notes: [], attachLater: adoptedPending.get(user.userId) ?? [] }
+        ? adoptedUser(adoptedId, user.userId)
         : await retryOn429(
             async () =>
-              createUser(ctx, user, identifiers, skipPasswordRequirement, (body) => {
+              createUser(ctx, user, identifiers, skipPasswordRequirement, (body, phoneRefusal) => {
                 // A retry after a refused phone sends without the reserved
                 // ones. Cut off before its answer, the user would be adopted
                 // as reserved, those phones never attached.
@@ -624,6 +691,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
                   sourceId: user.userId,
                   status: "creating",
                   ...(reserved ? { reserved: true } : {}),
+                  ...(phoneRefusal ? { phoneRefused: normalizeErrorMessage(phoneRefusal) } : {}),
                   ...(leftOut.length > 0
                     ? {
                         pending: leftOut.map((value) => ({
@@ -700,7 +768,13 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       verified: false,
     }));
     const toAttach = [...pendingIdentifiers(identifiers, reserved), ...retried];
-    record(toAttach.length > 0 ? { ...line, pending: toAttach } : line);
+    // Its notes too: a run stopped before the next line would lose them.
+    const firstNotes = [...created.notes, ...retries].join("; ");
+    record({
+      ...line,
+      ...(firstNotes ? { error: firstNotes } : {}),
+      ...(toAttach.length > 0 ? { pending: toAttach } : {}),
+    });
     if (phoneRefused) droppedPhones.set(phoneRefused, (droppedPhones.get(phoneRefused) ?? 0) + 1);
     await finishUser(line, toAttach, [...created.notes, ...retries]);
     successful++;

@@ -12,7 +12,7 @@ import { throwUsageError } from "../../lib/errors.ts";
 import { recordMigrateSource, recordMigrateTarget } from "./telemetry.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
-import { tallyError } from "./lib/failures.ts";
+import { tallyError, WITHOUT_IDENTIFIER_WARNING, WITHOUT_PHONE_WARNING } from "./lib/failures.ts";
 import {
   hasRetryableUsers,
   latestUserLines,
@@ -121,9 +121,9 @@ function warningBreakdown(lines: UserLine[]): { warning: string; count: number }
   const add = (warning: string) => counts.set(warning, (counts.get(warning) ?? 0) + 1);
   for (const line of lines) {
     if (line.status !== "created") continue;
-    if (line.phoneRefused) add(`imported without their phone: ${line.phoneRefused}`);
+    if (line.phoneRefused) add(`${WITHOUT_PHONE_WARNING}${line.phoneRefused}`);
     for (const reason of line.refused ?? []) {
-      add(`imported without an email or phone Clerk refused: ${reason}`);
+      add(`${WITHOUT_IDENTIFIER_WARNING}${reason}`);
     }
   }
   return [...counts]
@@ -323,7 +323,7 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
   }
 
   printUsers("Failed", view.failed, usersFile);
-  printUsers("Imported without an email or phone Clerk refused", view.importedWithout, usersFile);
+  printUsers("Imported without an email or phone", view.importedWithout, usersFile);
   printUsers(
     "Not confirmed (Clerk may have created them; a continue checks)",
     view.unconfirmed,

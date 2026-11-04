@@ -135,6 +135,7 @@ export type UserLine = {
   /**
    * On a `created` line: Clerk's reason for refusing the first phone on the
    * create, which was retried without it. The user is imported without it.
+   * On a `creating` line, the retry's: a continue that adopts the user keeps it.
    */
   phoneRefused?: string;
   /** Why a user was skipped. */

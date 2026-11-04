@@ -212,7 +212,7 @@ describe("runs <id>", () => {
     expect(err).toContain(
       "1 user: imported without an email or phone Clerk refused: unverified phone: That phone number is taken.",
     );
-    expect(err).toContain("Imported without an email or phone Clerk refused (1)");
+    expect(err).toContain("Imported without an email or phone (1)");
   });
 
   // Clerk refused the first phone on the create, retried without it: the
@@ -252,7 +252,7 @@ describe("runs <id>", () => {
     expect(err).toContain(
       "1 user: imported without their phone: Phone numbers from this country are not supported.",
     );
-    expect(err).toContain("Imported without an email or phone Clerk refused (1)");
+    expect(err).toContain("Imported without an email or phone (1)");
   });
 
   // A stopped import's unsent users have no lines: only the count says so.

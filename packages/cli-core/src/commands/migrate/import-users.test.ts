@@ -591,6 +591,136 @@ describe("importUsers", () => {
     expect(lines.at(-1)).not.toHaveProperty("pending");
   });
 
+  // Rate limited past the retries says nothing about the email: a re-run
+  // attaches it, so it is no refusal.
+  test("keeps an attach pending when its 429 outlasts the retries", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? clerkError(429, "slow down", { "retry-after": "1" })
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)).toMatchObject({
+      status: "created",
+      pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+    });
+    expect(lines.at(-1)).not.toHaveProperty("refused");
+    expect(summary.droppedIdentifiers.size).toBe(0);
+  }, 20_000);
+
+  const taken = () =>
+    new Response(
+      JSON.stringify({
+        errors: [
+          {
+            code: "form_identifier_exists",
+            message: "That email address is taken. Please try another.",
+            long_message: "That email address is taken. Please try another.",
+          },
+        ],
+      }),
+      { status: 422 },
+    );
+  const userWith = (emails: string[]) =>
+    new Response(
+      JSON.stringify({
+        id: "user_created",
+        email_addresses: emails.map((email_address) => ({ email_address })),
+      }),
+      { status: 200 },
+    );
+
+  // An earlier attach with no answer landed: the continue's retry finds the
+  // email taken, by this user, and that is no refusal.
+  test("counts an attach as done when the email is taken by this user", async () => {
+    stub((url) => {
+      if (url.endsWith("/v1/email_addresses")) return taken();
+      if (url.endsWith("/v1/users/user_found")) return userWith(["a@x.dev", "B@x.dev"]);
+      return ok("user_created");
+    });
+
+    const summary = await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          status: "created",
+          clerkId: "user_found",
+          pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)).toMatchObject({ status: "created", clerkId: "user_found" });
+    expect(lines.at(-1)).not.toHaveProperty("refused");
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+    expect(summary.droppedIdentifiers.size).toBe(0);
+  });
+
+  test("counts an attach as refused when someone else holds the email", async () => {
+    stub((url) => {
+      if (url.endsWith("/v1/email_addresses")) return taken();
+      if (url.endsWith("/v1/users/user_found")) return userWith(["a@x.dev"]);
+      return ok("user_created");
+    });
+
+    const summary = await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          status: "created",
+          clerkId: "user_found",
+          pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.refused).toEqual([
+      "additional email: That email address is taken. Please try another.",
+    ]);
+    expect(summary.droppedIdentifiers.size).toBe(1);
+  });
+
+  test("keeps a taken attach pending when the user can't be looked up", async () => {
+    stub((url) => {
+      if (url.endsWith("/v1/email_addresses")) return taken();
+      if (url.endsWith("/v1/users/user_found")) return clerkError(503, "unavailable");
+      return ok("user_created");
+    });
+
+    await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          status: "created",
+          clerkId: "user_found",
+          pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
+    expect(lines.at(-1)).not.toHaveProperty("refused");
+  });
+
   test("keeps an attach with no answer pending, for a continued run", async () => {
     stub((url) =>
       url.endsWith("/v1/email_addresses") ? clerkError(503, "unavailable") : ok("user_created"),
@@ -854,6 +984,79 @@ describe("importUsers", () => {
     );
     // On the line too, so `runs <id>` warns about it as the summary does.
     expect(lines.at(-1)).toMatchObject({ status: "created", phoneRefused: clerkErr.long_message });
+  });
+
+  // The retry without the phone went out with no answer: the continue that
+  // adopts the user still knows the phone was lost.
+  test("keeps a refused phone's reason when the user is adopted on a continue", async () => {
+    const reason = "Phone numbers from this country (Netherlands) are currently not supported.";
+    stub((url, attempt) =>
+      url.endsWith("/v1/users")
+        ? attempt === 1
+          ? new Response(
+              JSON.stringify({
+                errors: [{ code: "unsupported_country_code", message: "x", long_message: reason }],
+              }),
+              { status: 403 },
+            )
+          : clerkError(503, "unavailable")
+        : ok("user_created"),
+    );
+
+    await importUsers({
+      users: [user({ phone: "+31612345678" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+    expect(allLines.at(-1)).toMatchObject({ status: "creating", phoneRefused: reason });
+
+    lines = [];
+    stub(() => ok("user_created"));
+    const summary = await importUsers({
+      users: [user({ phone: "+31612345678" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      adopted: new Map([["u1", "user_found"]]),
+      adoptedPhoneRefused: new Map([["u1", allLines.at(-1)!.phoneRefused!]]),
+    });
+
+    expect(lines.at(-1)).toMatchObject({
+      status: "created",
+      clerkId: "user_found",
+      phoneRefused: reason,
+      error: `Failed to add phone: ${reason}`,
+    });
+    expect([...summary.droppedPhones]).toEqual([[reason, 1]]);
+  });
+
+  // A stop between the user's two lines keeps the first: it says why too.
+  test("puts a refused phone's note on the user's first line", async () => {
+    stub((url, attempt) =>
+      url.endsWith("/v1/users") && attempt === 1
+        ? new Response(
+            JSON.stringify({
+              errors: [{ code: "unsupported_country_code", message: "x", long_message: "No NL." }],
+            }),
+            { status: 403 },
+          )
+        : ok("user_created"),
+    );
+
+    await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"], phone: "+31612345678" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines[0]).toMatchObject({
+      status: "created",
+      phoneRefused: "No NL.",
+      error: "Failed to add phone +31612345678: No NL.",
+      pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+    });
   });
 
   test("drops a refused phone's statuses with it", async () => {
@@ -1348,9 +1551,10 @@ describe("importUsers", () => {
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
     expect(performance.now() - started).toBeGreaterThanOrEqual(900);
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-    expect(lines).toHaveLength(2);
-    expect(lines[1]).toMatchObject({ status: "created", clerkId: "user_ok" });
-    expect(lines[1]?.error).toContain("Rate limit hit (429)");
+    // One line, the retry's note on it: nothing was left to attach.
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ status: "created", clerkId: "user_ok" });
+    expect(lines[0]?.error).toContain("Rate limit hit (429)");
   });
 
   // The instance is over its limit for every user, so the others wait too.

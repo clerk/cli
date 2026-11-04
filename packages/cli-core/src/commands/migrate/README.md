@@ -918,7 +918,9 @@ recorded as `skipped` with its reason. `--dry-run` exits 2 when the real run
 would be refused, and 0 otherwise. A refused dry run says so after the checks,
 with the advice and commands the real run would give: the `--allow-partial`
 command when any user passes, and the earlier run's undo (or continue) when it
-created some of the rejected users (`refused: true` in `--json`).
+created some of the rejected users. In `--json` the preview carries
+`refused: true`, with `advice` (the real refusal's sentence) and `steps` (its
+commands, each a `command` and `description`).
 
 ```
 Checks
@@ -971,14 +973,18 @@ phone Clerk refused", by kind and Clerk's reason (`result.warnings` in
 `--json`), and the user's line records it under `refused`, which `runs <id>`
 reports too. An attach with no answer stays `pending` for a re-run, and so
 does one whose error says nothing about the identifier: a `401`, a `403` other
-than `unsupported_country_code`, or a `429` that outlasts the retries.
+than `unsupported_country_code`, or a `429` that outlasts the retries. An
+attach Clerk refuses as taken (`form_identifier_exists`) looks the user up with
+`GET /v1/users/{user_id}` first: when the user already holds it, an earlier attach
+with no answer landed, and it counts as attached.
 
 The first phone gets the same treatment when Clerk refuses it — a country the
 instance does not support, or a number that is not E.164 — and the user has an
 email: the create is retried without the phone. The user counts as imported,
 and the summary lists them under "Imported without their phone", by Clerk's
 reason (`result.warnings` in `--json`). The user's line records the reason
-under `phoneRefused`, which `runs <id>` reports too.
+under `phoneRefused`, which `runs <id>` reports too. The retry's `creating`
+line carries it as well, so a continue that adopts the user keeps it.
 
 With [reserved](#verified-vs-unverified-identifiers) phones on the create, the
 refused one may be any of them, so the verified phone is retried alone first.
@@ -1563,6 +1569,7 @@ A run that finishes part-way exits nonzero without throwing, and carries a code 
 | `POST`   | `/v1/users`                                             | `migrate import` — creates each user                                                                                           |
 | `POST`   | `/v1/email_addresses`                                   | `migrate import` — attaches additional emails                                                                                  |
 | `POST`   | `/v1/phone_numbers`                                     | `migrate import` — attaches additional phones                                                                                  |
+| `GET`    | `/v1/users/{user_id}`                                   | `migrate import` — an attach refused as taken checks whether the user already holds it                                         |
 | `GET`    | `/v1/users?limit=&offset=&order_by=+created_at`         | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time                                                 |
 | `GET`    | `/v1/users?limit=&starting_after=&order_by=+created_at` | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time, each page from the last user of the one before |
 | `GET`    | `/v1/users/count`                                       | `migrate import` — headroom against the instance's user limit                                                                  |
