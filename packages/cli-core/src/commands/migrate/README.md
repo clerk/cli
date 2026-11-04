@@ -825,7 +825,9 @@ A continued run also finishes what the last one left open:
   all is it created.
 
 - A user whose `created` line has `pending` identifiers gets just those
-  attaches.
+  attaches. The run imported it before, so once nothing is left pending the
+  summary counts it under "Finished attaching" (`result.attached` in
+  `--json`), not "Imported" (`result.created`).
 
 Every create sends the run's ID in the user's private metadata, as
 `clerkMigrateRun`, merged with any private metadata the source carries. It

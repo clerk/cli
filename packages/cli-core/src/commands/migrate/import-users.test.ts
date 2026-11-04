@@ -918,9 +918,10 @@ describe("importUsers", () => {
       progress: ({ done, ok }) => reported.push({ done, ok }),
     });
 
-    // Created by the run's earlier attempt: the bar and the summary agree.
+    // Done on the bar, but created by the run's earlier attempt: the summary
+    // counts it as attached, not as imported again.
     expect(reported.at(-1)).toEqual({ done: 1, ok: 1 });
-    expect(summary.successful).toBe(1);
+    expect(summary).toMatchObject({ successful: 0, attached: 1 });
   });
 
   // The pending phone attaches now, but the email Clerk refused stays refused.

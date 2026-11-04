@@ -697,6 +697,27 @@ function checksJson(checks: ImportChecks) {
   };
 }
 
+/**
+ * What a continue does with the users the run already imported: most are left
+ * alone, and those with identifiers still pending get them attached.
+ */
+function continuedUsers(imported: number, attaching: number): string {
+  const leftAlone = imported - attaching;
+  const parts = [
+    ...(leftAlone > 0 || attaching === 0
+      ? [
+          `${plural(leftAlone, "user")} already imported ${leftAlone === 1 ? "is" : "are"} left alone`,
+        ]
+      : []),
+    ...(attaching > 0
+      ? [
+          `${plural(attaching, "user")} already imported ${attaching === 1 ? "gets" : "get"} the identifiers left to attach`,
+        ]
+      : []),
+  ];
+  return parts.join(", and ");
+}
+
 function formatSummary(
   summary: ImportSummary,
   skipped: number,
@@ -708,6 +729,8 @@ function formatSummary(
     `${green("Imported:")} ${summary.successful}`,
     `${red("Failed:")} ${summary.failed}`,
   ];
+  // Imported by the run's earlier attempt, so not counted again above.
+  if (summary.attached > 0) lines.push(`${green("Finished attaching:")} ${summary.attached}`);
   if (skipped > 0) lines.push(`${yellow("Skipped:")} ${skipped}`);
   // The user quota stopped the run: these go out on a re-run.
   if (summary.notSent > 0) lines.push(`${yellow("Not sent:")} ${summary.notSent}`);
@@ -1171,7 +1194,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         log.info(
           resume.kind === "continue"
             ? `${options.dryRun ? "Would continue" : "Continuing"} run ${resume.record.id}, which ${resume.because === "interrupted" ? "was interrupted" : "finished partial"}: ` +
-                `${plural(done.size, "user")} already imported ${done.size === 1 ? "is" : "are"} left alone.`
+                `${continuedUsers(done.size, attachOnly.length)}.`
             : options.dryRun
               ? "Would start a new run."
               : "Starting a new run.",
@@ -1580,6 +1603,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           : {
               totalProcessed: 0,
               successful: 0,
+              attached: 0,
               failed: 0,
               notSent: 0,
               droppedPhones: new Map(),
@@ -1613,6 +1637,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               ...leftOut,
               result: {
                 created: summary.successful,
+                attached: summary.attached,
                 failed: summary.failed,
                 notSent: summary.notSent,
                 pending: record.counts.pending ?? 0,

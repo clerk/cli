@@ -2189,6 +2189,66 @@ describe("run", () => {
       expect(JSON.parse(captured.out)).toMatchObject({ consent: "required", attachOnly: 1 });
     });
 
+    // u1 created with its second email left to attach, u2 refused: the
+    // continue creates one user and only attaches to the other.
+    async function partialRun(): Promise<void> {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev", unverified_email_addresses: "b@x.dev" },
+          { id: "u2", primary_email_address: "c@x.dev" },
+        ]),
+      );
+      stubClerk({ failing: new Set(["u2"]) });
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+        new URL(input.toString()).pathname === "/v1/email_addresses"
+          ? new Response("boom", { status: 503 })
+          : clerk(input, init)) as typeof fetch;
+      await run(baseOptions);
+      process.exitCode = 0;
+      captured.clear();
+      stubClerk();
+    }
+
+    test("a continue counts a user it only attaches to apart from the ones it creates", async () => {
+      await partialRun();
+
+      await run(baseOptions);
+
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain("1 user already imported gets the identifiers left to attach.");
+      expect(err).not.toContain("left alone");
+      expect(err).toContain("Imported: 1");
+      expect(err).toContain("Finished attaching: 1");
+      expect(err).not.toContain("Identifiers left to attach");
+    });
+
+    // Still pending after the continue: nothing finished, and the summary
+    // says what's left instead.
+    test("a continue doesn't count an attach that fails again as finished", async () => {
+      await partialRun();
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+        new URL(input.toString()).pathname === "/v1/email_addresses"
+          ? new Response("boom", { status: 503 })
+          : clerk(input, init)) as typeof fetch;
+
+      await run(baseOptions);
+
+      const err = Bun.stripANSI(captured.err);
+      expect(err).not.toContain("Finished attaching");
+      expect(err).toContain("Identifiers left to attach: 1 user");
+    });
+
+    test("a continue puts a user it only attaches to under result.attached in --json", async () => {
+      await partialRun();
+
+      await run({ ...baseOptions, json: true });
+
+      expect(JSON.parse(captured.out).result).toMatchObject({ created: 1, attached: 1 });
+    });
+
     // A skip the checks named a fix for imports once the setting changes: the
     // import offers the same continue `runs <id>` does, and it finishes the run.
     test("a run left partial only by skips offers the continue, which finishes it", async () => {
