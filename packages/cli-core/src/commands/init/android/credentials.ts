@@ -75,7 +75,8 @@ export async function googleCredentialsFromFlags(options: {
   const file = options.googleClientSecretFile
     ? await readGoogleSecretFile(options.googleClientSecretFile)
     : undefined;
-  const clientId = options.googleClientId?.trim() ?? file?.clientId;
+  // An empty flag (an unset variable, say) defers to the download's client ID.
+  const clientId = options.googleClientId?.trim() || file?.clientId;
   if (!file)
     throwUsageError(
       "--google-client-id needs the matching secret: pass --google-client-secret-file <path>, or - to read it from standard input.",

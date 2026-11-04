@@ -415,6 +415,34 @@ describe("native Sign in with Google", () => {
     expect(JSON.stringify(result)).not.toContain(FAKE_GOOGLE_CLIENT_SECRET);
   });
 
+  test("configures Google even when the registration lacks this machine's fingerprint", async () => {
+    const root = await fixture();
+    const { api, state } = fakeNativeAPI();
+    state.registrations.push({
+      object: "android_application",
+      id: "androidapp_1",
+      namespace: "android_app",
+      package_name: "com.example.myapp",
+      fingerprints: [RELEASE_FINGERPRINT],
+    });
+    const google = fakeGoogleAPI({ enabled: false });
+    const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+    const preview = await prepareSetup(
+      setup(root, { signInWithGoogle: true, googleCredentials }),
+      deps,
+    );
+    expect(preview.remote?.blocker).toContain(DEBUG_FINGERPRINT);
+    const result = await applySetup(preview, deps);
+    expect(result).toMatchObject({
+      status: "manual-steps-required",
+      remote: "manual",
+      google: "verified",
+    });
+    expect(result.message).toContain("Native Applications page");
+    expect(google.state.events).toEqual(["google-dry-run", "google-apply"]);
+    expect(result.handoff.completed.map((item) => item.id)).toContain("native-google");
+  });
+
   test("asks for the Web client when the connection has none and nothing was passed", async () => {
     const root = await fixture();
     const { api } = fakeNativeAPI();

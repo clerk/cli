@@ -514,7 +514,9 @@ export async function applySetup(
       result.message = `Clerk native registration is incomplete: ${errorMessage(error)} Local edits remain; rerun setup with the same application to reconcile.`;
     }
   }
-  if (preview.google && result.remote === "verified") {
+  // The Google connection is instance-level, so a registration this machine can't complete (a
+  // fingerprint only the Dashboard can add) doesn't hold it back; a failed registration does.
+  if (preview.google && result.remote !== "incomplete") {
     try {
       // Native registration may advance the config version, so re-audit and apply only if the
       // Google connection is still what the user approved.

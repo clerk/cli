@@ -100,4 +100,15 @@ describe("Google Web client credentials", () => {
       googleCredentialsFromFlags({ googleClientId: "bad", googleClientSecretFile: secret }),
     ).rejects.toThrow("apps.googleusercontent.com");
   });
+
+  test("an empty --google-client-id falls back to the client ID in the download", async () => {
+    const download = await file(
+      JSON.stringify({
+        web: { client_id: FAKE_GOOGLE_CLIENT_ID, client_secret: FAKE_GOOGLE_CLIENT_SECRET },
+      }),
+    );
+    expect(
+      await googleCredentialsFromFlags({ googleClientId: " ", googleClientSecretFile: download }),
+    ).toEqual({ clientId: FAKE_GOOGLE_CLIENT_ID, clientSecret: FAKE_GOOGLE_CLIENT_SECRET });
+  });
 });
