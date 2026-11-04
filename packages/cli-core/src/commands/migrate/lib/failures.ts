@@ -10,10 +10,14 @@ import { RateLimitExceededError } from "./retry.ts";
 export function failureOf(error: unknown): { message: string; code: string } {
   if (error instanceof RateLimitExceededError) return { message: error.message, code: "429" };
   const apiError = error as BapiError;
-  return {
-    message: apiError.longMessage ?? apiError.message ?? "Unknown error",
-    code: String(apiError.status ?? "unknown"),
-  };
+  const code = String(apiError.status ?? "unknown");
+  const message = apiError.longMessage ?? apiError.message ?? "Unknown error";
+  // A proxy's or gateway's error page, not Clerk's JSON: its markup says
+  // nothing a summary could use, and fills a terminal.
+  if (/^\s*<(!doctype|html|head|body)\b/i.test(message)) {
+    return { message: `Clerk returned HTTP ${code} with no error details`, code };
+  }
+  return { message, code };
 }
 
 /** Counts a failure under its normalized message, the way every summary groups them. */

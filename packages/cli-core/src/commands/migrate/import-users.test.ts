@@ -434,6 +434,53 @@ describe("importUsers", () => {
     expect(lines[1]).toMatchObject({ status: "created", clerkId: "user_created" });
     expect(lines[1]?.error).toContain("Failed to add additional email b@x.dev");
     expect(lines[1]).not.toHaveProperty("pending");
+    // Imported without it, which the summary and `runs` report as a warning.
+    expect(lines[1]?.refused).toEqual(["additional email: that email is taken"]);
+    expect([...summary.droppedIdentifiers]).toEqual([["additional email: that email is taken", 1]]);
+  });
+
+  test("counts each user once per reason Clerk refused its identifiers", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? clerkError(422, "that email is taken")
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev", "c@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.refused).toEqual(["additional email: that email is taken"]);
+    expect([...summary.droppedIdentifiers]).toEqual([["additional email: that email is taken", 1]]);
+  });
+
+  test("keeps an earlier refusal when a continue attaches the rest", async () => {
+    stub(() => ok("user_created"));
+
+    const summary = await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          clerkId: "user_created",
+          status: "created",
+          error: "Failed to add additional email b@x.dev: that email is taken",
+          refused: ["additional email: that email is taken"],
+          pending: [{ kind: "phone", value: "+15555550100", verified: false }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.refused).toEqual(["additional email: that email is taken"]);
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+    // Counted by the run that saw the refusal, not again by the continue.
+    expect(summary.droppedIdentifiers.size).toBe(0);
   });
 
   // A Ctrl-C mid-backoff should not wait out the pause, nor send the attach.

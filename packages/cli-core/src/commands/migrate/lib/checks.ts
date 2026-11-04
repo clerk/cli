@@ -69,6 +69,9 @@ export type Fix = { label: string; command?: string; url?: string };
 
 const DASHBOARD_URL = "https://dashboard.clerk.com";
 
+/** What a fix command names the app with when the key named none. */
+export const APP_ID_PLACEHOLDER = "APP_ID";
+
 export type Quota = {
   /** Users already in the instance, or `null` when the count could not be read. */
   existing: number | null;
@@ -964,7 +967,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   // be read as a redirect.
   const { appId, instanceId } = input.target;
   const named = isClerkInstanceId(instanceId);
-  const flags = ` --app ${appId ?? "APP_ID"} --instance ${instanceId}`;
+  const flags = ` --app ${appId ?? APP_ID_PLACEHOLDER} --instance ${instanceId}`;
   const settings = input.settings;
   const mfa = MFA_SETTINGS.filter(
     ({ field, attribute }) =>

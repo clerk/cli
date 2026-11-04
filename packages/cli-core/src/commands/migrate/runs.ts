@@ -112,6 +112,21 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
   return [...counts].map(([error, count]) => ({ error, count })).sort((a, b) => b.count - a.count);
 }
 
+/** Users imported without an email or phone Clerk refused, by kind and reason. */
+function warningBreakdown(lines: UserLine[]): { warning: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const line of lines) {
+    if (line.status !== "created") continue;
+    for (const reason of line.refused ?? []) counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return [...counts]
+    .map(([reason, count]) => ({
+      warning: `imported without an email or phone Clerk refused: ${reason}`,
+      count,
+    }))
+    .sort((a, b) => b.count - a.count);
+}
+
 /**
  * The import that continues this run: its file (or export run) and source,
  * with the flags that reach the same runs folder and instance, ending in
@@ -237,7 +252,11 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
     run: { ...record, state },
     next: nextCommands(runsDir, record, state, carry, lines),
     errors: errorBreakdown(lines),
+    warnings: warningBreakdown(lines),
     failed: lines.filter((line) => line.status === "failed"),
+    importedWithout: lines.filter(
+      (line) => line.status === "created" && (line.refused?.length ?? 0) > 0,
+    ),
     skipped: lines.filter((line) => line.status === "skipped"),
     unconfirmed: lines.filter((line) => line.status === "creating"),
   };
@@ -289,7 +308,16 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
     }
   }
 
+  if (view.warnings.length > 0) {
+    log.blank();
+    log.info(bold("Warnings"));
+    for (const { warning, count } of view.warnings) {
+      log.info(`  ${yellow(String(count))} ${count === 1 ? "user" : "users"}: ${warning}`);
+    }
+  }
+
   printUsers("Failed", view.failed, usersFile);
+  printUsers("Imported without an email or phone Clerk refused", view.importedWithout, usersFile);
   printUsers(
     "Not confirmed (Clerk may have created them; a continue checks)",
     view.unconfirmed,

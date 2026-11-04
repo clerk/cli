@@ -251,7 +251,7 @@ async function attachIdentifier(
   ctx: CreateContext,
   clerkUserId: string,
   { kind, value, verified }: PendingIdentifier,
-): Promise<{ note?: string; pending?: boolean }> {
+): Promise<{ note?: string; refused?: string; pending?: boolean }> {
   const path = kind === "email" ? "/v1/email_addresses" : "/v1/phone_numbers";
   const body =
     kind === "email"
@@ -281,8 +281,12 @@ async function attachIdentifier(
     return {};
   } catch (error) {
     if (error instanceof NotSentError || outcomeUnknown(error)) return { pending: true };
-    const label = `${verified ? "additional" : "unverified"} ${kind} ${value}`;
-    return { note: `Failed to add ${label}: ${(error as Error).message}` };
+    const kindLabel = `${verified ? "additional" : "unverified"} ${kind}`;
+    const { message } = failureOf(error);
+    return {
+      note: `Failed to add ${kindLabel} ${value}: ${message}`,
+      refused: `${kindLabel}: ${normalizeErrorMessage(message)}`,
+    };
   }
 }
 
@@ -290,18 +294,20 @@ async function attachIdentifier(
  * Attaches each identifier. Extra identifiers are best-effort: a duplicate
  * secondary email should not undo a user who was otherwise imported.
  *
- * @returns A note per identifier Clerk refused, and those still pending.
+ * @returns A note per identifier Clerk refused, why by kind, and those still
+ *   pending.
  */
 async function attachAll(
   ctx: CreateContext,
   clerkUserId: string,
   identifiers: PendingIdentifier[],
-): Promise<{ notes: string[]; pending: PendingIdentifier[] }> {
+): Promise<{ notes: string[]; refused: string[]; pending: PendingIdentifier[] }> {
   const results = await Promise.all(
     identifiers.map(async (identifier) => attachIdentifier(ctx, clerkUserId, identifier)),
   );
   return {
     notes: results.flatMap((result) => (result.note ? [result.note] : [])),
+    refused: results.flatMap((result) => (result.refused ? [result.refused] : [])),
     pending: identifiers.filter((_, index) => results[index]?.pending),
   };
 }
@@ -496,6 +502,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   let notSent = 0;
   let stopReason: string | undefined;
   const droppedPhones = new Map<string, number>();
+  const droppedIdentifiers = new Map<string, number>();
 
   // A line that cannot be written halts the import: a user created with no
   // record is beyond both `undo` and a re-run. The error is rethrown once
@@ -559,14 +566,21 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
    * with them `pending`, so a run stopped before they attach can finish them.
    */
   const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
-    const { error: _error, pending: _pending, ...base } = line;
+    const { error: _error, pending: _pending, refused: earlier = [], ...base } = line;
     const attached = await attachAll(ctx, base.clerkId ?? "", toAttach);
     const error = [...notes, ...attached.notes].join("; ");
+    // Imported, but without what Clerk refused: a warning for the summary,
+    // counted once per user and reason. A continue keeps the earlier ones.
+    for (const reason of new Set(attached.refused)) {
+      droppedIdentifiers.set(reason, (droppedIdentifiers.get(reason) ?? 0) + 1);
+    }
+    const refused = [...new Set([...earlier, ...attached.refused])];
     // A second line, which wins as the latest, adds what happened on the way.
     if (toAttach.length > 0 || error) {
       record({
         ...base,
         ...(error ? { error } : {}),
+        ...(refused.length > 0 ? { refused } : {}),
         ...(attached.pending.length > 0 ? { pending: attached.pending } : {}),
       });
     }
@@ -716,6 +730,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     notSent,
     ...(stopReason ? { stopReason } : {}),
     droppedPhones,
+    droppedIdentifiers,
     validationFailed,
     errorBreakdown,
   };

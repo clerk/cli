@@ -127,6 +127,11 @@ export type UserLine = {
    * run attaches them; a later `created` line without it means they are done.
    */
   pending?: PendingIdentifier[];
+  /**
+   * On a `created` line: the extra identifiers Clerk refused once the user
+   * existed, by kind and Clerk's reason. The user is imported without them.
+   */
+  refused?: string[];
   /** Why a user was skipped. */
   reason?: string;
   error?: string;

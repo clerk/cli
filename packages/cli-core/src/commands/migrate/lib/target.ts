@@ -14,7 +14,7 @@ import { bapiRequest } from "../../../lib/bapi.ts";
 import { dim } from "../../../lib/color.ts";
 import { resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
 import { INSTANCE_ALIASES, resolveAppContext } from "../../../lib/config.ts";
-import { throwUsageError } from "../../../lib/errors.ts";
+import { ApiError, throwUsageError } from "../../../lib/errors.ts";
 import {
   ENV_VAR_SOURCE_SUFFIX,
   resolveKeylessTarget,
@@ -180,7 +180,8 @@ export function laterCarry(runsDir: string | undefined, target: RunTarget): stri
  * Falls back to a hash of the key when `GET /v1/instance` cannot be read: the
  * same key always addresses the same instance, so it still tells two
  * instances apart, and nothing is sent anywhere. A 429 is retried first: it is
- * most likely straight after a large import, which is when `undo` runs.
+ * most likely straight after a large import, which is when `undo` runs. A key
+ * Clerk refuses (401) throws Clerk's error instead.
  */
 export async function fetchInstanceIdentity(secretKey: string): Promise<InstanceIdentity> {
   const fallbackEnv = detectInstanceType(secretKey) === "prod" ? "production" : "development";
@@ -202,6 +203,10 @@ export async function fetchInstanceIdentity(secretKey: string): Promise<Instance
       };
     }
   } catch (error) {
+    // Clerk refused the key itself. Every later request would too, and a
+    // stand-in would only send the run checks after an instance that does not
+    // matter, with advice that leads back here.
+    if (error instanceof ApiError && error.status === 401) throw error;
     log.debug(`migrate: could not read the instance behind the key: ${String(error)}`);
   }
   return { instanceId: keyInstanceId(secretKey), env: fallbackEnv };

@@ -161,6 +161,29 @@ describe("fetchInstanceIdentity", () => {
     expect(await fetchInstanceIdentity("sk_test_a")).toEqual(first);
     expect((await fetchInstanceIdentity("sk_test_b")).instanceId).not.toBe(first.instanceId);
   });
+
+  // A stand-in would send the import's run checks after an instance that
+  // does not matter, with advice that leads back to the same refusal.
+  test("throws Clerk's error for a key Clerk refuses", async () => {
+    globalThis.fetch = (async () =>
+      Response.json(
+        {
+          errors: [
+            {
+              code: "clerk_key_invalid",
+              message: "Secret Key invalid",
+              long_message: "The provided Clerk Secret Key is invalid.",
+            },
+          ],
+        },
+        { status: 401 },
+      )) as unknown as typeof fetch;
+
+    await expect(fetchInstanceIdentity("sk_test_bad")).rejects.toMatchObject({
+      status: 401,
+      code: "clerk_key_invalid",
+    });
+  });
 });
 
 describe("resolveClerkTarget --instance", () => {

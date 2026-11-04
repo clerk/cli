@@ -46,7 +46,12 @@ import { confirm } from "../../lib/prompts.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { importUsers, splitIdentifiers } from "./import-users.ts";
-import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
+import {
+  ALREADY_IMPORTED,
+  APP_ID_PLACEHOLDER,
+  checkImport,
+  type ImportChecks,
+} from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
 import {
@@ -244,6 +249,15 @@ export function explainErrors(errors: Iterable<string>, instanceType: InstanceTy
   }
 
   return notes;
+}
+
+/** Every message a summary groups, for {@link explainErrors}. */
+function explainedErrors(summary: ImportSummary): string[] {
+  return [
+    ...summary.errorBreakdown.keys(),
+    ...summary.droppedPhones.keys(),
+    ...summary.droppedIdentifiers.keys(),
+  ];
 }
 
 // --- Settling the file, source and target ----------------------------------
@@ -571,7 +585,9 @@ function findResume(
         (record) =>
           record.kind === "import" &&
           record.file?.sha256 === match.sha256 &&
-          isClerkInstanceId(record.target.instanceId),
+          isClerkInstanceId(record.target.instanceId) &&
+          // An undone run holds no users, so starting over beside it is safe.
+          !undoneInFull(runsDir, record),
       );
       if (unconfirmed) {
         throwUsageError(
@@ -658,7 +674,18 @@ function printChecks(checks: ImportChecks): void {
       log.info(`  ${fix.label}`);
       log.info(dim(`    ${fix.command ?? fix.url}`));
     }
+    // A key names no app, so the commands carry a placeholder to fill in.
+    if (hasAppIdPlaceholder(checks)) {
+      log.info(
+        dim(`  Replace ${APP_ID_PLACEHOLDER} with the app's ID: \`clerk apps list\` shows it.`),
+      );
+    }
   }
+}
+
+/** Whether a fix command names the app with {@link APP_ID_PLACEHOLDER}. */
+function hasAppIdPlaceholder(checks: ImportChecks): boolean {
+  return checks.fixes.some((fix) => fix.command?.includes(` --app ${APP_ID_PLACEHOLDER} `));
 }
 
 function checksJson(checks: ImportChecks) {
@@ -671,6 +698,9 @@ function checksJson(checks: ImportChecks) {
     skippedReasons: checks.skippedReasons,
     warnings: checks.warnings,
     fixes: checks.fixes,
+    ...(hasAppIdPlaceholder(checks)
+      ? { placeholders: { [APP_ID_PLACEHOLDER]: "the app's ID: `clerk apps list` shows it" } }
+      : {}),
     ...(checks.quota ? { quota: checks.quota } : {}),
     settingsUnavailable: checks.settingsUnavailable,
   };
@@ -717,8 +747,14 @@ function formatSummary(
       lines.push(`  ${plural(count, "user")}: ${reason}`);
     }
   }
-  const explained = [...summary.errorBreakdown.keys(), ...summary.droppedPhones.keys()];
-  for (const note of explainErrors(explained, instanceType)) lines.push("", note);
+  // The same for an extra email or phone Clerk refused once the user existed.
+  if (summary.droppedIdentifiers.size > 0) {
+    lines.push("", bold("Imported without an email or phone Clerk refused:"));
+    for (const [reason, count] of summary.droppedIdentifiers) {
+      lines.push(`  ${plural(count, "user")}: ${reason}`);
+    }
+  }
+  for (const note of explainErrors(explainedErrors(summary), instanceType)) lines.push("", note);
   lines.push("", dim(`Run ${record.id}: ${runFolder}`));
   return lines;
 }
@@ -1325,10 +1361,23 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       if (options.dryRun) {
         setTelemetryStage("migrate_dry_run");
-        if (options.json) preview({ dryRun: true });
+        if (options.json) preview({ dryRun: true, ...(refused ? { refused: true } : {}) });
         else {
           log.blank();
           log.info(dim("Dry run: nothing was written."));
+          // Said in words too, or the gutter would close on "Done".
+          if (refused) {
+            const nonePass = checks.importable.length === 0 && attachOnly.length === 0;
+            log.warn(
+              `The import would refuse: ${plural(checks.rejects.length, "user")} would be rejected. ` +
+                (nonePass
+                  ? "Fix them first: with every user rejected, --allow-partial would import nobody."
+                  : `Fix them, or pass --allow-partial to import the other ${plural(checks.importable.length + attachOnly.length, "user")}.`),
+            );
+            if (!nonePass) {
+              setNextSteps([commandFor(options, input.fromExport, ["--allow-partial", "--yes"])]);
+            }
+          }
         }
         // The exit code says what the real run would do.
         if (refused) {
@@ -1541,6 +1590,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               failed: 0,
               notSent: 0,
               droppedPhones: new Map(),
+              droppedIdentifiers: new Map(),
               validationFailed: 0,
               errorBreakdown: new Map(),
             };
@@ -1576,10 +1626,19 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                 ...(summary.stopReason ? { stopReason: summary.stopReason } : {}),
                 skipped: checks.rejects.length + checks.skipped.length + withoutPassword.length,
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
-                warnings: [...summary.droppedPhones].map(([reason, count]) => ({
-                  warning: `imported without their phone: ${reason}`,
-                  count,
-                })),
+                warnings: [
+                  ...[...summary.droppedPhones].map(([reason, count]) => ({
+                    warning: `imported without their phone: ${reason}`,
+                    count,
+                  })),
+                  ...[...summary.droppedIdentifiers].map(([reason, count]) => ({
+                    warning: `imported without an email or phone Clerk refused: ${reason}`,
+                    count,
+                  })),
+                ],
+                // What the human summary adds to Clerk's messages: whether the
+                // operator can act on them, and how.
+                notes: explainErrors(explainedErrors(summary), limits.instanceType),
               },
             },
             null,

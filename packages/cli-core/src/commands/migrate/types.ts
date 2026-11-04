@@ -63,6 +63,12 @@ export type ImportSummary = {
    * count as imported, so these are warnings, not failures.
    */
   droppedPhones: Map<string, number>;
+  /**
+   * Users created without an extra or unverified email or phone that Clerk
+   * refused once the user existed, by kind and Clerk's reason. Imported, so
+   * warnings too.
+   */
+  droppedIdentifiers: Map<string, number>;
   validationFailed: number;
   errorBreakdown: Map<string, number>;
 };

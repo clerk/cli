@@ -172,6 +172,49 @@ describe("runs <id>", () => {
     expect(err).toContain("1 user: bad gateway (a re-run checks)");
   });
 
+  // Imported, so not failed, but without an email or phone Clerk refused once
+  // the user existed: only `users.ndjson` said so before.
+  test("warns about users imported without an email or phone Clerk refused", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    run.append({
+      sourceId: "a",
+      status: "created",
+      clerkId: "user_a",
+      error: "Failed to add unverified phone +15555550100: That phone number is taken.",
+      refused: ["unverified phone: That phone number is taken."],
+    });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      run: { state: "complete", counts: { created: 1 } },
+      errors: [],
+      warnings: [
+        {
+          warning:
+            "imported without an email or phone Clerk refused: unverified phone: That phone number is taken.",
+          count: 1,
+        },
+      ],
+      importedWithout: [{ sourceId: "a" }],
+    });
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(
+      "1 user: imported without an email or phone Clerk refused: unverified phone: That phone number is taken.",
+    );
+    expect(err).toContain("Imported without an email or phone Clerk refused (1)");
+  });
+
   // A stopped import's unsent users have no lines: only the count says so.
   test("shows the users a stopped import never sent, in the list and the run", async () => {
     fs.writeFileSync(usersFile(), "[]");

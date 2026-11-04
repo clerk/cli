@@ -807,7 +807,9 @@ instance ID; the latest matching import run decides what happens:
 Clerk cannot name the instance (`GET /v1/instance` failed, often from rate
 limiting right after a large import) and a run of this file exists under a real
 instance ID, it exits 2 rather than starting over: try again, or pass
-`--new-run`. A continue whose run changed while it waited at the prompt, from
+`--new-run`. A run undone in full holds no users, so it doesn't count. A key
+Clerk refuses (`401`) is not a failed lookup: the import stops with Clerk's
+error. A continue whose run changed while it waited at the prompt, from
 an undo or another continue, exits 2 too, with nothing written.
 
 A continued run also finishes what the last one left open:
@@ -913,7 +915,9 @@ store: …`), passwords a source had to drop, emails Clerk refuses (malformed,
 Any reject stops the import, and it exits 2 with the command that adds
 `--allow-partial`. With `--allow-partial`, the rest import and each reject is
 recorded as `skipped` with its reason. `--dry-run` exits 2 when the real run
-would be refused, and 0 otherwise.
+would be refused, and 0 otherwise. A refused dry run says so after the checks,
+with the `--allow-partial` command when any user passes (`refused: true` in
+`--json`).
 
 ```
 Checks
@@ -936,7 +940,8 @@ Or change the instance instead
 Each fix names its instance with `--instance`, so it changes the instance the
 import targets, whatever the key's source. A key from `--secret-key` or
 `CLERK_SECRET_KEY` names no app, so its fix reads `--app APP_ID`: fill in the
-app that owns the instance. When Clerk could not name the
+app that owns the instance. The checks say so beneath the fixes, and `--json`
+adds `checks.placeholders` (`{ "APP_ID": … }`). When Clerk could not name the
 instance (a `key_…` fallback ID), the fix points at the Dashboard instead: in
 `--json` it carries `url` in place of `command`.
 
@@ -958,9 +963,12 @@ users already signed up on the source platform.
 Only the first verified email and phone go on `POST /v1/users`. Every
 additional verified identifier, and every unverified one, is attached
 afterwards with its own request, ahead of any create still queued, and backs
-off on a `429` like the create. A refusal there is logged and the user still
-counts as imported — a duplicate secondary email should not undo an otherwise
-successful user. An attach with no answer stays `pending` for a re-run.
+off on a `429` like the create. A refusal there does not fail the user — a
+duplicate secondary email should not undo an otherwise successful user — but
+it is a warning: the summary lists the user under "Imported without an email or
+phone Clerk refused", by kind and Clerk's reason (`result.warnings` in
+`--json`), and the user's line records it under `refused`, which `runs <id>`
+reports too. An attach with no answer stays `pending` for a re-run.
 
 The first phone gets the same treatment when Clerk refuses it — a country the
 instance does not support, or a number that is not E.164 — and the user has an
@@ -1001,7 +1009,8 @@ that predates the field leaves a development instance at
 
 Users that do exceed the limit come back in the error breakdown as
 `You have reached your limit of N users`, annotated with what a development
-instance can do about it. The first refusal stops the import: the users it
+instance can do about it (`result.notes` in `--json`, which carries every such
+note the summary prints). The first refusal stops the import: the users it
 never sent are counted under "Not sent" (`result.notSent` in `--json`, and
 `counts.notSent` in `run.json`), written when the run finishes. A run stopped
 with Ctrl-C never finishes, so it can't count them, and `runs <id>` offers its
@@ -1025,9 +1034,11 @@ clerk migrate runs --json
 | `--runs-dir <path>` | Read runs from somewhere else |
 
 It prints the runs folder first. The listing shows each run's ID, date, kind,
-status, target, file and counts. `runs <id>` adds the error breakdown and the
-users that failed, were skipped, or are `creating` with no answer to confirm the
-create (`unconfirmed` in `--json`), with the path to the full record, then what
+status, target, file and counts. `runs <id>` adds the error breakdown, the
+warnings for users imported without an email or phone Clerk refused
+(`warnings` and `importedWithout` in `--json`), and the users that failed, were
+skipped, or are `creating` with no answer to confirm the create (`unconfirmed`
+in `--json`), with the path to the full record, then what
 to run next: for an interrupted or partial import, the import that continues it,
 with the flags it ran with, then the undo. The continue is left out when
 importing the file again might not reach this run: a newer run of the same file

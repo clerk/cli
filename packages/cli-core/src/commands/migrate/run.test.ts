@@ -1468,7 +1468,22 @@ describe("run", () => {
       expect(created()).toHaveLength(0);
       expect(listRuns(runsDir())).toHaveLength(0);
       expect(captured.err).toContain("Dry run: nothing was written.");
+      // Said in words, not only by the exit code.
+      expect(Bun.stripANSI(captured.err)).toContain(
+        "The import would refuse: 1 user would be rejected. Fix them, or pass --allow-partial to import the other 2 users.",
+      );
       expect(process.exitCode).toBe(2);
+    });
+
+    test("--dry-run --json says the import would be refused", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3" }]),
+      );
+
+      await run({ ...baseOptions, dryRun: true, json: true });
+
+      expect(JSON.parse(captured.out)).toMatchObject({ dryRun: true, refused: true });
     });
 
     test("--dry-run exits 0 when nothing would be rejected", async () => {
@@ -1502,6 +1517,16 @@ describe("run", () => {
       expect(captured.err).toContain(
         `clerk config patch --app APP_ID --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
       );
+      // A key names no app, so the placeholder is explained.
+      expect(Bun.stripANSI(captured.err)).toContain(
+        "Replace APP_ID with the app's ID: `clerk apps list` shows it.",
+      );
+
+      captured.clear();
+      await run({ ...baseOptions, dryRun: true, json: true });
+      expect(JSON.parse(captured.out)).toMatchObject({
+        checks: { placeholders: { APP_ID: "the app's ID: `clerk apps list` shows it" } },
+      });
     });
 
     // Reserved meets the requirement, so neither the reject nor the fix applies.
@@ -1805,6 +1830,8 @@ describe("run", () => {
           failed: 1,
           notSent: 1,
           stopReason: "You have reached your limit of 100 users.",
+          // What the human summary adds: an agent reads only this.
+          notes: [expect.stringContaining("The user limit is a development-instance quota.")],
         },
       });
     });
@@ -1887,6 +1914,56 @@ describe("run", () => {
           failed: 0,
           errors: [],
           warnings: [{ warning: `imported without their phone: ${COUNTRY}`, count: 1 }],
+        },
+      });
+    });
+  });
+
+  // Created, then an extra email Clerk refused: imported, but without it.
+  describe("an email Clerk refuses once the user exists", () => {
+    const TAKEN = "That email address is taken. Please try another.";
+
+    beforeEach(() => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev", unverified_email_addresses: "b@x.dev" },
+        ]),
+      );
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
+        new URL(input.toString()).pathname === "/v1/email_addresses"
+          ? Response.json(
+              {
+                errors: [{ code: "form_identifier_exists", message: "taken", long_message: TAKEN }],
+              },
+              { status: 422 },
+            )
+          : clerk(input, init)) as typeof fetch;
+    });
+
+    test("is counted in the summary", async () => {
+      await run(baseOptions);
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain("Failed: 0");
+      expect(err).toContain(
+        `Imported without an email or phone Clerk refused:\n  1 user: unverified email: ${TAKEN}`,
+      );
+    });
+
+    test("is a warning in --json", async () => {
+      await run({ ...baseOptions, json: true });
+      expect(JSON.parse(captured.out)).toMatchObject({
+        result: {
+          created: 1,
+          failed: 0,
+          errors: [],
+          warnings: [
+            {
+              warning: `imported without an email or phone Clerk refused: unverified email: ${TAKEN}`,
+              count: 1,
+            },
+          ],
         },
       });
     });
@@ -2554,6 +2631,28 @@ describe("run", () => {
 
       await run({ ...baseOptions, newRun: true, allowPartial: true });
       expect(listRuns(runsDir())).toHaveLength(2);
+    });
+
+    // An undone run holds no users, so it cannot be the instance's: the
+    // import starts over rather than asking for --new-run.
+    test("starts over when the only run of this file Clerk can't place was undone", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const undoRun = startRun(runsDir(), {
+        kind: "undo",
+        target: { instanceId: "ins_1" },
+        undoes: first!.id,
+      });
+      undoRun.append({ sourceId: "u1", status: "deleted", clerkId: "user_u1" });
+      undoRun.append({ sourceId: "u2", status: "deleted", clerkId: "user_u2" });
+      undoRun.finish();
+
+      requests = [];
+      stubClerk({ instanceDown: true });
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir()).filter((record) => record.kind === "import")).toHaveLength(2);
     });
 
     // Fixing the row a partial run skipped changes the file, so its run meets
