@@ -186,6 +186,20 @@ describe("fetchInstanceIdentity", () => {
       ),
     });
   });
+
+  // A proxy's page, not Clerk's JSON: its markup says nothing worth printing.
+  test("words a 401 with an HTML body by its status", async () => {
+    globalThis.fetch = (async () =>
+      new Response("<html><body>401 Authorization Required</body></html>", {
+        status: 401,
+      })) as unknown as typeof fetch;
+
+    const error = (await fetchInstanceIdentity("sk_test_bad", "--secret-key").catch(
+      (thrown: unknown) => thrown,
+    )) as Error;
+    expect(error.message).toContain("Clerk returned HTTP 401 with no error details");
+    expect(error.message).not.toContain("<html>");
+  });
 });
 
 describe("resolveClerkTarget --instance", () => {

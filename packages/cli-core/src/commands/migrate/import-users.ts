@@ -209,6 +209,12 @@ function userHolds(user: unknown, kind: PendingIdentifier["kind"], value: string
   );
 }
 
+/** The message with the identifier it names replaced by `<email>` or `<phone>`. */
+function withoutValue(message: string, value: string, kind: PendingIdentifier["kind"]): string {
+  const escaped = value.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return escaped ? message.replace(new RegExp(escaped, "gi"), `<${kind}>`) : message;
+}
+
 /**
  * Starts the note on an attach left pending for a re-run, which tries it again:
  * a continue drops the earlier one rather than repeating it.
@@ -339,7 +345,8 @@ async function attachIdentifier(
     }
     return {
       note: `Failed to add ${kindLabel} ${value}: ${message}`,
-      refused: `${kindLabel}: ${normalizeErrorMessage(message)}`,
+      // Without the value, so users refused for one reason group as one.
+      refused: `${kindLabel}: ${normalizeErrorMessage(withoutValue(message, value, kind))}`,
     };
   }
 }

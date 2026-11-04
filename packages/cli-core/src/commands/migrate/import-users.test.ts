@@ -568,7 +568,10 @@ describe("importUsers", () => {
 
     expect(lines.at(-1)).not.toHaveProperty("pending");
     expect(lines.at(-1)?.error).toBe(`Failed to add additional email b@x.dev: ${blocked}`);
-    expect([...summary.droppedIdentifiers]).toEqual([[`additional email: ${blocked}`, 1]]);
+    // Grouped by reason, without the address: one line for every blocked user.
+    expect([...summary.droppedIdentifiers]).toEqual([
+      ["additional email: <email> is not allowed to access this application.", 1],
+    ]);
   });
 
   test("counts each user once per reason Clerk refused its identifiers", async () => {

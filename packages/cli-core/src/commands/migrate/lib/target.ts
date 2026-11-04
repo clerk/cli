@@ -24,6 +24,7 @@ import { log } from "../../../lib/log.ts";
 import { isHuman } from "../../../mode.ts";
 import { detectInstanceType } from "./instance.ts";
 import { retryOn429 } from "./retry.ts";
+import { failureOf } from "./failures.ts";
 import { type CarryOptions, carryFlags } from "./carry-flags.ts";
 import type { RunTarget } from "./run-store.ts";
 
@@ -214,7 +215,7 @@ export async function fetchInstanceIdentity(
     if (error instanceof ApiError && error.status === 401) {
       const from = keySource ? ` from ${keySource}` : "";
       throw new CliError(
-        `Clerk rejected the secret key${from} (401): ${error.longMessage ?? error.message}\n` +
+        `Clerk rejected the secret key${from} (401): ${failureOf(error).message}\n` +
           "Check the key, or copy a new one from the API keys page in the Clerk Dashboard.",
         { code: ERROR_CODE.AUTH_REQUIRED },
       );

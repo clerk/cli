@@ -1478,7 +1478,8 @@ describe("run", () => {
 
     // The real run's next step: printed by the gutter for a person, and
     // straight to the log for an agent, whose gutter drops it.
-    test.each([["human"], ["agent"]] as const)(
+    const MODES = ["human", "agent"] as const;
+    test.each([...MODES])(
       "a refused --dry-run gives the --allow-partial command (%s)",
       async (mode) => {
         fs.writeFileSync(
