@@ -254,6 +254,15 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const created = undoneInFull(runsDir, record)
     ? []
     : lines.filter((line) => line.status === "created");
+  // Undo writes its `deleted` lines to its own run: a user one of them
+  // deleted is gone, whatever the import's last line for it says.
+  const deleted = new Set(
+    undosOf(listRuns(runsDir), record.id).flatMap((undo) =>
+      [...latestUserLines(runsDir, undo.id).values()]
+        .filter((line) => line.status === "deleted")
+        .map((line) => line.sourceId),
+    ),
+  );
   return {
     runsDir,
     run: { ...record, state },
@@ -266,7 +275,7 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
     ),
     leftToAttach: created.filter((line) => (line.pending?.length ?? 0) > 0),
     skipped: lines.filter((line) => line.status === "skipped"),
-    unconfirmed: lines.filter((line) => line.status === "creating"),
+    unconfirmed: lines.filter((line) => line.status === "creating" && !deleted.has(line.sourceId)),
   };
 }
 

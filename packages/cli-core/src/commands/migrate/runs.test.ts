@@ -6,6 +6,7 @@ import { quoteArg } from "../../lib/json-body.ts";
 import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
 import {
   continueRun,
+  patchRun,
   type RunRecord,
   sha256File,
   startRun,
@@ -290,6 +291,37 @@ describe("runs <id>", () => {
     const err = Bun.stripANSI(captured.err);
     expect(err).not.toContain("Warnings");
     expect(err).not.toContain("Imported without");
+  });
+
+  // Undo finds an in-flight user by the run's marker and deletes it, writing
+  // the delete to its own run. One it didn't delete may still be in Clerk.
+  test("lists no unconfirmed user an undo deleted, and keeps the rest", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({ sourceId: "a", status: "creating" });
+    run.append({ sourceId: "b", status: "creating" });
+    run.release();
+    const undo = startRun(runsDir, { kind: "undo", target: TARGET, undoes: run.record.id });
+    undo.append({ sourceId: "a", clerkId: "user_a", status: "deleted" });
+    undo.finish();
+    patchRun(runsDir, run.record.id, { status: "undone" });
+
+    await runs(run.record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      run: { state: "undone" },
+      unconfirmed: [{ sourceId: "b" }],
+    });
+
+    captured.clear();
+    await runs(run.record.id, { runsDir });
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain("Not confirmed (Clerk may have created them; a continue checks) (1)");
+    expect(err).not.toMatch(/^ {2}a\b/m);
   });
 
   // A stopped import's unsent users have no lines: only the count says so.

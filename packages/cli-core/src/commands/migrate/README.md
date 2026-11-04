@@ -1053,8 +1053,9 @@ clerk migrate runs --json
 It prints the runs folder first. The listing shows each run's ID, date, kind,
 status, target, file and counts. `runs <id>` adds the error breakdown and the
 users that failed, were skipped, or are `creating` with no answer to confirm the
-create (`unconfirmed` in `--json`). It also warns about users imported without
-their phone, or an email or phone Clerk refused (`warnings` and
+create (`unconfirmed` in `--json`, leaving out any an undo of the run deleted:
+it finds an in-flight user by the run's marker). It also warns about users
+imported without their phone, or an email or phone Clerk refused (`warnings` and
 `importedWithout` in `--json`), unless the run was undone in full, and lists
 users with identifiers left to attach and why (`leftToAttach`).
 Then it prints the path to the full record, and what
