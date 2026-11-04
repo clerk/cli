@@ -375,7 +375,7 @@ async function createUser(
   const notes: string[] = [];
   let phoneRefusal: string | undefined;
   let attachLater: string[] = [];
-  let response: Awaited<ReturnType<typeof create>>;
+  let response;
   try {
     response = await create(body);
   } catch (error) {
