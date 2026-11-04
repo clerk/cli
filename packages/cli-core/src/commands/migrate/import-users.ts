@@ -581,6 +581,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   let processed = 0;
   let successful = 0;
   let failed = 0;
+  let unconfirmed = 0;
   let notSent = 0;
   let stopReason: string | undefined;
   const droppedPhones = new Map<string, number>();
@@ -625,7 +626,8 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     unknown: boolean,
     attempt?: UserLine,
   ) => {
-    failed++;
+    if (unknown) unconfirmed++;
+    else failed++;
     processed++;
     tallyError(errorBreakdown, message);
     // With no answer, the user stays `creating`: Clerk may hold it, and a
@@ -842,6 +844,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     totalProcessed: total,
     successful,
     failed,
+    unconfirmed,
     notSent,
     ...(stopReason ? { stopReason } : {}),
     droppedPhones,

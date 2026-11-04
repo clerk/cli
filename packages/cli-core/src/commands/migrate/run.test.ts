@@ -1335,6 +1335,34 @@ describe("run", () => {
     expect(listRuns(runsDir())[0]).toMatchObject({ status: "partial", counts: { failed: 1 } });
   });
 
+  // Clerk may hold a user whose create got no answer, so it isn't a failure:
+  // it reads as `runs <id>` reads it, and a continue checks.
+  test("counts a create with no answer as not confirmed, not failed", async () => {
+    stubClerk({ unanswered: new Set(["u2"]) });
+
+    await run(baseOptions);
+
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain("Imported: 1");
+    expect(err).toContain("Failed: 0");
+    expect(err).toContain("Not confirmed: 1");
+    expect(process.exitCode).toBe(1);
+    // The run is partial, so the next step is the continue that checks.
+    expect(err).toContain("to retry them, in the same run");
+  });
+
+  test("puts a create with no answer under result.unconfirmed in --json", async () => {
+    stubClerk({ unanswered: new Set(["u2"]) });
+
+    await run({ ...baseOptions, json: true });
+
+    expect(JSON.parse(captured.out).result).toMatchObject({
+      created: 1,
+      failed: 0,
+      unconfirmed: 1,
+    });
+  });
+
   // Run later, the key may no longer be exported: the steps name it as a
   // placeholder, as `runs <id>` does, rather than nothing.
   test("after failures with an exported key, the retry and undo name the key", async () => {
