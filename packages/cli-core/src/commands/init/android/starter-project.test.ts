@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -70,18 +70,32 @@ describe("starterProjectFiles", () => {
 });
 
 describe("writeAndroidStarter", () => {
-  async function write() {
+  async function write(keep: string[] = roots) {
     const cwd = await mkdtemp(join(tmpdir(), "clerk-android-starter-"));
-    roots.push(cwd);
+    keep.push(cwd);
     const dir = join(cwd, "MyApp");
     await writeAndroidStarter(dir, project);
     return dir;
   }
 
-  test("writes every file, the executable wrapper, and an initial commit", async () => {
-    const dir = await write();
-    for (const path of Object.keys(starterProjectFiles(project)))
+  describe("writes every file", () => {
+    // Written once for the whole table, outside the per-test cleanup.
+    const kept: string[] = [];
+    let dir: string;
+    beforeAll(async () => {
+      dir = await write(kept);
+    });
+    afterAll(async () => {
+      await Promise.all(kept.map((root) => rm(root, { recursive: true, force: true })));
+    });
+
+    test.each(Object.keys(starterProjectFiles(project)))("%s", async (path) => {
       expect(await Bun.file(join(dir, path)).exists()).toBe(true);
+    });
+  });
+
+  test("writes the executable wrapper and an initial commit", async () => {
+    const dir = await write();
     expect((await stat(join(dir, "gradlew"))).mode & 0o111).toBeTruthy();
     expect((await stat(join(dir, "gradle/wrapper/gradle-wrapper.jar"))).size).toBeGreaterThan(
       40_000,
@@ -90,6 +104,20 @@ describe("writeAndroidStarter", () => {
     const log = await Bun.$`git log --oneline`.cwd(dir).quiet().nothrow();
     expect(log.stdout.toString()).toContain("Initial commit");
     expect((await Bun.$`git status --porcelain`.cwd(dir).quiet()).stdout.toString()).toBe("");
+  });
+
+  test("writes the project without Git on PATH, just with no repository", async () => {
+    const empty = await mkdtemp(join(tmpdir(), "clerk-no-git-"));
+    roots.push(empty);
+    const path = process.env.PATH;
+    process.env.PATH = empty;
+    try {
+      const dir = await write();
+      expect(await readdir(dir)).toContain("app");
+      expect(await readdir(dir)).not.toContain(".git");
+    } finally {
+      process.env.PATH = path;
+    }
   });
 
   test("refuses an existing directory and cleans up after a failure", async () => {

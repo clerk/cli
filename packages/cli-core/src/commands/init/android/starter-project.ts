@@ -451,13 +451,19 @@ const WRAPPER_FILES: { path: string; source: string; mode: number }[] = [
 
 /** Whether `directory` is inside a Git work tree already, in which case no repository is made. */
 async function insideGitRepository(directory: string): Promise<boolean> {
-  const child = Bun.spawn(["git", "rev-parse", "--is-inside-work-tree"], {
-    cwd: directory,
-    stdout: "ignore",
-    stderr: "ignore",
-    timeout: 5_000,
-  });
-  return (await child.exited) === 0;
+  try {
+    const child = Bun.spawn(["git", "rev-parse", "--is-inside-work-tree"], {
+      cwd: directory,
+      env: process.env,
+      stdout: "ignore",
+      stderr: "ignore",
+      timeout: 5_000,
+    });
+    return (await child.exited) === 0;
+  } catch {
+    // Git isn't installed; a new project doesn't need it.
+    return false;
+  }
 }
 
 /**
@@ -469,6 +475,7 @@ async function initializeRepository(directory: string): Promise<void> {
   const run = async (args: string[]) => {
     const child = Bun.spawn(["git", ...args], {
       cwd: directory,
+      env: process.env,
       stdout: "ignore",
       stderr: "ignore",
       timeout: 15_000,

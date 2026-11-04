@@ -311,6 +311,22 @@ describe("clerk init for a new Android starter", () => {
     ).toContain("optional-sign-in-ui");
   });
 
+  test("a rerun inside the unchanged starter keeps the UI artifact without the starter options", async () => {
+    const f = await starterFixture();
+    // The continuation an agent runs inside the new app carries no starterProject.
+    await runAndroidInit(
+      { root: f.root, agent: true, json: true, prebuiltAuthUi: true },
+      "app_test",
+      f.dependencies,
+    );
+    expect(
+      JSON.parse(captured.out).handoff.completed.map((item: { id: string }) => item.id),
+    ).toContain("optional-sign-in-ui");
+    expect(await readFile(join(f.root, "app/build.gradle.kts"), "utf8")).toContain(
+      "implementation(libs.clerk.android.ui)",
+    );
+  });
+
   test("a setup error after writing reports setup-interrupted with the continuation", async () => {
     const f = await starterFixture();
     f.state.wrongApp = true;

@@ -185,6 +185,9 @@ export async function runAndroidInit(
           setup.sdk = sdk;
           break;
         }
+    // An unchanged starter with no SDK yet is a new app however this run reached it, including
+    // the continuation an agent runs inside it: it keeps the UI artifact it was written for.
+    if (!options.androidSdk && starter && !inspection.dependencies.length) setup.sdk = "ui";
     // A new starter has no screens of its own yet, so its sign-in screen defaults to on: --yes
     // takes that default as the prompt below offers it. An agent still needs the user to ask for
     // UI changes (see the handoff).
