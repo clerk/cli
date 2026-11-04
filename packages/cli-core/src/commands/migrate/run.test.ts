@@ -1326,6 +1326,16 @@ describe("run", () => {
     expect(created()).toHaveLength(0);
   });
 
+  // Printed as the import starts, for a Ctrl-C; the summary doesn't repeat it.
+  test("names the run folder once", async () => {
+    stubClerk();
+
+    await run(baseOptions);
+
+    const [record] = listRuns(runsDir());
+    expect(captured.err.split(`Run ${record?.id}: `)).toHaveLength(2);
+  });
+
   test("exits 1 when some users failed", async () => {
     stubClerk({ failing: new Set(["u2"]) });
 
