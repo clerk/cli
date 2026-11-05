@@ -139,11 +139,11 @@ leaves `.gitignore` alone.
 
 Each run is a folder named for its ID, `YYYYMMDD-HHmmss-xxxx`:
 
-| File           | Contents                                                                                                                               |
-| -------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, an import's flags, and the counts               |
-| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending` or `passwordDropped` when present |
-| `lock`         | The PID of the process writing the run, while it runs                                                                                  |
+| File           | Contents                                                                                                                                                                       |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `run.json`     | Kind, status, start and finish times, the target, the source, the file and its sha256, an import's flags, and the counts                                                       |
+| `users.ndjson` | One line per user outcome: `sourceId`, `clerkId`, `status`, and `reason`, `error`, `code`, `pending`, `reserved`, `refused`, `phoneRefused`, or `passwordDropped` when present |
+| `lock`         | The PID of the process writing the run, while it runs                                                                                                                          |
 
 On a `failed` line, `code` is the HTTP status, such as `422` or `429`, or
 `unknown`. On a `skipped` line it gives the reason in machine form:
@@ -154,9 +154,10 @@ asked to skip.
 
 A user's status is `creating`, `created`, `failed`, `skipped`, `deleted` or
 `exported`. The last line for each `sourceId` wins. A `429` retry, an extra
-email or phone that did not attach, a first phone Clerk refused (which the
-summary also counts), and a validation failure all land in the line's `error`
-field.
+email or phone Clerk refused, a first phone Clerk refused (which the summary
+also counts), and a validation failure all land in the line's `error` field. So
+does why an attach was left `pending`, when Clerk said: "Not added yet", which a
+continue replaces rather than repeats.
 
 `creating` is written as a user's `POST /v1/users` goes out. It stays the latest
 status when no answer says whether the create landed: an abort, a network error,
@@ -779,8 +780,10 @@ the flag: it continues this run and creates them. A skip for the file's own data
 something to retry: fix the file, which makes a new run.
 
 `--json` returns `{ target, run, resume, checks, result }`. When a run stops
-before importing, it carries one of `dryRun: true`, `refused: true`,
-`consent: "required"` or `nothingToImport: true` in place of `result`, and a
+before importing, it carries `dryRun: true`, `refused: true`,
+`consent: "required"` or `nothingToImport: true` in place of `result` (a
+refused dry run carries both `dryRun` and `refused`, and a refusal carries
+`advice` and `steps`), and a
 file already imported in full returns `alreadyImported: true`. With
 `--require-password`, `withoutPassword` counts the users it left out before the
 checks, so on a first import `checks.total` plus it is the file's size. A
@@ -807,8 +810,11 @@ instance ID; the latest matching import run decides what happens:
 Clerk cannot name the instance (`GET /v1/instance` failed, often from rate
 limiting right after a large import) and a run of this file exists under a real
 instance ID, it exits 2 rather than starting over: try again, or pass
-`--new-run`. A continue whose run changed while it waited at the prompt, from
-an undo or another continue, exits 2 too, with nothing written.
+`--new-run`. A run undone in full holds no users, so it doesn't count. A key
+Clerk refuses (`401`) is not a failed lookup: the import stops, naming where the
+key came from and Clerk's error, and so do `migrate undo` and
+`migrate export clerk`. A continue whose run changed while it waited at the
+prompt, from an undo or another continue, exits 2 too, with nothing written.
 
 A continued run also finishes what the last one left open:
 
@@ -913,7 +919,12 @@ store: …`), passwords a source had to drop, emails Clerk refuses (malformed,
 Any reject stops the import, and it exits 2 with the command that adds
 `--allow-partial`. With `--allow-partial`, the rest import and each reject is
 recorded as `skipped` with its reason. `--dry-run` exits 2 when the real run
-would be refused, and 0 otherwise.
+would be refused, and 0 otherwise. A refused dry run says so after the checks,
+with the advice and commands the real run would give: the `--allow-partial`
+command when any user passes, and the earlier run's undo (or continue) when it
+created some of the rejected users. In `--json` the preview carries
+`refused: true`, with `advice` (the real refusal's sentence) and `steps` (its
+commands, each a `command` and `description`).
 
 ```
 Checks
@@ -936,7 +947,8 @@ Or change the instance instead
 Each fix names its instance with `--instance`, so it changes the instance the
 import targets, whatever the key's source. A key from `--secret-key` or
 `CLERK_SECRET_KEY` names no app, so its fix reads `--app APP_ID`: fill in the
-app that owns the instance. When Clerk could not name the
+app that owns the instance. The checks say so beneath the fixes, and `--json`
+adds `checks.placeholders` (`{ "APP_ID": … }`). When Clerk could not name the
 instance (a `key_…` fallback ID), the fix points at the Dashboard instead: in
 `--json` it carries `url` in place of `command`.
 
@@ -958,15 +970,28 @@ users already signed up on the source platform.
 Only the first verified email and phone go on `POST /v1/users`. Every
 additional verified identifier, and every unverified one, is attached
 afterwards with its own request, ahead of any create still queued, and backs
-off on a `429` like the create. A refusal there is logged and the user still
-counts as imported — a duplicate secondary email should not undo an otherwise
-successful user. An attach with no answer stays `pending` for a re-run.
+off on a `429` like the create. A refusal there does not fail the user — a
+duplicate secondary email should not undo an otherwise successful user — but
+it is a warning: the summary lists the user under "Imported without an email or
+phone Clerk refused", by kind and Clerk's reason (`result.warnings` in
+`--json`), and the user's line records it under `refused`, which `runs <id>`
+reports too. An attach with no answer stays `pending` for a re-run, and so
+does one whose error says nothing about the identifier: a `401`, a `403` other
+than `unsupported_country_code` or `not_allowed_access` (the instance's
+allowlist or blocklist), or a `429` that outlasts the retries. Those note why
+on the line, and `runs <id>` lists them. An attach Clerk refuses as taken
+(`form_identifier_exists`) looks the user up with `GET /v1/users/{user_id}`
+first: when the user already holds it, an earlier attach with no answer landed,
+and it counts as attached. When the lookup gets no answer, the attach stays
+`pending`.
 
 The first phone gets the same treatment when Clerk refuses it — a country the
 instance does not support, or a number that is not E.164 — and the user has an
 email: the create is retried without the phone. The user counts as imported,
 and the summary lists them under "Imported without their phone", by Clerk's
-reason (`result.warnings` in `--json`).
+reason (`result.warnings` in `--json`). The user's line records the reason
+under `phoneRefused`, which `runs <id>` reports too. The retry's `creating`
+line carries it as well, so a continue that adopts the user keeps it.
 
 With [reserved](#verified-vs-unverified-identifiers) phones on the create, the
 refused one may be any of them, so the verified phone is retried alone first.
@@ -1001,7 +1026,8 @@ that predates the field leaves a development instance at
 
 Users that do exceed the limit come back in the error breakdown as
 `You have reached your limit of N users`, annotated with what a development
-instance can do about it. The first refusal stops the import: the users it
+instance can do about it (`result.notes` in `--json`, which carries every such
+note the summary prints). The first refusal stops the import: the users it
 never sent are counted under "Not sent" (`result.notSent` in `--json`, and
 `counts.notSent` in `run.json`), written when the run finishes. A run stopped
 with Ctrl-C never finishes, so it can't count them, and `runs <id>` offers its
@@ -1027,7 +1053,11 @@ clerk migrate runs --json
 It prints the runs folder first. The listing shows each run's ID, date, kind,
 status, target, file and counts. `runs <id>` adds the error breakdown and the
 users that failed, were skipped, or are `creating` with no answer to confirm the
-create (`unconfirmed` in `--json`), with the path to the full record, then what
+create (`unconfirmed` in `--json`). It also warns about users imported without
+their phone, or an email or phone Clerk refused (`warnings` and
+`importedWithout` in `--json`), unless the run was undone in full, and lists
+users with identifiers left to attach and why (`leftToAttach`).
+Then it prints the path to the full record, and what
 to run next: for an interrupted or partial import, the import that continues it,
 with the flags it ran with, then the undo. The continue is left out when
 importing the file again might not reach this run: a newer run of the same file
@@ -1397,12 +1427,15 @@ refused; pass `--new-run` to change modes. A user a run adopts keeps the mode
 its first create recorded (`reserved` on its `creating` line). When Clerk
 refused a phone and the retry went out without the reserved phones, that line
 lists them as `pending`, and a continue that adopts the user attaches them,
-unverified (one Clerk refuses again fails with a note).
+unverified. One Clerk refuses again is a warning, recorded under `refused`. A
+lone reserved phone the retry already counts as refused is under `phoneRefused`
+instead, and isn't sent again.
 
 A reserved identifier is checked for duplicates like a verified one, since it
 goes on the user's create. If an instance user, or an earlier record in the
 file that passes the checks, already holds it, the whole user is rejected.
-Without reserving, only that address fails to attach, with a note. If that
+Without reserving, only that address fails to attach: the user is imported
+with a warning, and the address is recorded under `refused`. If that
 rejects users you want, import without reserving.
 
 ### Firebase hash parameters
@@ -1547,6 +1580,7 @@ A run that finishes part-way exits nonzero without throwing, and carries a code 
 | `POST`   | `/v1/users`                                             | `migrate import` — creates each user                                                                                           |
 | `POST`   | `/v1/email_addresses`                                   | `migrate import` — attaches additional emails                                                                                  |
 | `POST`   | `/v1/phone_numbers`                                     | `migrate import` — attaches additional phones                                                                                  |
+| `GET`    | `/v1/users/{user_id}`                                   | `migrate import` — an attach refused as taken checks whether the user already holds it                                         |
 | `GET`    | `/v1/users?limit=&offset=&order_by=+created_at`         | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time                                                 |
 | `GET`    | `/v1/users?limit=&starting_after=&order_by=+created_at` | `migrate export clerk` — pages the whole instance, oldest first, 500 at a time, each page from the last user of the one before |
 | `GET`    | `/v1/users/count`                                       | `migrate import` — headroom against the instance's user limit                                                                  |

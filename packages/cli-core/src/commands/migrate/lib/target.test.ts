@@ -161,6 +161,45 @@ describe("fetchInstanceIdentity", () => {
     expect(await fetchInstanceIdentity("sk_test_a")).toEqual(first);
     expect((await fetchInstanceIdentity("sk_test_b")).instanceId).not.toBe(first.instanceId);
   });
+
+  // A stand-in would send the import's run checks after an instance that
+  // does not matter, with advice that leads back to the same refusal.
+  test("throws Clerk's error for a key Clerk refuses", async () => {
+    globalThis.fetch = (async () =>
+      Response.json(
+        {
+          errors: [
+            {
+              code: "clerk_key_invalid",
+              message: "Secret Key invalid",
+              long_message: "The provided Clerk Secret Key is invalid.",
+            },
+          ],
+        },
+        { status: 401 },
+      )) as unknown as typeof fetch;
+
+    await expect(fetchInstanceIdentity("sk_test_bad", "--secret-key")).rejects.toMatchObject({
+      code: "auth_required",
+      message: expect.stringContaining(
+        "Clerk rejected the secret key from --secret-key (401): The provided Clerk Secret Key is invalid.",
+      ),
+    });
+  });
+
+  // A proxy's page, not Clerk's JSON: its markup says nothing worth printing.
+  test("words a 401 with an HTML body by its status", async () => {
+    globalThis.fetch = (async () =>
+      new Response("<html><body>401 Authorization Required</body></html>", {
+        status: 401,
+      })) as unknown as typeof fetch;
+
+    const error = (await fetchInstanceIdentity("sk_test_bad", "--secret-key").catch(
+      (thrown: unknown) => thrown,
+    )) as Error;
+    expect(error.message).toContain("Clerk returned HTTP 401 with no error details");
+    expect(error.message).not.toContain("<html>");
+  });
 });
 
 describe("resolveClerkTarget --instance", () => {

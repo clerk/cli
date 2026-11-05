@@ -15,6 +15,7 @@ import path from "node:path";
 import { _setConfigDir, setProfile } from "../../lib/config.ts";
 import { type CliError, EXIT_CODE } from "../../lib/errors.ts";
 import * as plapi from "../../lib/plapi.ts";
+import { _resetMode, setMode } from "../../mode.ts";
 import {
   captureTelemetryPayload,
   credentialStoreStubs,
@@ -1468,7 +1469,54 @@ describe("run", () => {
       expect(created()).toHaveLength(0);
       expect(listRuns(runsDir())).toHaveLength(0);
       expect(captured.err).toContain("Dry run: nothing was written.");
+      // Said in words, not only by the exit code.
+      expect(Bun.stripANSI(captured.err)).toContain(
+        "The import would refuse: 1 user would be rejected. Fix them, or pass --allow-partial to import the rest and record them as skipped.",
+      );
       expect(process.exitCode).toBe(2);
+    });
+
+    // The real run's next step: printed by the gutter for a person, and
+    // straight to the log for an agent, whose gutter drops it.
+    const MODES = ["human", "agent"] as const;
+    test.each([...MODES])(
+      "a refused --dry-run gives the --allow-partial command (%s)",
+      async (mode) => {
+        fs.writeFileSync(
+          path.join(workDir, "export.json"),
+          JSON.stringify([...export2, { id: "u3" }]),
+        );
+        setMode(mode);
+        try {
+          await run({ ...baseOptions, dryRun: true });
+        } finally {
+          _resetMode();
+        }
+
+        expect(Bun.stripANSI(captured.err)).toMatch(/→ .*--allow-partial --yes/);
+      },
+    );
+
+    test("--dry-run --json says the import would be refused", async () => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([...export2, { id: "u3" }]),
+      );
+
+      await run({ ...baseOptions, dryRun: true, json: true });
+
+      // The real run's advice and commands, for an agent to act on.
+      expect(JSON.parse(captured.out)).toMatchObject({
+        dryRun: true,
+        refused: true,
+        advice: "Fix them, or pass --allow-partial to import the rest and record them as skipped.",
+        steps: [
+          {
+            command: expect.stringContaining("--allow-partial --yes"),
+            description: "Import the users that pass",
+          },
+        ],
+      });
     });
 
     test("--dry-run exits 0 when nothing would be rejected", async () => {
@@ -1502,6 +1550,16 @@ describe("run", () => {
       expect(captured.err).toContain(
         `clerk config patch --app APP_ID --instance ins_1 --json '{"auth_email":{"required_for_sign_up":false}}'`,
       );
+      // A key names no app, so the placeholder is explained.
+      expect(Bun.stripANSI(captured.err)).toContain(
+        "Replace APP_ID with the app's ID: `clerk apps list` shows it.",
+      );
+
+      captured.clear();
+      await run({ ...baseOptions, dryRun: true, json: true });
+      expect(JSON.parse(captured.out)).toMatchObject({
+        checks: { placeholders: { APP_ID: "the app's ID: `clerk apps list` shows it" } },
+      });
     });
 
     // Reserved meets the requirement, so neither the reject nor the fix applies.
@@ -1732,7 +1790,13 @@ describe("run", () => {
         JSON.stringify([...export2, { id: "u3" }]),
       );
       expect(await exitCodeOf(run({ ...baseOptions, json: true }))).toBe(EXIT_CODE.USAGE);
-      expect(JSON.parse(captured.out)).toMatchObject({ run: null, refused: true });
+      // The dry run's advice and commands, on stdout for an agent to act on.
+      expect(JSON.parse(captured.out)).toMatchObject({
+        run: null,
+        refused: true,
+        advice: "Fix them, or pass --allow-partial to import the rest and record them as skipped.",
+        steps: [{ command: expect.stringContaining("--allow-partial --yes") }],
+      });
       expect(created()).toHaveLength(0);
     });
 
@@ -1805,6 +1869,8 @@ describe("run", () => {
           failed: 1,
           notSent: 1,
           stopReason: "You have reached your limit of 100 users.",
+          // What the human summary adds: an agent reads only this.
+          notes: [expect.stringContaining("The user limit is a development-instance quota.")],
         },
       });
     });
@@ -1835,6 +1901,52 @@ describe("run", () => {
       expect(err).toContain("Not sent: 1");
       expect(err).toContain(
         "No more users were sent. Once the limit is raised, run the import again to send them.",
+      );
+    });
+  });
+
+  // An unverified phone attached after the create, refused for its country:
+  // the user imports without it, and the summary explains the blocklist.
+  describe("an attached phone Clerk refuses for its country", () => {
+    const COUNTRY =
+      "Phone numbers from this country (France) are currently not supported. For more information, please contact support.";
+
+    beforeEach(() => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev", unverified_phone_numbers: "+33612345678" },
+        ]),
+      );
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        if (init?.method === "POST" && new URL(input.toString()).pathname === "/v1/phone_numbers") {
+          return Response.json(
+            {
+              errors: [
+                { code: "unsupported_country_code", message: "unsupported", long_message: COUNTRY },
+              ],
+            },
+            { status: 403 },
+          );
+        }
+        return clerk(input, init);
+      }) as typeof fetch;
+    });
+
+    test("adds the SMS note to the summary", async () => {
+      await run(baseOptions);
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain("Failed: 0");
+      expect(err).toContain("Imported without an email or phone Clerk refused:");
+      expect(err).toContain("Development instances block SMS");
+    });
+
+    test("adds the SMS note to result.notes in --json", async () => {
+      await run({ ...baseOptions, json: true });
+      const { result } = JSON.parse(captured.out) as { result: { notes: string[] } };
+      expect(result.notes.some((note) => note.includes("Development instances block SMS"))).toBe(
+        true,
       );
     });
   });
@@ -1887,6 +1999,65 @@ describe("run", () => {
           failed: 0,
           errors: [],
           warnings: [{ warning: `imported without their phone: ${COUNTRY}`, count: 1 }],
+        },
+      });
+    });
+  });
+
+  // Created, then an extra email Clerk refused: imported, but without it.
+  describe("an email Clerk refuses once the user exists", () => {
+    const TAKEN = "That email address is taken. Please try another.";
+
+    beforeEach(() => {
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev", unverified_email_addresses: "b@x.dev" },
+        ]),
+      );
+      const clerk = globalThis.fetch;
+      globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+        const { pathname } = new URL(input.toString());
+        if (pathname === "/v1/email_addresses") {
+          return Response.json(
+            { errors: [{ code: "form_identifier_exists", message: "taken", long_message: TAKEN }] },
+            { status: 422 },
+          );
+        }
+        // The lookup a taken attach makes: this user holds only its primary.
+        if (init?.method === "GET" && /^\/v1\/users\/user_[^/]+$/.test(pathname)) {
+          return Response.json({
+            id: pathname.split("/").pop(),
+            email_addresses: [{ email_address: "a@x.dev" }],
+            phone_numbers: [],
+          });
+        }
+        return clerk(input, init);
+      }) as typeof fetch;
+    });
+
+    test("is counted in the summary", async () => {
+      await run(baseOptions);
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain("Failed: 0");
+      expect(err).toContain(
+        `Imported without an email or phone Clerk refused:\n  1 user: unverified email: ${TAKEN}`,
+      );
+    });
+
+    test("is a warning in --json", async () => {
+      await run({ ...baseOptions, json: true });
+      expect(JSON.parse(captured.out)).toMatchObject({
+        result: {
+          created: 1,
+          failed: 0,
+          errors: [],
+          warnings: [
+            {
+              warning: `imported without an email or phone Clerk refused: unverified email: ${TAKEN}`,
+              count: 1,
+            },
+          ],
         },
       });
     });
@@ -2201,6 +2372,47 @@ describe("run", () => {
       ).toEqual([
         { user_id: "user_found", phone_number: "+31612345678", primary: false, verified: false },
       ]);
+    });
+
+    // The retry without a refused phone was cut off: the continue that adopts
+    // the user reads the reason from that `creating` line, and still warns.
+    test("an adopted user keeps the phone its cut-off retry went without", async () => {
+      const reason = "Phone numbers from this country (Netherlands) are currently not supported.";
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([
+          { id: "u1", primary_email_address: "a@x.dev" },
+          { id: "u2", primary_email_address: "b@x.dev", primary_phone_number: "+31612345678" },
+        ]),
+      );
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.appendFileSync(
+        path.join(runsDir(), first!.id, "users.ndjson"),
+        `${JSON.stringify({ sourceId: "u2", status: "creating", phoneRefused: reason })}\n`,
+      );
+      interrupt(first!.id);
+
+      requests = [];
+      process.exitCode = 0;
+      captured.clear();
+      stubClerk({
+        existing: [
+          { id: "user_found", external_id: "u2", private_metadata: { clerkMigrateRun: first!.id } },
+        ],
+      });
+      await run(baseOptions);
+
+      expect(created()).toEqual([]);
+      expect(latestUserLines(runsDir(), first!.id).get("u2")).toMatchObject({
+        status: "created",
+        clerkId: "user_found",
+        phoneRefused: reason,
+      });
+      expect(Bun.stripANSI(captured.err)).toContain(
+        `Imported without their phone:\n  1 user: ${reason}`,
+      );
     });
 
     // A reserved create with no answer: its latest line has to keep `reserved`,
@@ -2556,6 +2768,28 @@ describe("run", () => {
       expect(listRuns(runsDir())).toHaveLength(2);
     });
 
+    // An undone run holds no users, so it cannot be the instance's: the
+    // import starts over rather than asking for --new-run.
+    test("starts over when the only run of this file Clerk can't place was undone", async () => {
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      const undoRun = startRun(runsDir(), {
+        kind: "undo",
+        target: { instanceId: "ins_1" },
+        undoes: first!.id,
+      });
+      undoRun.append({ sourceId: "u1", status: "deleted", clerkId: "user_u1" });
+      undoRun.append({ sourceId: "u2", status: "deleted", clerkId: "user_u2" });
+      undoRun.finish();
+
+      requests = [];
+      stubClerk({ instanceDown: true });
+      await run(baseOptions);
+
+      expect(created()).toEqual(["u1", "u2"]);
+      expect(listRuns(runsDir()).filter((record) => record.kind === "import")).toHaveLength(2);
+    });
+
     // Fixing the row a partial run skipped changes the file, so its run meets
     // the users the first one created: the refusal says which run that was.
     test("a changed file's refusal names the earlier run that created the users it rejects", async () => {
@@ -2579,6 +2813,31 @@ describe("run", () => {
       expect(error.examples?.map((example) => example.command)).toContain(
         `clerk migrate undo ${first!.id} --secret-key <key>`,
       );
+      expect(created()).toEqual([]);
+    });
+
+    // A dry run predicts the real refusal, the earlier run's undo and all.
+    test("a changed file's refused dry run names the earlier run and its undo", async () => {
+      stubClerk({ failing: new Set(["u2"]) });
+      await run(baseOptions);
+      const [first] = listRuns(runsDir());
+      fs.writeFileSync(
+        path.join(workDir, "export.json"),
+        JSON.stringify([export2[0], { ...export2[1], primary_email_address: "fixed@x.dev" }]),
+      );
+      requests = [];
+      process.exitCode = 0;
+      stubClerk({ existing: [{ id: "user_u1", external_id: "u1" }] });
+      captured.clear();
+
+      await run({ ...baseOptions, dryRun: true });
+
+      const err = Bun.stripANSI(captured.err);
+      expect(err).toContain(
+        `The import would refuse: 1 user would be rejected. 1 of them was created by run ${first!.id}, from an earlier version of this file.`,
+      );
+      expect(err).toContain(`clerk migrate undo ${first!.id} --secret-key <key>`);
+      expect(process.exitCode).toBe(2);
       expect(created()).toEqual([]);
     });
 

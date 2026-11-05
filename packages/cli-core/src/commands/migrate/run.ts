@@ -46,7 +46,12 @@ import { confirm } from "../../lib/prompts.ts";
 import { interruptedExitCode } from "../../lib/signals.ts";
 import { withGutter, withSpinner } from "../../lib/spinner.ts";
 import { importUsers, splitIdentifiers } from "./import-users.ts";
-import { ALREADY_IMPORTED, checkImport, type ImportChecks } from "./lib/checks.ts";
+import {
+  ALREADY_IMPORTED,
+  APP_ID_PLACEHOLDER,
+  checkImport,
+  type ImportChecks,
+} from "./lib/checks.ts";
 import { fetchInstanceSettings, fetchUserCount } from "./lib/clerk-config.ts";
 import { readEnvelope, type ExportEnvelope } from "./lib/export-file.ts";
 import {
@@ -82,6 +87,7 @@ import {
   openUndoOf,
   patchRun,
   importsOfFile,
+  undoneInFull,
   undosOf,
   withAttempt,
 } from "./lib/run-store.ts";
@@ -107,6 +113,7 @@ import { getSource, resolveSource, sourceKeys } from "./sources/registry.ts";
 import type { ImportSummary, User } from "./types.ts";
 import { promptForFile, promptForFirebaseHashConfig, promptForSource } from "./wizard.ts";
 import { recordMigrateSource, recordMigrateTarget } from "./telemetry.ts";
+import { WITHOUT_IDENTIFIER_WARNING, WITHOUT_PHONE_WARNING } from "./lib/failures.ts";
 import { declareSoftExitOutcome, setTelemetryStage } from "../../lib/telemetry.ts";
 import { login } from "../auth/login.ts";
 import { link } from "../link/index.ts";
@@ -244,6 +251,15 @@ export function explainErrors(errors: Iterable<string>, instanceType: InstanceTy
   }
 
   return notes;
+}
+
+/** Every message a summary groups, for {@link explainErrors}. */
+function explainedErrors(summary: ImportSummary): string[] {
+  return [
+    ...summary.errorBreakdown.keys(),
+    ...summary.droppedPhones.keys(),
+    ...summary.droppedIdentifiers.keys(),
+  ];
 }
 
 // --- Settling the file, source and target ----------------------------------
@@ -489,17 +505,6 @@ function sameFileAndInstance(
   );
 }
 
-/** True when a run's users are gone: it is marked undone, or an undo of it finished. */
-function undoneInFull(runsDir: string, record: RunRecord): boolean {
-  return (
-    runState(runsDir, record) === "undone" ||
-    listRuns(runsDir).some(
-      (undo) =>
-        undo.kind === "undo" && undo.undoes === record.id && runState(runsDir, undo) === "complete",
-    )
-  );
-}
-
 /** How this import relates to earlier runs of the same file, source and instance. */
 type ResumeCase =
   | { kind: "new" }
@@ -571,7 +576,9 @@ function findResume(
         (record) =>
           record.kind === "import" &&
           record.file?.sha256 === match.sha256 &&
-          isClerkInstanceId(record.target.instanceId),
+          isClerkInstanceId(record.target.instanceId) &&
+          // An undone run holds no users, so starting over beside it is safe.
+          !undoneInFull(runsDir, record),
       );
       if (unconfirmed) {
         throwUsageError(
@@ -658,7 +665,18 @@ function printChecks(checks: ImportChecks): void {
       log.info(`  ${fix.label}`);
       log.info(dim(`    ${fix.command ?? fix.url}`));
     }
+    // A key names no app, so the commands carry a placeholder to fill in.
+    if (hasAppIdPlaceholder(checks)) {
+      log.info(
+        dim(`  Replace ${APP_ID_PLACEHOLDER} with the app's ID: \`clerk apps list\` shows it.`),
+      );
+    }
   }
+}
+
+/** Whether a fix command names the app with {@link APP_ID_PLACEHOLDER}. */
+function hasAppIdPlaceholder(checks: ImportChecks): boolean {
+  return checks.fixes.some((fix) => fix.command?.includes(` --app ${APP_ID_PLACEHOLDER} `));
 }
 
 function checksJson(checks: ImportChecks) {
@@ -671,6 +689,9 @@ function checksJson(checks: ImportChecks) {
     skippedReasons: checks.skippedReasons,
     warnings: checks.warnings,
     fixes: checks.fixes,
+    ...(hasAppIdPlaceholder(checks)
+      ? { placeholders: { [APP_ID_PLACEHOLDER]: "the app's ID: `clerk apps list` shows it" } }
+      : {}),
     ...(checks.quota ? { quota: checks.quota } : {}),
     settingsUnavailable: checks.settingsUnavailable,
   };
@@ -717,8 +738,14 @@ function formatSummary(
       lines.push(`  ${plural(count, "user")}: ${reason}`);
     }
   }
-  const explained = [...summary.errorBreakdown.keys(), ...summary.droppedPhones.keys()];
-  for (const note of explainErrors(explained, instanceType)) lines.push("", note);
+  // The same for an extra email or phone Clerk refused once the user existed.
+  if (summary.droppedIdentifiers.size > 0) {
+    lines.push("", bold("Imported without an email or phone Clerk refused:"));
+    for (const [reason, count] of summary.droppedIdentifiers) {
+      lines.push(`  ${plural(count, "user")}: ${reason}`);
+    }
+  }
+  for (const note of explainErrors(explainedErrors(summary), instanceType)) lines.push("", note);
   lines.push("", dim(`Run ${record.id}: ${runFolder}`));
   return lines;
 }
@@ -1113,19 +1140,12 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       const plannedLines = continued ? readUserLines(runsDir, continued.id).length : undefined;
       const done = new Map<string, string>();
       const attachOnly: UserLine[] = [];
-      const inFlight: string[] = [];
-      const inFlightReserved = new Set<string>();
-      const inFlightPending = new Map<string, string[]>();
+      // Each create with no answer, by its `creating` line: what it reserved,
+      // left out and lost decides how an adopted user is finished.
+      const inFlight = new Map<string, UserLine>();
       if (continued) {
         for (const line of latestUserLines(runsDir, continued.id).values()) {
-          if (line.status === "creating") inFlight.push(line.sourceId);
-          if (line.status === "creating" && line.reserved) inFlightReserved.add(line.sourceId);
-          if (line.status === "creating" && line.pending?.length) {
-            inFlightPending.set(
-              line.sourceId,
-              line.pending.filter((entry) => entry.kind === "phone").map((entry) => entry.value),
-            );
-          }
+          if (line.status === "creating") inFlight.set(line.sourceId, line);
           if (line.status !== "created" || !line.clerkId) continue;
           done.set(line.sourceId, line.clerkId);
           if (line.pending?.length) attachOnly.push(line);
@@ -1139,7 +1159,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       if (continued) {
         const found = await findInFlight({
           runId: continued.id,
-          sourceIds: inFlight,
+          sourceIds: [...inFlight.keys()],
           secretKey,
           schedule,
         });
@@ -1284,7 +1304,9 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           adoptedClerkIds: new Set(adopted.values()),
           adoptedSourceIds: new Set(adopted.keys()),
           // Their `creating` line says how the create ran, not this run's flag.
-          reservedSourceIds: new Set([...adopted.keys()].filter((id) => inFlightReserved.has(id))),
+          reservedSourceIds: new Set(
+            [...adopted.keys()].filter((id) => inFlight.get(id)?.reserved === true),
+          ),
           spinner,
         }),
       );
@@ -1323,23 +1345,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
 
       if (!options.json) printChecks(checks);
 
-      if (options.dryRun) {
-        setTelemetryStage("migrate_dry_run");
-        if (options.json) preview({ dryRun: true });
-        else {
-          log.blank();
-          log.info(dim("Dry run: nothing was written."));
-        }
-        // The exit code says what the real run would do.
-        if (refused) {
-          process.exitCode = 2;
-          declareSoftExitOutcome("error", "migrate_checks_rejected");
-        }
-        return;
-      }
-
-      if (refused) {
-        if (options.json) preview({ refused: true });
+      // What a refused import says to do next, which the dry run predicts.
+      const refusalAdvice = () => {
         const earlier = earlierRunHolding(runsDir, target.instanceId, checks, sha256);
         const undoEarlier = earlier ? undoCommand(earlier.id, carry) : undefined;
         const earlierRun =
@@ -1374,35 +1381,71 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               `undo run ${earlier.id} first (\`${undoEarlier}\`) to import the whole file again`,
             ].join(", or ")
           : "";
+        const advice = earlier
+          ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from ${earlier.sameFile ? "this file" : "an earlier version of this file"}. ` +
+            (continueEarlier
+              ? `Drop --new-run to continue run ${earlier.id}. Or ${ways}.`
+              : `${ways[0]!.toUpperCase()}${ways.slice(1)}.`)
+          : nonePass
+            ? "Fix them: with every user rejected, --allow-partial would import nobody."
+            : "Fix them, or pass --allow-partial to import the rest and record them as skipped.";
+        const steps = [
+          ...(continueEarlier
+            ? [{ command: continueEarlier, description: `Continue run ${earlier!.id}` }]
+            : []),
+          ...(nonePass
+            ? []
+            : [
+                {
+                  command: commandFor(options, input.fromExport, ["--allow-partial", "--yes"]),
+                  description: "Import the users that pass",
+                },
+              ]),
+          ...(undoEarlier
+            ? [{ command: undoEarlier, description: `Undo run ${earlier!.id} first` }]
+            : []),
+        ];
+        return { advice, steps };
+      };
+
+      if (options.dryRun) {
+        setTelemetryStage("migrate_dry_run");
+        if (options.json) {
+          preview({ dryRun: true, ...(refused ? { refused: true, ...refusalAdvice() } : {}) });
+        } else {
+          log.blank();
+          log.info(dim("Dry run: nothing was written."));
+          // Said in words too, or the gutter would close on "Done".
+          if (refused) {
+            const { advice, steps } = refusalAdvice();
+            log.warn(
+              `The import would refuse: ${plural(checks.rejects.length, "user")} would be rejected. ${advice}`,
+            );
+            if (steps.length > 0) {
+              const commands = steps.map((step) => step.command);
+              setNextSteps(commands);
+              // With no terminal, the gutter drops what setNextSteps gets.
+              printAgentNextSteps(commands);
+            }
+          }
+        }
+        // The exit code says what the real run would do.
+        if (refused) {
+          process.exitCode = 2;
+          declareSoftExitOutcome("error", "migrate_checks_rejected");
+        }
+        return;
+      }
+
+      if (refused) {
+        const { advice, steps } = refusalAdvice();
+        if (options.json) preview({ refused: true, advice, steps });
         throwUsageError(
           `${plural(checks.rejects.length, "user")} would be rejected, so nothing was imported.` +
-            `${rejectSummary(checks, options.json)} ` +
-            (earlier
-              ? `${earlier.count} of them ${earlier.count === 1 ? "was" : "were"} created by run ${earlier.id}, from ${earlier.sameFile ? "this file" : "an earlier version of this file"}. ` +
-                (continueEarlier
-                  ? `Drop --new-run to continue run ${earlier.id}. Or ${ways}.`
-                  : `${ways[0]!.toUpperCase()}${ways.slice(1)}.`)
-              : nonePass
-                ? "Fix them: with every user rejected, --allow-partial would import nobody."
-                : "Fix them, or pass --allow-partial to import the rest and record them as skipped."),
+            `${rejectSummary(checks, options.json)} ${advice}`,
           undefined,
           undefined,
-          [
-            ...(continueEarlier
-              ? [{ command: continueEarlier, description: `Continue run ${earlier!.id}` }]
-              : []),
-            ...(nonePass
-              ? []
-              : [
-                  {
-                    command: commandFor(options, input.fromExport, ["--allow-partial", "--yes"]),
-                    description: "Import the users that pass",
-                  },
-                ]),
-            ...(undoEarlier
-              ? [{ command: undoEarlier, description: `Undo run ${earlier!.id} first` }]
-              : []),
-          ],
+          steps,
         );
       }
 
@@ -1528,8 +1571,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                   runId: run.record.id,
                   attachOnly,
                   adopted,
-                  adoptedReserved: inFlightReserved,
-                  adoptedPending: inFlightPending,
+                  adoptedLines: inFlight,
                   skipPasswordRequirement: !options.requirePassword,
                   reserveUnverified,
                   progress,
@@ -1541,6 +1583,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               failed: 0,
               notSent: 0,
               droppedPhones: new Map(),
+              droppedIdentifiers: new Map(),
               validationFailed: 0,
               errorBreakdown: new Map(),
             };
@@ -1576,10 +1619,19 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                 ...(summary.stopReason ? { stopReason: summary.stopReason } : {}),
                 skipped: checks.rejects.length + checks.skipped.length + withoutPassword.length,
                 errors: [...summary.errorBreakdown].map(([error, count]) => ({ error, count })),
-                warnings: [...summary.droppedPhones].map(([reason, count]) => ({
-                  warning: `imported without their phone: ${reason}`,
-                  count,
-                })),
+                warnings: [
+                  ...[...summary.droppedPhones].map(([reason, count]) => ({
+                    warning: `${WITHOUT_PHONE_WARNING}${reason}`,
+                    count,
+                  })),
+                  ...[...summary.droppedIdentifiers].map(([reason, count]) => ({
+                    warning: `${WITHOUT_IDENTIFIER_WARNING}${reason}`,
+                    count,
+                  })),
+                ],
+                // What the human summary adds to Clerk's messages: whether the
+                // operator can act on them, and how.
+                notes: explainErrors(explainedErrors(summary), limits.instanceType),
               },
             },
             null,

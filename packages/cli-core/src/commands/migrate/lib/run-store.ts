@@ -127,6 +127,17 @@ export type UserLine = {
    * run attaches them; a later `created` line without it means they are done.
    */
   pending?: PendingIdentifier[];
+  /**
+   * On a `created` line: the extra identifiers Clerk refused once the user
+   * existed, by kind and Clerk's reason. The user is imported without them.
+   */
+  refused?: string[];
+  /**
+   * On a `created` line: Clerk's reason for refusing the first phone on the
+   * create, which was retried without it. The user is imported without it.
+   * On a `creating` line, the retry's: a continue that adopts the user keeps it.
+   */
+  phoneRefused?: string;
   /** Why a user was skipped. */
   reason?: string;
   error?: string;
@@ -484,6 +495,14 @@ export function importsOfFile(
 /** Every undo of this import, finished or not, newest first. */
 export function undosOf(runs: RunRecord[], importId: string): RunRecord[] {
   return runs.filter((record) => record.kind === "undo" && record.undoes === importId);
+}
+
+/** True when a run's users are gone: it is marked undone, or an undo of it finished. */
+export function undoneInFull(runsDir: string, record: RunRecord): boolean {
+  return (
+    runState(runsDir, record) === "undone" ||
+    undosOf(listRuns(runsDir), record.id).some((undo) => runState(runsDir, undo) === "complete")
+  );
 }
 
 /**

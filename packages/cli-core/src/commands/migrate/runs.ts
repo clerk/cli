@@ -12,12 +12,13 @@ import { throwUsageError } from "../../lib/errors.ts";
 import { recordMigrateSource, recordMigrateTarget } from "./telemetry.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
-import { tallyError } from "./lib/failures.ts";
+import { tallyError, WITHOUT_IDENTIFIER_WARNING, WITHOUT_PHONE_WARNING } from "./lib/failures.ts";
 import {
   hasRetryableUsers,
   latestUserLines,
   listRuns,
   importsOfFile,
+  undoneInFull,
   undosOf,
   readRun,
   resolveRunsDir,
@@ -110,6 +111,22 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
     }
   }
   return [...counts].map(([error, count]) => ({ error, count })).sort((a, b) => b.count - a.count);
+}
+
+/**
+ * Users imported without their first phone, or an email or phone Clerk
+ * refused, by reason: worded as the import's `result.warnings`.
+ */
+function warningBreakdown(lines: UserLine[]): { warning: string; count: number }[] {
+  const counts = new Map<string, number>();
+  const add = (warning: string) => counts.set(warning, (counts.get(warning) ?? 0) + 1);
+  for (const line of lines) {
+    if (line.phoneRefused) add(`${WITHOUT_PHONE_WARNING}${line.phoneRefused}`);
+    for (const reason of line.refused ?? []) add(`${WITHOUT_IDENTIFIER_WARNING}${reason}`);
+  }
+  return [...counts]
+    .map(([warning, count]) => ({ warning, count }))
+    .sort((a, b) => b.count - a.count);
 }
 
 /**
@@ -232,12 +249,22 @@ function printList(runsDir: string, records: RunRecord[]): void {
 function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const lines = [...latestUserLines(runsDir, record.id).values()];
   const state = runState(runsDir, record);
+  // The undo's `deleted` lines are its own run's: these users are gone, so
+  // nothing they were imported without is worth a warning.
+  const created = undoneInFull(runsDir, record)
+    ? []
+    : lines.filter((line) => line.status === "created");
   return {
     runsDir,
     run: { ...record, state },
     next: nextCommands(runsDir, record, state, carry, lines),
     errors: errorBreakdown(lines),
+    warnings: warningBreakdown(created),
     failed: lines.filter((line) => line.status === "failed"),
+    importedWithout: created.filter(
+      (line) => line.phoneRefused !== undefined || (line.refused?.length ?? 0) > 0,
+    ),
+    leftToAttach: created.filter((line) => (line.pending?.length ?? 0) > 0),
     skipped: lines.filter((line) => line.status === "skipped"),
     unconfirmed: lines.filter((line) => line.status === "creating"),
   };
@@ -289,7 +316,17 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
     }
   }
 
+  if (view.warnings.length > 0) {
+    log.blank();
+    log.info(bold("Warnings"));
+    for (const { warning, count } of view.warnings) {
+      log.info(`  ${yellow(String(count))} ${count === 1 ? "user" : "users"}: ${warning}`);
+    }
+  }
+
   printUsers("Failed", view.failed, usersFile);
+  printUsers("Imported without an email or phone Clerk refused", view.importedWithout, usersFile);
+  printUsers("Identifiers left to attach", view.leftToAttach, usersFile);
   printUsers(
     "Not confirmed (Clerk may have created them; a continue checks)",
     view.unconfirmed,

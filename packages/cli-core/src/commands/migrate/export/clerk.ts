@@ -280,17 +280,17 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
   });
 
   await withGutter("Exporting users from Clerk", async () => {
-    const identity = await fetchInstanceIdentity(source.secretKey);
-    // A key picks the instance on its own and ignores --instance, so the two
-    // must agree, as on import: otherwise this reads the wrong user pool under
-    // the requested instance's name.
     const keyFrom = options.secretKey
       ? KEY_SOURCE.secretKeyFlag
       : !options.app && process.env.CLERK_SECRET_KEY
         ? KEY_SOURCE.envVar
         : undefined;
-    if (keyFrom) assertInstanceFlagMatches({ instance: options.instance }, keyFrom, identity);
     const keySource = keyFrom ?? source.target;
+    const identity = await fetchInstanceIdentity(source.secretKey, keySource);
+    // A key picks the instance on its own and ignores --instance, so the two
+    // must agree, as on import: otherwise this reads the wrong user pool under
+    // the requested instance's name.
+    if (keyFrom) assertInstanceFlagMatches({ instance: options.instance }, keyFrom, identity);
     const target = {
       platform: "clerk",
       env: identity.env,
