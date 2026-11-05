@@ -64,6 +64,7 @@ export default defineConfig({
   if (config.type === "modify") {
     expect(config.content).toContain("clerk");
     expect(config.content).toContain("@clerk/astro");
+    expect(config.content.endsWith("\n")).toBe(true);
   }
 
   const mw = findAction(plan.actions, "src/middleware.ts");

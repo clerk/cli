@@ -9,6 +9,7 @@ import {
   headerHtmlBlock,
   htmlAuthComponentMarkup,
   indentBlock,
+  printModule,
   scaffoldAuthFiles,
   scaffoldConfigFile,
   scaffoldEnvVars,
@@ -46,7 +47,7 @@ function addNuxtModule(content: string): string {
 
     if (!defaultExport.modules) defaultExport.modules = [];
     if (Array.isArray(defaultExport.modules)) defaultExport.modules.push("@clerk/nuxt");
-    return mod.generate().code;
+    return printModule(mod, content);
   } catch {
     if (content.includes("modules:")) {
       return content.replace(/(modules:\s*\[)/, "$1\n    '@clerk/nuxt',");

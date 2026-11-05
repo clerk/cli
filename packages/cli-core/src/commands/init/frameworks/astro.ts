@@ -8,6 +8,7 @@ import {
   hasTailwindStyles,
   headerHtmlBlock,
   htmlAuthComponentMarkup,
+  printModule,
   scaffoldAuthFiles,
   scaffoldConfigFile,
   scaffoldEnvVars,
@@ -38,7 +39,7 @@ function addClerkImport(content: string): string {
   try {
     const mod = parseModule(content);
     mod.imports.$add({ from: "@clerk/astro", imported: "default", local: "clerk" });
-    return mod.generate().code;
+    return printModule(mod, content);
   } catch {
     return `import clerk from "@clerk/astro";\n${content}`;
   }
@@ -53,7 +54,7 @@ function addClerkToIntegrationsViaAst(content: string): string | null {
     if (!Array.isArray(defaultExport.integrations)) return null;
 
     defaultExport.integrations.push(builders.raw("clerk()"));
-    return mod.generate().code;
+    return printModule(mod, content);
   } catch {
     return null;
   }
