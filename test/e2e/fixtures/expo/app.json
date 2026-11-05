@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "clerk-fixture-expo-qytbqw",
-    "slug": "clerk-fixture-expo-qytbqw",
+    "name": "clerk-fixture-expo-ocffjy",
+    "slug": "clerk-fixture-expo-ocffjy",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
-    "scheme": "clerkfixtureexpoqytbqw",
+    "scheme": "clerkfixtureexpoocffjy",
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon"
@@ -20,7 +20,7 @@
       "predictiveBackGestureEnabled": false
     },
     "web": {
-      "output": "static",
+      "output": "server",
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
