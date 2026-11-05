@@ -56,9 +56,9 @@ Every command follows these:
 4. **Every command prints its target first:** the environment, app and
    instance, and where the key came from.
 5. **Every subcommand takes `--json`.** Exit codes: `0` all good, `1` some users
-   failed or are not confirmed, `2` a usage error or a refusal, and `130` (death by SIGINT) when
-   Ctrl-C stops an import or an undo partway. The UI goes to stderr and data to
-   stdout.
+   failed or are not confirmed, `2` a usage error or a refusal, and `130` (death
+   by SIGINT) when Ctrl-C stops an import or an undo partway. The UI goes to
+   stderr and data to stdout.
 
    While users are created or deleted, a terminal shows a bar and the counts under it, not
    a spinner:
