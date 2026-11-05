@@ -1,5 +1,27 @@
 # clerk
 
+## 4.2.0
+
+### Minor Changes
+
+- Add `clerk migrate sources`, and let `clerk migrate import --source` take the path to a source you wrote. `clerk migrate sources` lists the built-in sources with the passwords, MFA and metadata each brings across, and `clerk migrate sources <source>` shows where each field lands, how to export, and any caveats. A source you wrote is a `.ts` or `.js` file in your project, checked before use, so a platform with no built-in source can be imported without rebuilding the CLI. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#530](https://github.com/clerk/cli/pull/530)) by [@royanger](https://github.com/royanger)
+
+- Add `clerk migrate import --reserve-unverified`, which creates the emails and phones a source never verified as reserved (usable for sign-in, locked to the user) instead of unverified. At a terminal, the import asks. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#531](https://github.com/clerk/cli/pull/531)) by [@royanger](https://github.com/royanger)
+
+### Patch Changes
+
+- Stop calling a claimed application "unclaimed accountless" when `clerk config` reaches it with only a secret key. With `CLERK_SECRET_KEY` (or a key in `.env`) and no `--app` or linked profile, a `clerk config patch`, `put`, `schema` or `--instance` refusal, a `clerk enable billing` / `clerk disable billing` refusal, or a `clerk users open <user-id>` refusal, now asks Clerk whether the application belongs to an account. If it does, it says a secret key can't change those settings, and to pass `--app <id> --instance <dev|prod>` (or run `clerk link`) with `clerk auth login` or `CLERK_PLATFORM_API_KEY`; a login alone isn't enough while the secret key is set. If Clerk can't say, the message covers both cases. A default `clerk config pull` of a claimed application warns what the secret key left out. ([#545](https://github.com/clerk/cli/pull/545)) by [@royanger](https://github.com/royanger)
+
+- Stop asking for the retired `clerk-expo-patterns` skill when `clerk init` installs agent skills on Expo projects. `clerk-expo` now covers both setup and patterns, so the install prompt lists `expo` alone. ([#602](https://github.com/clerk/cli/pull/602)) by [@manovotny](https://github.com/manovotny)
+
+- `clerk migrate import` now warns about users it created without an email or phone Clerk refused, in the summary, `--json`, and `clerk migrate runs <id>`, which also warns about users imported without their first phone. An attach that fails on the key or a `429` that outlasts the retries stays pending for a re-run, with a note saying why, and one Clerk calls taken counts as attached when the user already holds it. A secret key Clerk rejects gets Clerk's error and says where the key came from. A refused dry run says so and gives the same next steps as the real run. A run undone in full no longer blocks an import when Clerk can't name the instance. A gateway's HTML error page no longer fills the error breakdown. The checks explain how to replace `APP_ID` in fix commands, and `--json` carries the notes the summary prints. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#604](https://github.com/clerk/cli/pull/604)) by [@manovotny](https://github.com/manovotny)
+
+- Record in usage telemetry which platform a `clerk migrate` run's users come from, how far the run got, and the Clerk app and instance it acted on. The first-run telemetry notice now names these fields. ([#596](https://github.com/clerk/cli/pull/596)) by [@royanger](https://github.com/royanger)
+
+- Mark `clerk migrate`'s Backend API requests with a `migrate` segment in the `User-Agent`, so Clerk can count the users each migration creates. Like usage telemetry, the CLI leaves it out when telemetry is off. ([#596](https://github.com/clerk/cli/pull/596)) by [@royanger](https://github.com/royanger)
+
+- Check `clerk migrate import` against the user limit Clerk reports for the instance, so a development instance Clerk has raised no longer rejects users it has room for. `CLERK_MIGRATE_DEV_USER_LIMIT` is now only a fallback for when Clerk doesn't report a limit, and `--json` says where the limit came from. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#552](https://github.com/clerk/cli/pull/552)) by [@royanger](https://github.com/royanger)
+
 ## 4.1.0
 
 ### Minor Changes
