@@ -58,7 +58,7 @@ const authjsSource = {
     mfa: { level: "no", note: "Auth.js has no MFA of its own." },
     metadata: {
       level: "no",
-      note: "Only `id`, `name`, `email`, `email_verified`, `created_at` and the account table's OAuth providers are read.",
+      note: "Only `id`, `name`, `email`, `email_verified`, `created_at`, and the account table's OAuth providers are read.",
     },
   },
   transformer: {

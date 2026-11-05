@@ -8,7 +8,7 @@
  * - The request body is BAPI's snake_case shape directly, so `created_at` and
  *   `legal_accepted_at` stay RFC3339 strings rather than round-tripping
  *   through `Date`.
- * - `banned`, `delete_self_enabled` and the organization limits are all
+ * - `banned`, `delete_self_enabled`, and the organization limits are all
  *   accepted by `POST /v1/users`, so the follow-up `updateUser`/`banUser`
  *   calls the SDK version needed are gone.
  *
@@ -101,7 +101,7 @@ function createIdentifiers(
  * Optional fields are omitted rather than sent as null so Clerk applies its own
  * defaults for anything the source platform did not record.
  *
- * @param reserveUnverified - Create the identifiers the source never verified
+ * @param reserveUnverified - Create the identifiers the auth platform never verified
  *   as reserved, in this request, rather than attaching them unverified.
  */
 export function buildCreateUserBody(
@@ -110,7 +110,7 @@ export function buildCreateUserBody(
   skipPasswordRequirement: boolean,
   reserveUnverified = false,
 ): Record<string, unknown> {
-  // The instance's allowlist, blocklist, disposable-email and subaddress rules
+  // The instance's allowlist, blocklist, disposable-email, and subaddress rules
   // police sign-ups. These users already signed up, on the source platform.
   const body: Record<string, unknown> = { external_id: user.userId, skip_restriction_checks: true };
 
@@ -171,7 +171,7 @@ type CreateContext = {
   quota: AbortController;
   /** Aborted by a run-store write that failed. Nothing goes out after it. */
   halt: AbortSignal;
-  /** Aborted by a Ctrl-C, the quota or a halt. No create goes out after it. */
+  /** Aborted by a Ctrl-C, the quota, or a halt. No create goes out after it. */
   stop: AbortSignal;
   /** Unverified identifiers go on the create as reserved, not attached after. */
   reserveUnverified: boolean;
@@ -202,7 +202,7 @@ function userHolds(user: unknown, kind: PendingIdentifier["kind"], value: string
       (entry) => entry.email_address?.toLowerCase() === wanted,
     );
   }
-  // Clerk stores phones in E.164; the source may carry spaces, dashes or parens.
+  // Clerk stores phones in E.164; the source may carry spaces, dashes, or parens.
   const digits = (phone: string) => phone.replace(/\D/g, "");
   return (record.phone_numbers ?? []).some(
     (entry) => digits(entry.phone_number ?? "") === digits(value),
@@ -545,7 +545,7 @@ export type ImportUsersOptions = {
   adoptedLines?: Map<string, UserLine>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
-  /** Create the identifiers the source never verified as reserved. */
+  /** Create the identifiers the auth platform never verified as reserved. */
   reserveUnverified?: boolean;
   /** Carried into the summary so the report covers the whole file. */
   validationFailed?: number;
@@ -822,7 +822,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
       .filter((note) => note && !note.startsWith(NOT_ADDED_YET));
     await finishUser(line, line.pending ?? [], earlier);
     // Created by this run's earlier attempt, as an adopted user was: the bar,
-    // the summary and `result.created` all count it.
+    // the summary, and `result.created` all count it.
     successful++;
     attachedUsers++;
     progress();

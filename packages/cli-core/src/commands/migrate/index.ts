@@ -1,5 +1,4 @@
 import type { Program } from "../../cli-program.ts";
-import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
 import { markMigrateRequests } from "../../lib/fetch.ts";
 import { parseIntegerOption } from "../../lib/option-parsers.ts";
 import { setMode } from "../../mode.ts";
@@ -13,30 +12,10 @@ import { undo } from "./undo.ts";
 import { CUSTOM_SOURCES_URL } from "./sources/load-custom.ts";
 import { list as sources } from "./sources/list.ts";
 
-export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = process.env): void {
-  if (!isExperimentEnabled("migrate", env)) {
-    // A hidden stub rather than no command at all: `clerk migrate` then says how
-    // to turn it on instead of "unknown command". It has no subcommands, so
-    // completion has nothing to walk, and it accepts anything, so every
-    // invocation reaches the refusal.
-    const stub = program
-      .command("migrate", { hidden: true })
-      .helpOption(false)
-      .allowUnknownOption()
-      .allowExcessArguments()
-      .argument("[args...]")
-      .action(() => requireExperiment("migrate", env));
-    // `clerk help migrate` renders help without running the action.
-    stub.helpInformation = () => {
-      requireExperiment("migrate", env);
-      return "";
-    };
-    return;
-  }
-
+export function registerMigrate(program: Program): void {
   const migrateCommand = program
     .command("migrate")
-    .description("Migrate users into Clerk from another auth provider or another Clerk instance")
+    .description("Migrate users into Clerk from another auth platform or another Clerk instance")
     .setExamples([
       {
         command: "clerk migrate export supabase",
@@ -107,7 +86,7 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
     )
     .option(
       "--reserve-unverified",
-      "Create emails and phones the source never verified as reserved (usable for sign-in, locked to the user) instead of unverified",
+      "Create emails and phones the auth platform never verified as reserved (usable for sign-in, locked to the user) instead of unverified",
     )
     .option(
       "--firebase-signer-key <key>",
@@ -198,7 +177,7 @@ export function registerMigrate(program: Program, env: NodeJS.ProcessEnv = proce
       { command: "clerk migrate runs", description: "List every run, newest first" },
       {
         command: "clerk migrate runs 20260929-141502-a1b2",
-        description: "Show one run: counts, errors and the users that did not make it",
+        description: "Show one run: counts, errors, and the users that did not make it",
       },
       { command: "clerk migrate runs --json", description: "Machine-readable listing" },
     ])

@@ -408,7 +408,7 @@ describe("unverified identifiers", () => {
     await run(importOptions);
 
     expect(confirmMessages).toEqual([
-      "1 user has an email or phone the source never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified? A reserved one another user already holds rejects its user, not just that address.",
+      "1 user has an email or phone the auth platform never verified. Create them reserved (usable for sign-in, locked to the user) instead of unverified? A reserved one another user already holds rejects its user, not just that address.",
       "Import 2 users?",
     ]);
     expect(statuses()).toEqual([undefined, ["verified", "reserved"]]);

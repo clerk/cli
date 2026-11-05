@@ -236,26 +236,19 @@ describe("generateCompletions", () => {
     });
 
     test("completes --source with the built-in migrate sources", () => {
-      const saved = process.env.CLERK_EXPERIMENTAL;
-      process.env.CLERK_EXPERIMENTAL = "migrate";
-      try {
-        const result = generateCompletions(createProgram(), ["migrate", "import", "--source", ""]);
-        // A source you wrote is a path, so the shell's file completion stays on.
-        expect(result.directive).toBe(0);
-        const names = result.completions.map((c) => c.name);
-        expect(names).toEqual([
-          "clerk",
-          "auth0",
-          "authjs",
-          "betterauth",
-          "firebase",
-          "supabase",
-          "workos",
-        ]);
-      } finally {
-        if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
-        else process.env.CLERK_EXPERIMENTAL = saved;
-      }
+      const result = generateCompletions(createProgram(), ["migrate", "import", "--source", ""]);
+      // A source you wrote is a path, so the shell's file completion stays on.
+      expect(result.directive).toBe(0);
+      const names = result.completions.map((c) => c.name);
+      expect(names).toEqual([
+        "clerk",
+        "auth0",
+        "authjs",
+        "betterauth",
+        "firebase",
+        "supabase",
+        "workos",
+      ]);
     });
 
     test("returns empty for options with unknown values (file paths)", () => {
@@ -333,18 +326,18 @@ describe("generateCompletions", () => {
     });
 
     test("migrate sources: suggests the built-in sources", () => {
-      const saved = process.env.CLERK_EXPERIMENTAL;
-      process.env.CLERK_EXPERIMENTAL = "migrate";
-      try {
-        const result = generateCompletions(createProgram(), ["migrate", "sources", ""]);
-        expect(result.directive).toBe(0);
-        const names = result.completions.map((c) => c.name);
-        expect(names).toContain("supabase");
-        expect(names).toContain("workos");
-      } finally {
-        if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
-        else process.env.CLERK_EXPERIMENTAL = saved;
-      }
+      const result = generateCompletions(createProgram(), ["migrate", "sources", ""]);
+      expect(result.directive).toBe(0);
+      const names = result.completions.map((c) => c.name);
+      expect(names).toContain("supabase");
+      expect(names).toContain("workos");
+    });
+
+    test("completes migrate subcommands", () => {
+      expect(completionNames("")).toContain("migrate");
+      expect(completionNames("migrate", "")).toEqual(
+        expect.arrayContaining(["import", "export", "undo", "runs", "sources"]),
+      );
     });
 
     test("open dashboard: filters subpaths by prefix", () => {
