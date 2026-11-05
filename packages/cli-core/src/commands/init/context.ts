@@ -28,6 +28,14 @@ export async function hasPackageJson(cwd: string): Promise<boolean> {
   return fileExists(join(cwd, "package.json"));
 }
 
+// Next.js also treats .ts/.tsx sources as TypeScript and only writes tsconfig.json on its first run.
+async function hasTypeScriptSource(cwd: string): Promise<boolean> {
+  for await (const path of new Bun.Glob("{app,pages,src}/**/*.{ts,tsx}").scan({ cwd })) {
+    if (!path.endsWith(".d.ts") && !path.split("/").includes("node_modules")) return true;
+  }
+  return false;
+}
+
 export async function gatherContext(
   cwd: string,
   frameworkOverride?: FrameworkInfo,
@@ -36,7 +44,8 @@ export async function gatherContext(
   const framework = frameworkOverride ?? (await detectFramework(cwd));
   if (!framework) return null;
 
-  const typescript = await fileExists(join(cwd, "tsconfig.json"));
+  const typescript =
+    (await fileExists(join(cwd, "tsconfig.json"))) || (await hasTypeScriptSource(cwd));
 
   const [rootAppDir, rootPagesDir, srcDirExists] = await Promise.all([
     dirExists(join(cwd, "app")),
