@@ -260,25 +260,35 @@ function deletedByUndo(runsDir: string, records: RunRecord[], importId: string):
 }
 
 /**
- * The run with the counts `runs` shows. An unconfirmed user an undo deleted
- * leaves the not-confirmed count, as it leaves the list. Undo found it by the
- * run's marker, so the import did create it: it counts as created.
+ * The run with the counts `runs` shows, which follow its lists: a user an undo
+ * deleted leaves the not-confirmed and left-to-attach counts, and once the run
+ * is undone in full, both are zero. An unconfirmed user an undo deleted was
+ * found by the run's marker, so the import did create it: it counts as created.
  */
 function shownRun(runsDir: string, record: RunRecord, records: RunRecord[]): RunRecord {
   const live = withLiveCounts(runsDir, record);
-  const { creating = 0, ...counts } = live.counts;
-  if (creating === 0) return live;
+  // Before undoneInFull, which lists the runs again: once per run in the listing.
+  if (record.status !== "undone" && undosOf(records, record.id).length === 0) return live;
   const deleted = deletedByUndo(runsDir, records, record.id);
-  if (deleted.size === 0) return live;
-  const left = [...latestUserLines(runsDir, record.id).values()].filter(
-    (line) => line.status === "creating" && !deleted.has(line.sourceId),
+  const inFull = undoneInFull(runsDir, record);
+  if (deleted.size === 0 && !inFull) return live;
+  const lines = [...latestUserLines(runsDir, record.id).values()];
+  const kept = inFull ? [] : lines.filter((line) => !deleted.has(line.sourceId));
+  const creating = kept.filter((line) => line.status === "creating").length;
+  const pending = kept.filter(
+    (line) => line.status === "created" && (line.pending?.length ?? 0) > 0,
   ).length;
+  const adopted = lines.filter(
+    (line) => line.status === "creating" && deleted.has(line.sourceId),
+  ).length;
+  const { creating: _creating, pending: _pending, ...counts } = live.counts;
   return {
     ...live,
     counts: {
       ...counts,
-      created: (counts.created ?? 0) + creating - left,
-      ...(left > 0 ? { creating: left } : {}),
+      created: (counts.created ?? 0) + adopted,
+      ...(creating > 0 ? { creating } : {}),
+      ...(pending > 0 ? { pending } : {}),
     },
   };
 }
@@ -288,20 +298,21 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const lines = [...latestUserLines(runsDir, record.id).values()];
   const state = runState(runsDir, record);
   // The undo's `deleted` lines are its own run's: these users are gone, so
-  // nothing they were imported without is worth a warning.
-  const created = undoneInFull(runsDir, record)
-    ? []
-    : lines.filter((line) => line.status === "created");
+  // nothing they were imported without is worth a warning. Once the run is
+  // undone in full, no user is left: undo looked up each in-flight one by the
+  // run's marker and deleted what it found.
+  const inFull = undoneInFull(runsDir, record);
   const deleted = deletedByUndo(runsDir, listRuns(runsDir), record.id);
-  const unconfirmed = lines.filter(
-    (line) => line.status === "creating" && !deleted.has(line.sourceId),
-  );
+  const left = (status: UserLine["status"]) =>
+    inFull ? [] : lines.filter((line) => line.status === status && !deleted.has(line.sourceId));
+  const created = left("created");
+  const unconfirmed = left("creating");
   const failed = lines.filter((line) => line.status === "failed");
   return {
     runsDir,
     run: { ...record, state },
     next: nextCommands(runsDir, record, state, carry, lines),
-    // Not a deleted user's: its "a re-run checks" no longer holds.
+    // Only the unconfirmed users still listed: for the rest, "a re-run checks" no longer holds.
     errors: errorBreakdown([...failed, ...unconfirmed]),
     warnings: warningBreakdown(created),
     failed,
@@ -371,8 +382,10 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
   printUsers("Failed", view.failed, usersFile);
   printUsers("Imported without an email or phone Clerk refused", view.importedWithout, usersFile);
   printUsers("Identifiers left to attach", view.leftToAttach, usersFile);
+  // A run with an undo is not continued: undoing again looks them up.
+  const checks = undosOf(listRuns(runsDir), record.id).length > 0 ? "the undo" : "a continue";
   printUsers(
-    "Not confirmed (Clerk may have created them; a continue checks)",
+    `Not confirmed (Clerk may have created them; ${checks} checks)`,
     view.unconfirmed,
     usersFile,
   );
