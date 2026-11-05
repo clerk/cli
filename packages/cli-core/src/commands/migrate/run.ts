@@ -727,10 +727,10 @@ function formatSummary(
 ): string[] {
   const lines = [
     `${green("Imported:")} ${summary.successful}`,
+    // Imported by the run's earlier attempt, so not counted again above.
+    ...(summary.attached > 0 ? [`${green("Finished attaching:")} ${summary.attached}`] : []),
     `${red("Failed:")} ${summary.failed}`,
   ];
-  // Imported by the run's earlier attempt, so not counted again above.
-  if (summary.attached > 0) lines.push(`${green("Finished attaching:")} ${summary.attached}`);
   if (skipped > 0) lines.push(`${yellow("Skipped:")} ${skipped}`);
   // The user quota stopped the run: these go out on a re-run.
   if (summary.notSent > 0) lines.push(`${yellow("Not sent:")} ${summary.notSent}`);
