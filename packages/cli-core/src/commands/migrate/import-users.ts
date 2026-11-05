@@ -650,8 +650,10 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   /**
    * Attaches a created user's extra identifiers. The user is already on record
    * with them `pending`, so a run stopped before they attach can finish them.
+   *
+   * @returns Whether every identifier this attempt tried attached: none
+   *   refused, none pending. `notes` from an earlier attempt don't count.
    */
-  /** @returns Whether every identifier attached: none refused, none pending. */
   const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
     const { error: _error, pending: _pending, refused: earlier = [], ...base } = line;
     const attached = await attachAll(ctx, base.clerkId ?? "", toAttach);

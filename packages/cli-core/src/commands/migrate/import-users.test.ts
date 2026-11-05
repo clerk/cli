@@ -928,7 +928,7 @@ describe("importUsers", () => {
   test("an attach-only user keeps the error its earlier line recorded", async () => {
     stub(() => ok("idn_1"));
 
-    await importUsers({
+    const summary = await importUsers({
       users: [],
       attachOnly: [
         {
@@ -950,6 +950,8 @@ describe("importUsers", () => {
       error: "b@x.dev: That email address is taken.",
     });
     expect(lines.at(-1)?.pending).toBeUndefined();
+    // The earlier refusal was reported then. What was left to attach has now attached.
+    expect(summary.attached).toBe(1);
   });
 
   test("an adopted user is not created again; only its extras attach", async () => {
