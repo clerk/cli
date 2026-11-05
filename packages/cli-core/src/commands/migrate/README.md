@@ -1059,9 +1059,9 @@ their phone, or an email or phone Clerk refused (`warnings` and
 and why (`leftToAttach`). The unconfirmed users, the warnings and the users
 left to attach leave out anyone an undo of the run deleted, and are empty once
 the run is undone in full, and so do their counts (not confirmed, left to
-attach) in `runs <id>` and the listing. There, an unconfirmed user an undo deleted counts as created rather
-than not confirmed. The error breakdown leaves out the unconfirmed users that
-aren't listed.
+attach) in `runs <id>` and the listing. There, an unconfirmed user an undo
+deleted counts as created rather than not confirmed. The error breakdown leaves
+out the unconfirmed users that aren't listed.
 Then it prints the path to the full record, and what
 to run next: for an interrupted or partial import, the import that continues it,
 with the flags it ran with, then the undo. The continue is left out when

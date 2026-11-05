@@ -267,10 +267,8 @@ function deletedByUndo(runsDir: string, records: RunRecord[], importId: string):
  */
 function shownRun(runsDir: string, record: RunRecord, records: RunRecord[]): RunRecord {
   const live = withLiveCounts(runsDir, record);
-  // Before undoneInFull, which lists the runs again: once per run in the listing.
-  if (record.status !== "undone" && undosOf(records, record.id).length === 0) return live;
   const deleted = deletedByUndo(runsDir, records, record.id);
-  const inFull = undoneInFull(runsDir, record);
+  const inFull = undoneInFull(runsDir, record, records);
   if (deleted.size === 0 && !inFull) return live;
   const lines = [...latestUserLines(runsDir, record.id).values()];
   const kept = inFull ? [] : lines.filter((line) => !deleted.has(line.sourceId));
