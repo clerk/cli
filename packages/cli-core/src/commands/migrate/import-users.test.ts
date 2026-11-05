@@ -1014,7 +1014,7 @@ describe("importUsers", () => {
     await importUsers({
       users: [user({ unverifiedEmailAddresses: ["c@x.dev"] })],
       adopted: new Map([["u1", "user_found"]]),
-      adoptedReserved: new Set(["u1"]),
+      adoptedLines: new Map([["u1", { sourceId: "u1", status: "creating", reserved: true }]]),
       secretKey: "sk_test_x",
       limits: LIMITS,
       record,
@@ -1033,8 +1033,17 @@ describe("importUsers", () => {
         user({ unverifiedEmailAddresses: ["c@x.dev"], unverifiedPhoneNumbers: ["+31612345678"] }),
       ],
       adopted: new Map([["u1", "user_found"]]),
-      adoptedReserved: new Set(["u1"]),
-      adoptedPending: new Map([["u1", ["+31612345678"]]]),
+      adoptedLines: new Map([
+        [
+          "u1",
+          {
+            sourceId: "u1",
+            status: "creating",
+            reserved: true,
+            pending: [{ kind: "phone", value: "+31612345678", verified: false }],
+          },
+        ],
+      ]),
       secretKey: "sk_test_x",
       limits: LIMITS,
       record,
@@ -1127,7 +1136,7 @@ describe("importUsers", () => {
       limits: LIMITS,
       record,
       adopted: new Map([["u1", "user_found"]]),
-      adoptedPhoneRefused: new Map([["u1", allLines.at(-1)!.phoneRefused!]]),
+      adoptedLines: new Map([["u1", allLines.at(-1)!]]),
     });
 
     expect(lines.at(-1)).toMatchObject({
@@ -1334,9 +1343,7 @@ describe("importUsers", () => {
         record,
         reserveUnverified: true,
         adopted: new Map([["u1", "user_found"]]),
-        adoptedReserved: new Set(["u1"]),
-        adoptedPending: new Map(),
-        adoptedPhoneRefused: new Map([["u1", creating.phoneRefused!]]),
+        adoptedLines: new Map([["u1", creating]]),
       });
 
       expect(requests.some((request) => request.url.endsWith("/v1/phone_numbers"))).toBe(false);

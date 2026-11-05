@@ -1140,23 +1140,12 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       const plannedLines = continued ? readUserLines(runsDir, continued.id).length : undefined;
       const done = new Map<string, string>();
       const attachOnly: UserLine[] = [];
-      const inFlight: string[] = [];
-      const inFlightReserved = new Set<string>();
-      const inFlightPending = new Map<string, string[]>();
-      const inFlightPhoneRefused = new Map<string, string>();
+      // Each create with no answer, by its `creating` line: what it reserved,
+      // left out and lost decides how an adopted user is finished.
+      const inFlight = new Map<string, UserLine>();
       if (continued) {
         for (const line of latestUserLines(runsDir, continued.id).values()) {
-          if (line.status === "creating") inFlight.push(line.sourceId);
-          if (line.status === "creating" && line.reserved) inFlightReserved.add(line.sourceId);
-          if (line.status === "creating" && line.phoneRefused) {
-            inFlightPhoneRefused.set(line.sourceId, line.phoneRefused);
-          }
-          if (line.status === "creating" && line.pending?.length) {
-            inFlightPending.set(
-              line.sourceId,
-              line.pending.filter((entry) => entry.kind === "phone").map((entry) => entry.value),
-            );
-          }
+          if (line.status === "creating") inFlight.set(line.sourceId, line);
           if (line.status !== "created" || !line.clerkId) continue;
           done.set(line.sourceId, line.clerkId);
           if (line.pending?.length) attachOnly.push(line);
@@ -1170,7 +1159,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       if (continued) {
         const found = await findInFlight({
           runId: continued.id,
-          sourceIds: inFlight,
+          sourceIds: [...inFlight.keys()],
           secretKey,
           schedule,
         });
@@ -1315,7 +1304,9 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
           adoptedClerkIds: new Set(adopted.values()),
           adoptedSourceIds: new Set(adopted.keys()),
           // Their `creating` line says how the create ran, not this run's flag.
-          reservedSourceIds: new Set([...adopted.keys()].filter((id) => inFlightReserved.has(id))),
+          reservedSourceIds: new Set(
+            [...adopted.keys()].filter((id) => inFlight.get(id)?.reserved === true),
+          ),
           spinner,
         }),
       );
@@ -1580,9 +1571,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
                   runId: run.record.id,
                   attachOnly,
                   adopted,
-                  adoptedReserved: inFlightReserved,
-                  adoptedPending: inFlightPending,
-                  adoptedPhoneRefused: inFlightPhoneRefused,
+                  adoptedLines: inFlight,
                   skipPasswordRequirement: !options.requirePassword,
                   reserveUnverified,
                   progress,

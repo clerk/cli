@@ -211,7 +211,7 @@ function userHolds(user: unknown, kind: PendingIdentifier["kind"], value: string
 
 /** The message with the identifier it names replaced by `<email>` or `<phone>`. */
 function withoutValue(message: string, value: string, kind: PendingIdentifier["kind"]): string {
-  const escaped = value.trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const escaped = RegExp.escape(value.trim());
   return escaped ? message.replace(new RegExp(escaped, "gi"), `<${kind}>`) : message;
 }
 
@@ -305,7 +305,7 @@ async function attachIdentifier(
               method,
               path: requestPath,
               secretKey: ctx.secretKey,
-              ...(requestBody ? { body: requestBody } : {}),
+              body: requestBody,
             });
           },
           { first: true, stop },
@@ -534,22 +534,15 @@ export type ImportUsersOptions = {
    */
   adopted?: Map<string, string>;
   /**
-   * The adopted users whose create reserved their unverified identifiers, from
-   * its `creating` line. The rest had them attached unverified, whatever this
-   * run's `reserveUnverified` says.
+   * Source ID → the `creating` line of each adopted user's create, which says
+   * how it was made: `reserved` when it reserved the unverified identifiers
+   * (the rest had them attached unverified, whatever this run's
+   * `reserveUnverified` says), `pending` for reserved phones a retry after a
+   * refused phone left out (attached once the user is adopted, unverified, as
+   * they would have been), and `phoneRefused` when the create that landed was
+   * the retry without the first phone.
    */
-  adoptedReserved?: Set<string>;
-  /**
-   * Reserved phones an adopted user's create left out, from its `creating`
-   * line: the retry after a refused phone sends without them. Attached once
-   * the user is adopted, unverified, as they would have been.
-   */
-  adoptedPending?: Map<string, string[]>;
-  /**
-   * Clerk's reason for refusing an adopted user's first phone, from its
-   * `creating` line: the create that landed was the retry without it.
-   */
-  adoptedPhoneRefused?: Map<string, string>;
+  adoptedLines?: Map<string, UserLine>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
   /** Create the identifiers the source never verified as reserved. */
@@ -576,9 +569,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     attachOnly = [],
     runId,
     adopted = new Map<string, string>(),
-    adoptedReserved = new Set<string>(),
-    adoptedPending = new Map<string, string[]>(),
-    adoptedPhoneRefused = new Map<string, string>(),
+    adoptedLines = new Map<string, UserLine>(),
     skipPasswordRequirement = true,
     reserveUnverified = false,
     validationFailed = 0,
@@ -684,11 +675,14 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
    * create was the retry without a refused phone, the phone is still lost.
    */
   const adoptedUser = (clerkUserId: string, sourceId: string): CreatedUser => {
-    const phoneRefusal = adoptedPhoneRefused.get(sourceId);
+    const creating = adoptedLines.get(sourceId);
+    const phoneRefusal = creating?.phoneRefused;
     return {
       clerkUserId,
       notes: phoneRefusal ? [`Failed to add phone: ${phoneRefusal}`] : [],
-      attachLater: adoptedPending.get(sourceId) ?? [],
+      attachLater: (creating?.pending ?? [])
+        .filter((entry) => entry.kind === "phone")
+        .map((entry) => entry.value),
       ...(phoneRefusal ? { phoneRefusal } : {}),
     };
   };
@@ -701,7 +695,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     // What the create did with the unverified identifiers decides what is left
     // to attach: an adopted user's create may have run in the other mode.
     const reserved = adoptedId
-      ? adoptedReserved.has(user.userId)
+      ? adoptedLines.get(user.userId)?.reserved === true
       : reserveUnverified &&
         (identifiers.unverifiedEmails.length > 0 || identifiers.unverifiedPhones.length > 0);
     let sent = false;
@@ -805,14 +799,15 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     }));
     const toAttach = [...pendingIdentifiers(identifiers, reserved), ...retried];
     // Its notes too: a run stopped before the next line would lose them.
-    const firstNotes = [...created.notes, ...retries].join("; ");
+    const notes = [...created.notes, ...retries];
+    const firstNotes = notes.join("; ");
     record({
       ...line,
       ...(firstNotes ? { error: firstNotes } : {}),
       ...(toAttach.length > 0 ? { pending: toAttach } : {}),
     });
     if (phoneRefused) droppedPhones.set(phoneRefused, (droppedPhones.get(phoneRefused) ?? 0) + 1);
-    await finishUser(line, toAttach, [...created.notes, ...retries]);
+    await finishUser(line, toAttach, notes);
     successful++;
     processed++;
     progress();

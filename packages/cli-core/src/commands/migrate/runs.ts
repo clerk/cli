@@ -121,11 +121,8 @@ function warningBreakdown(lines: UserLine[]): { warning: string; count: number }
   const counts = new Map<string, number>();
   const add = (warning: string) => counts.set(warning, (counts.get(warning) ?? 0) + 1);
   for (const line of lines) {
-    if (line.status !== "created") continue;
     if (line.phoneRefused) add(`${WITHOUT_PHONE_WARNING}${line.phoneRefused}`);
-    for (const reason of line.refused ?? []) {
-      add(`${WITHOUT_IDENTIFIER_WARNING}${reason}`);
-    }
+    for (const reason of line.refused ?? []) add(`${WITHOUT_IDENTIFIER_WARNING}${reason}`);
   }
   return [...counts]
     .map(([warning, count]) => ({ warning, count }))
