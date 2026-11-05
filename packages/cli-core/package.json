@@ -31,7 +31,7 @@
     "magicast": "^0.5.5",
     "semver": "^7.8.5",
     "yaml": "^2.9.1",
-    "zod": "^4.4.3"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@clerk/shared": "^4.40.0",
