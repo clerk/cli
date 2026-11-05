@@ -245,6 +245,44 @@ function printList(runsDir: string, records: RunRecord[]): void {
   log.info(dim(plural(records.length, "run")));
 }
 
+/**
+ * The users an undo of this import deleted. Undo writes its `deleted` lines to
+ * its own run: such a user is gone, whatever the import's last line says.
+ */
+function deletedByUndo(runsDir: string, records: RunRecord[], importId: string): Set<string> {
+  return new Set(
+    undosOf(records, importId).flatMap((undo) =>
+      [...latestUserLines(runsDir, undo.id).values()]
+        .filter((line) => line.status === "deleted")
+        .map((line) => line.sourceId),
+    ),
+  );
+}
+
+/**
+ * The run with the counts `runs` shows. An unconfirmed user an undo deleted
+ * leaves the not-confirmed count, as it leaves the list. Undo found it by the
+ * run's marker, so the import did create it: it counts as created.
+ */
+function shownRun(runsDir: string, record: RunRecord, records: RunRecord[]): RunRecord {
+  const live = withLiveCounts(runsDir, record);
+  const { creating = 0, ...counts } = live.counts;
+  if (creating === 0) return live;
+  const deleted = deletedByUndo(runsDir, records, record.id);
+  if (deleted.size === 0) return live;
+  const left = [...latestUserLines(runsDir, record.id).values()].filter(
+    (line) => line.status === "creating" && !deleted.has(line.sourceId),
+  ).length;
+  return {
+    ...live,
+    counts: {
+      ...counts,
+      created: (counts.created ?? 0) + creating - left,
+      ...(left > 0 ? { creating: left } : {}),
+    },
+  };
+}
+
 /** One run in full: `--json` prints it, and `printRun` renders it. */
 function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const lines = [...latestUserLines(runsDir, record.id).values()];
@@ -254,28 +292,25 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const created = undoneInFull(runsDir, record)
     ? []
     : lines.filter((line) => line.status === "created");
-  // Undo writes its `deleted` lines to its own run: a user one of them
-  // deleted is gone, whatever the import's last line for it says.
-  const deleted = new Set(
-    undosOf(listRuns(runsDir), record.id).flatMap((undo) =>
-      [...latestUserLines(runsDir, undo.id).values()]
-        .filter((line) => line.status === "deleted")
-        .map((line) => line.sourceId),
-    ),
+  const deleted = deletedByUndo(runsDir, listRuns(runsDir), record.id);
+  const unconfirmed = lines.filter(
+    (line) => line.status === "creating" && !deleted.has(line.sourceId),
   );
+  const failed = lines.filter((line) => line.status === "failed");
   return {
     runsDir,
     run: { ...record, state },
     next: nextCommands(runsDir, record, state, carry, lines),
-    errors: errorBreakdown(lines),
+    // Not a deleted user's: its "a re-run checks" no longer holds.
+    errors: errorBreakdown([...failed, ...unconfirmed]),
     warnings: warningBreakdown(created),
-    failed: lines.filter((line) => line.status === "failed"),
+    failed,
     importedWithout: created.filter(
       (line) => line.phoneRefused !== undefined || (line.refused?.length ?? 0) > 0,
     ),
     leftToAttach: created.filter((line) => (line.pending?.length ?? 0) > 0),
     skipped: lines.filter((line) => line.status === "skipped"),
-    unconfirmed: lines.filter((line) => line.status === "creating" && !deleted.has(line.sourceId)),
+    unconfirmed,
   };
 }
 
@@ -351,8 +386,9 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
 export async function runs(id: string | undefined, options: RunsOptions = {}): Promise<void> {
   const runsDir = await resolveRunsDir(options.runsDir);
 
+  const all = listRuns(runsDir);
   if (id === undefined) {
-    const records = listRuns(runsDir).map((record) => withLiveCounts(runsDir, record));
+    const records = all.map((record) => shownRun(runsDir, record, all));
     if (options.json) log.data(JSON.stringify(listJson(runsDir, records), null, 2));
     else printList(runsDir, records);
     return;
@@ -360,7 +396,7 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
 
   const stored = readRun(runsDir, id);
   if (!stored) throwUsageError(noRunMessage(runsDir, id, carryFlags({ runsDir: options.runsDir })));
-  const record = withLiveCounts(runsDir, stored);
+  const record = shownRun(runsDir, stored, all);
   recordMigrateSource(record.source, { custom: Boolean(record.sourceHash) });
   recordMigrateTarget(record.target);
 

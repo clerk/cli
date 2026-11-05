@@ -303,8 +303,8 @@ describe("runs <id>", () => {
       source: "clerk",
       file: { path: usersFile(), sha256: sha256File(usersFile()) },
     });
-    run.append({ sourceId: "a", status: "creating" });
-    run.append({ sourceId: "b", status: "creating" });
+    run.append({ sourceId: "a", status: "creating", error: "bad gateway (a re-run checks)" });
+    run.append({ sourceId: "b", status: "creating", error: "timed out (a re-run checks)" });
     run.release();
     const undo = startRun(runsDir, { kind: "undo", target: TARGET, undoes: run.record.id });
     undo.append({ sourceId: "a", clerkId: "user_a", status: "deleted" });
@@ -313,15 +313,59 @@ describe("runs <id>", () => {
 
     await runs(run.record.id, { runsDir, json: true });
     expect(JSON.parse(captured.out)).toMatchObject({
-      run: { state: "undone" },
+      run: { state: "undone", counts: { created: 1, creating: 1 } },
       unconfirmed: [{ sourceId: "b" }],
+      errors: [{ error: "timed out (a re-run checks)", count: 1 }],
     });
 
     captured.clear();
     await runs(run.record.id, { runsDir });
     const err = Bun.stripANSI(captured.err);
+    expect(err).toMatch(/^Result +1 created, 1 not confirmed$/m);
+    expect(err).not.toContain("bad gateway");
     expect(err).toContain("Not confirmed (Clerk may have created them; a continue checks) (1)");
     expect(err).not.toMatch(/^ {2}a\b/m);
+
+    // The listing counts it the same way.
+    captured.clear();
+    await runs(undefined, { runsDir, json: true });
+    const listed = (JSON.parse(captured.out) as { runs: RunRecord[] }).runs;
+    expect(listed.find((record) => record.id === run.record.id)?.counts).toMatchObject({
+      created: 1,
+      creating: 1,
+    });
+  });
+
+  // A finished run's counts come from run.json, not its lines: the same holds.
+  test("counts no unconfirmed user once an undo deleted them all", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({ sourceId: "a", status: "creating", error: "bad gateway (a re-run checks)" });
+    run.finish();
+    const undo = startRun(runsDir, { kind: "undo", target: TARGET, undoes: run.record.id });
+    undo.append({ sourceId: "a", clerkId: "user_a", status: "deleted" });
+    undo.finish();
+    patchRun(runsDir, run.record.id, { status: "undone" });
+
+    await runs(run.record.id, { runsDir, json: true });
+    const view = JSON.parse(captured.out) as {
+      run: RunRecord;
+      unconfirmed: unknown[];
+      errors: unknown[];
+    };
+    expect(view.run.counts).toMatchObject({ created: 1 });
+    expect(view.run.counts).not.toHaveProperty("creating");
+    expect(view.unconfirmed).toEqual([]);
+    expect(view.errors).toEqual([]);
+
+    captured.clear();
+    await runs(undefined, { runsDir });
+    expect(Bun.stripANSI(captured.err)).not.toContain("not confirmed");
   });
 
   // A stopped import's unsent users have no lines: only the count says so.
