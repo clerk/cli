@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,14 @@ import { fileOperations } from "./files.ts";
 const { gitStatus, gitTracked } = fileOperations(setupError);
 
 const roots: string[] = [];
+const inheritedGitEnv: Record<string, string | undefined> = {};
+beforeAll(() => {
+  for (const name of Object.keys(process.env).filter((key) => key.startsWith("GIT_"))) {
+    inheritedGitEnv[name] = process.env[name];
+    delete process.env[name];
+  }
+});
+afterAll(() => Object.assign(process.env, inheritedGitEnv));
 afterEach(async () => {
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
 });
@@ -17,7 +25,7 @@ async function repoWithTrackedFile(tracked: string): Promise<string> {
   roots.push(root);
   await mkdir(join(root, tracked, ".."), { recursive: true });
   await writeFile(join(root, tracked), "tracked\n");
-  await Bun.$`git init -q && git add -A && git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm init`
+  await Bun.$`git init -q && git add -A && git -c core.hooksPath=/dev/null -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qm init`
     .cwd(root)
     .quiet();
   return root;

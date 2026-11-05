@@ -277,6 +277,7 @@ export async function applySetup(
     ...(preview.identity ? { identity: describeIdentity(preview.identity) } : {}),
   };
   const finish = () => {
+    const { application } = preview.inspection;
     const completed: { id: string; detail: string }[] = [];
     const remaining: { id: string; detail: string }[] = [];
     const step = (id: string, done: boolean, detail: string) =>
@@ -301,10 +302,20 @@ export async function applySetup(
       result.local === "incomplete"
         ? "Source edits require review after interrupted local setup."
         : preview.local.initializes
-          ? "The registered Application subclass initializes Clerk with the development publishable key resource."
-          : (preview.inspection.application.reason ??
-            "Initialize Clerk in the registered Application subclass."),
+          ? application.initialized === "custom"
+            ? "The registered Application subclass initializes Clerk with its own key."
+            : "The registered Application subclass initializes Clerk with the development publishable key resource."
+          : (application.reason ?? "Initialize Clerk in the registered Application subclass."),
     );
+    if (
+      application.customKey !== undefined &&
+      preview.publishableKey !== undefined &&
+      application.customKey !== preview.publishableKey
+    )
+      remaining.push({
+        id: "publishable-key",
+        detail: `${application.className} initializes Clerk with a different publishable key than the linked development instance's. Initialize it with the linked instance's key, or link the application that key belongs to.`,
+      });
     step(
       "native-registration",
       result.remote === "verified",

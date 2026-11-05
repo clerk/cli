@@ -3,6 +3,7 @@ import { mkdir, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CLERK_ANDROID_MINIMUM_VERSION } from "./sdk.ts";
 import { SelectionNeeded, findApplicationModules } from "./discovery.ts";
+import { keyResourceSource } from "./plan.ts";
 import { inspectAndroidProject } from "./project.ts";
 import { createAndroidFixture, FIXTURE_KEY } from "./test-helpers.ts";
 
@@ -321,6 +322,21 @@ describe("Android project inspection", () => {
     });
   });
 
+  test("reads the one key literal of an Application that initializes Clerk with its own key", async () => {
+    const root = await fixture({ application: "custom-initialized" });
+    expect((await inspect(root)).application.customKey).toBe(FIXTURE_KEY);
+  });
+
+  test("refuses a debug manifest that replaces the Application class", async () => {
+    const root = await fixture();
+    await mkdir(join(root, "app/src/debug"), { recursive: true });
+    await writeFile(
+      join(root, "app/src/debug/AndroidManifest.xml"),
+      '<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">\n    <application android:name=".DebugApp" tools:replace="android:name" />\n</manifest>\n',
+    );
+    await expect(inspect(root)).rejects.toThrow("src/debug/AndroidManifest.xml sets android:name");
+  });
+
   test("leaves an Application it can't edit safely to the handoff", async () => {
     const root = await fixture({ application: "unsupported" });
     expect((await inspect(root)).application).toMatchObject({
@@ -367,6 +383,14 @@ describe("Android project inspection", () => {
     const root = await fixture({ keyResource: FIXTURE_KEY });
     expect((await inspect(root)).keyResource).toMatchObject({ managed: true, key: FIXTURE_KEY });
     await writeFile(join(root, "app/src/main/res/values/clerk.xml"), "<resources />");
+    await expect(inspect(root)).rejects.toThrow("wasn't written by clerk init");
+    await writeFile(
+      join(root, "app/src/main/res/values/clerk.xml"),
+      keyResourceSource(FIXTURE_KEY).replace(
+        "</resources>",
+        '    <color name="brand">#FF0000</color>\n</resources>',
+      ),
+    );
     await expect(inspect(root)).rejects.toThrow("wasn't written by clerk init");
     await rm(join(root, "app/src/main/res/values/clerk.xml"));
     await mkdir(join(root, "app/src/debug/res/values"), { recursive: true });

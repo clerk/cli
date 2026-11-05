@@ -56,6 +56,8 @@ export interface ApplicationClass {
   source?: FileSnapshot;
   /** Whether `Clerk.initialize` is called: by this setup's recipe, by the project's own code, or not. */
   initialized: "managed" | "custom" | "none";
+  /** The publishable key a custom initialization passes as its one key literal, when it has one. */
+  customKey?: string;
   /** Whether setup can add the initialization after `super.onCreate()`. */
   editable: boolean;
   /** Why it can't be edited, when it can't. */
@@ -327,6 +329,10 @@ async function inspectApplicationClass(
   const masked = maskCode(source.source);
   if (/\bClerk\.initialize\s*\(/.test(masked)) {
     result.initialized = /R\.string\.clerk_publishable_key\b/.test(masked) ? "managed" : "custom";
+    const keys = new Set(
+      maskCode(source.source, false).match(/\bpk_(?:test|live)_[A-Za-z0-9+/=_-]+/g),
+    );
+    if (result.initialized === "custom" && keys.size === 1) result.customKey = [...keys][0];
     return result;
   }
   const onCreate = [...masked.matchAll(/\boverride\s+fun\s+onCreate\s*\(\s*\)/g)];
@@ -414,6 +420,14 @@ export async function inspectAndroidProject(options: InspectOptions): Promise<In
   const applications = [...xml.matchAll(/<application\b[^>]*>/g)];
   if (applications.length !== 1)
     throw unsupported("AndroidManifest.xml needs exactly one application element.");
+  const debugManifest = await optionalSnapshot(
+    root,
+    modulePath(module, "src/debug/AndroidManifest.xml"),
+  );
+  if (debugManifest && /<application\b[^>]*\sandroid:name\s*=/.test(maskXml(debugManifest.source)))
+    throw unsupported(
+      "src/debug/AndroidManifest.xml sets android:name on application, so the debug build may not run the Application class that initializes Clerk.",
+    );
   const internetPermission =
     /<uses-permission\b[^>]*android:name\s*=\s*["']android\.permission\.INTERNET["']/.test(xml);
   const application = await inspectApplicationClass(root, module, namespace, applications[0]![0]);
@@ -427,7 +441,8 @@ export async function inspectAndroidProject(options: InspectOptions): Promise<In
   const managed =
     !!keyResource &&
     keyResource.source.includes(`<!-- ${GENERATED} -->`) &&
-    (keyResource.source.match(/<string\b/g) ?? []).length === 1 &&
+    [...maskXml(keyResource.source).matchAll(/<([A-Za-z][\w:.-]*)/g)].map((m) => m[1]).join() ===
+      "resources,string" &&
     keyMatch !== null;
   if (keyResource && !managed)
     throw unsupported(`${keyResourcePath} exists and wasn't written by clerk init.`);

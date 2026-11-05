@@ -194,6 +194,31 @@ describe("Android setup workflow", () => {
     expect(result.handoff.remaining.map((item) => item.id)).toContain("debug-fingerprint");
   });
 
+  test("an Application initialized with another instance's key leaves the key as a remaining step", async () => {
+    const matching = await fixture({ application: "custom-initialized" });
+    const { api } = fakeNativeAPI();
+    const deps = { api, debugKeystore: keystore() };
+    const ok = await applySetup(await prepareSetup(setup(matching), deps), deps);
+    expect(ok.handoff.remaining.map((item) => item.id)).not.toContain("publishable-key");
+    expect(ok.handoff.completed).toContainEqual({
+      id: "initialize-clerk",
+      detail: "The registered Application subclass initializes Clerk with its own key.",
+    });
+
+    const other = await fixture({ application: "custom-initialized" });
+    const source = join(other, "app/src/main/java/com/example/myapp/CustomApp.kt");
+    await writeFile(
+      source,
+      (await readFile(source, "utf8")).replace(FIXTURE_KEY, "pk_test_b3RoZXIk"),
+    );
+    await Bun.$`git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qam other`
+      .cwd(other)
+      .quiet();
+    const result = await applySetup(await prepareSetup(setup(other), deps), deps);
+    expect(result.status).toBe("manual-steps-required");
+    expect(result.handoff.remaining.map((item) => item.id)).toContain("publishable-key");
+  });
+
   test("a dry run never touches the API or keytool", async () => {
     const root = await fixture();
     const preview = await prepareSetup(setup(root, { remote: undefined, inspectOnly: true }), {
