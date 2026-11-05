@@ -363,6 +363,80 @@ test("properly indents ClerkProvider wrapping in layout", async () => {
   }
 });
 
+test("wraps a <body> that shares its line with other markup", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/layout.tsx"),
+    `export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <html lang="en"><body>{children}</body></html>;
+}
+`,
+  );
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(findAction(plan.actions, "app/layout.tsx")).toMatchObject({
+    type: "modify",
+    description: "Add ClerkProvider import and wrap body contents",
+    content: expect.stringContaining(`  return <html lang="en"><body>
+    <ClerkProvider>
+      {children}
+    </ClerkProvider>
+  </body></html>;`),
+  });
+});
+
+test("wraps the layout's <body>, not one mentioned in a comment", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/layout.tsx"),
+    `// Fonts go on <body>.
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <body>{children}</body>
+    </html>
+  );
+}
+`,
+  );
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+
+  expect(findAction(plan.actions, "app/layout.tsx")).toMatchObject({
+    type: "modify",
+    content: expect.stringContaining(`      <body>
+        <ClerkProvider>
+          {children}
+        </ClerkProvider>
+      </body>`),
+  });
+});
+
+test("says manual wrapping is needed when the layout has no body to wrap", async () => {
+  await mkdir(join(tempDir, "app"), { recursive: true });
+  await Bun.write(
+    join(tempDir, "app/layout.tsx"),
+    `import { AppShell } from "./app-shell";
+
+// AppShell renders <body>.
+export default function RootLayout({ children }: { children: React.ReactNode }) {
+  return <AppShell>{children}</AppShell>;
+}
+`,
+  );
+
+  const plan = await nextjsApp.scaffold(makeCtx());
+  const layout = findAction(plan.actions, "app/layout.tsx");
+
+  expect(layout).toMatchObject({
+    type: "modify",
+    description: "Add ClerkProvider import (manual wrapping needed)",
+  });
+  if (layout.type !== "modify") throw new Error("Expected modify action");
+  expect(layout.content).not.toContain("<ClerkProvider>");
+});
+
 test("composes with existing non-Clerk middleware", async () => {
   await Bun.write(
     join(tempDir, "middleware.ts"),
