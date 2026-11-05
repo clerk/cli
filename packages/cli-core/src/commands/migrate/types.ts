@@ -47,6 +47,11 @@ export type ImportSummary = {
   successful: number;
   failed: number;
   /**
+   * Users whose create got no answer, so Clerk may hold them. Their line stays
+   * `creating`, and a continue looks them up before creating them again.
+   */
+  unconfirmed: number;
+  /**
    * Users never sent because a Ctrl-C or the instance's user quota stopped
    * the run first, so they have no line in the run. One whose first create
    * went out (a 429, a refused phone) is not among them: its `creating` line

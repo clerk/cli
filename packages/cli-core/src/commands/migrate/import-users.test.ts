@@ -1286,7 +1286,7 @@ describe("importUsers", () => {
       });
 
       // Either reserved phone may be the refused one: both are attached later.
-      expect(summary.failed).toBe(1);
+      expect(summary).toMatchObject({ failed: 0, unconfirmed: 1 });
       expect(allLines.at(-1)).toMatchObject({
         status: "creating",
         reserved: true,
@@ -1557,7 +1557,8 @@ describe("importUsers", () => {
       record,
     });
 
-    expect(summary.failed).toBe(1);
+    // Clerk may hold the user: not a failure until a continue checks.
+    expect(summary).toMatchObject({ failed: 0, unconfirmed: 1 });
     // A second `creating` line, so `runs <id>` can say why.
     expect(allLines.map((line) => line.status)).toEqual(["creating", "creating"]);
     expect(allLines[1]?.error).toContain("a re-run checks");
@@ -1574,7 +1575,7 @@ describe("importUsers", () => {
       record,
     });
 
-    expect(summary).toMatchObject({ successful: 0, failed: 1 });
+    expect(summary).toMatchObject({ successful: 0, failed: 0, unconfirmed: 1 });
     expect(allLines).toEqual([
       { sourceId: "u1", status: "creating" },
       {
