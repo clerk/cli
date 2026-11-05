@@ -162,9 +162,9 @@ continue replaces rather than repeats.
 `creating` is written as a user's `POST /v1/users` goes out. It stays the latest
 status when no answer says whether the create landed: an abort, a network error,
 or a 5xx. The import counts a network error or a 5xx as not confirmed, not
-failed ("Not confirmed" in the summary, `result.unconfirmed` in `--json`), and
-exits 1, since Clerk may or may not hold the user. A second `creating` line
-records its `error`, and a continue looks the user up before creating it again.
+failed ("Not confirmed" in the summary, `result.unconfirmed` in `--json`),
+since Clerk may hold the user. A second `creating` line records its `error`,
+and a continue looks the user up before creating it again.
 A `created` line with `pending` lists the extra emails and phones not yet
 attached, and `counts.pending` (`result.pending` in the import's `--json`)
 counts those users.
@@ -1567,12 +1567,12 @@ Stages, in the order each subcommand runs them. Telemetry sends the last stage s
 
 A run that finishes part-way exits nonzero without throwing, and carries a code so it is not an uncoded error:
 
-| Ending                                     | `error_code`               | Exit |
-| ------------------------------------------ | -------------------------- | ---- |
-| `import --dry-run` the checks would refuse | `migrate_checks_rejected`  | 2    |
-| `import` where some users failed           | `migrate_import_partial`   | 1    |
-| `undo` with deletes left                   | `migrate_undo_incomplete`  | 1    |
-| `export` the platform cut short            | `migrate_export_truncated` | 1    |
+| Ending                                                | `error_code`               | Exit |
+| ----------------------------------------------------- | -------------------------- | ---- |
+| `import --dry-run` the checks would refuse            | `migrate_checks_rejected`  | 2    |
+| `import` where some users failed or are not confirmed | `migrate_import_partial`   | 1    |
+| `undo` with deletes left                              | `migrate_undo_incomplete`  | 1    |
+| `export` the platform cut short                       | `migrate_export_truncated` | 1    |
 
 `clerk migrate` also adds a `migrate` segment to the `User-Agent` of its Backend API requests (`Clerk-CLI/<version> (…; migrate)`), so Clerk's logs can count the users each migration creates. The CLI follows the same rules as for telemetry: it leaves the segment out when telemetry is off and, outside CI, until the telemetry notice has shown.
 
