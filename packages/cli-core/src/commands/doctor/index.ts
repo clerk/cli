@@ -19,6 +19,7 @@ import {
 } from "./checks.ts";
 import { checkMcp } from "./check-mcp.ts";
 import { runIOSDoctorChecks } from "./ios.ts";
+import { runAndroidDoctorChecks } from "./android.ts";
 import { canSetUpXcode } from "../init/ios/coordinator.ts";
 import { detectFramework } from "../../lib/framework.ts";
 import { formatCheckResult, formatJson } from "./format.ts";
@@ -56,12 +57,12 @@ const CHECKS = {
  * Each check paired with the name to report it under if it throws. A check
  * names its own results from the same `CHECK_NAME` entry, so the two agree.
  */
-function getChecks(apple: boolean): { name: string; run: CheckFn }[] {
+function getChecks(native: boolean): { name: string; run: CheckFn }[] {
   return (
     (Object.keys(CHECKS) as CheckKey[])
       .filter((key) => key !== "hostExecution" || isAgent())
-      // Native Apple apps configure Clerk in Swift, not an env file.
-      .filter((key) => key !== "envVars" || !apple)
+      // Native apps configure Clerk in Swift or Kotlin, not an env file.
+      .filter((key) => key !== "envVars" || !native)
       .map((key) => ({ name: CHECK_NAME[key], run: CHECKS[key] }))
   );
 }
@@ -74,12 +75,16 @@ function getChecks(apple: boolean): { name: string; run: CheckFn }[] {
  * case where doctor itself is broken.
  */
 async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<CheckResult[]> {
-  const apple =
-    Boolean(options.xcodeProject || options.xcodeTarget || options.xcodeConfiguration) ||
-    (await detectFramework(process.cwd()))?.dep === "ios";
+  const apple = Boolean(options.xcodeProject || options.xcodeTarget || options.xcodeConfiguration);
+  const android = Boolean(
+    options.androidModule || options.androidPackage || options.androidFingerprint,
+  );
+  const detected = apple || android ? undefined : (await detectFramework(process.cwd()))?.dep;
+  const ios = apple || detected === "ios";
+  const kotlin = android || detected === "android";
   const results = await Promise.all(
     // Without Xcode, init pulls the key into an env file as before, so keep checking it.
-    getChecks(apple && canSetUpXcode()).map(async ({ name, run }) => {
+    getChecks((ios && canSetUpXcode()) || kotlin).map(async ({ name, run }) => {
       try {
         return await run(ctx);
       } catch (error) {
@@ -92,7 +97,9 @@ async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<Ch
       }
     }),
   );
-  return apple ? [...results, ...(await runIOSDoctorChecks(ctx, options))] : results;
+  if (ios) return [...results, ...(await runIOSDoctorChecks(ctx, options))];
+  if (kotlin) return [...results, ...(await runAndroidDoctorChecks(ctx, options))];
+  return results;
 }
 
 /**
@@ -209,6 +216,18 @@ export function registerDoctor(program: Program): void {
     .option("--xcode-project <path>", "Xcode project or workspace to check")
     .option("--xcode-target <name-or-id>", "Xcode app target to check, by name or ID")
     .option("--xcode-configuration <name>", "Xcode build configuration to check")
+    .option(
+      "--android-module <path>",
+      "Android application module to check, relative to the project",
+    )
+    .option(
+      "--android-package <id>",
+      "Installed applicationId to check, including any variant suffix",
+    )
+    .option(
+      "--android-fingerprint <sha256...>",
+      "SHA-256 signing certificate fingerprints to check against the registration",
+    )
     .setExamples([
       { command: "clerk doctor", description: "Run all health checks" },
       { command: "clerk doctor --verbose", description: "Show detailed output for each check" },

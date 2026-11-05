@@ -12,7 +12,8 @@ import {
 import { setTelemetryStage } from "../../../lib/telemetry.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.ts";
-import { stopNativeProgress, withNativeSpinner } from "./progress.ts";
+import { stopNativeProgress, withNativeSpinner } from "../native/progress.ts";
+import { applicationRequired as nativeApplicationRequired } from "../native/status.ts";
 import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
@@ -143,23 +144,12 @@ export function printSetupResult(
   for (const step of setupNextSteps(result, starter)) log.info(`  • ${step}`);
 }
 
-/**
- * What an agent needs to do before native setup can run: choose a Clerk application, then run
- * `command`, which carries this run's setup options.
- */
+/** The `application-required` status, naming the Xcode project setup configures. */
 export function applicationRequired(
   command = "clerk init --app <app_id> --json",
   starter?: StarterProjectSummary,
 ) {
-  return {
-    status: "application-required",
-    appIntegrationComplete: false,
-    ...(starter && { starter }),
-    next: [
-      'Run `clerk apps list --json` and ask the user which application to use, or create one with `clerk apps create "<name>" --json`. If listing fails because you are not signed in, run `clerk auth login` first.',
-      `Then run \`${command}\` to link it, configure the Xcode project, and register the app with Clerk.`,
-    ],
-  };
+  return nativeApplicationRequired(command, "Xcode project", starter);
 }
 
 /** The Apple-specific `clerk init` options, as Commander names them. */
