@@ -320,7 +320,7 @@ keep `--runs-dir`: the import looks the run ID up there.
 | `--json`                   | all                                | Print the result as JSON; never prompts                           |
 | `--runs-dir <path>`        | all                                | Where runs are kept (see [the run store](#the-run-store))         |
 | `--db-url <url>`           | `supabase`, `authjs`, `betterauth` | Connection string (Postgres only for `supabase`)                  |
-| `--service-account <key>`  | `firebase`                         | Service account key: a path to its JSON file, or the JSON itself  |
+| `--service-account <key>`  | `firebase`                         | Path to the key file, not its JSON, which shows in `ps`           |
 | `--domain <domain>`        | `auth0`                            | Tenant domain, e.g. `my-tenant.us.auth0.com`, not a custom domain |
 | `--client-id <id>`         | `auth0`                            | Machine-to-machine application client ID                          |
 | `--client-secret <secret>` | `auth0`                            | Machine-to-machine application client secret                      |
@@ -559,9 +559,18 @@ included, owner-only in its run folder.
 
 Without `--service-account` you are prompted for it, the way `export supabase`
 prompts for its connection string. The answer can be a path to the downloaded
-file _or_ the key's JSON pasted whole, so a key kept in a password manager or a
-CI secret never has to be written to disk. The prompt is masked, since the key
-carries a private key. Agent mode cannot prompt, so it names the flag instead.
+file _or_ the key's JSON pasted whole, so a key kept in a password manager never
+has to be written to disk. The prompt is masked, since the JSON carries a
+private key. Agent mode, `--json`, and `-y` cannot prompt, so they name the flag
+instead.
+
+> [!WARNING]
+> Pass `--service-account` a path to the key file. The flag takes the key's JSON
+> too, but then the key shows in `ps`. So does `"$VAR"` or `"$(cat key.json)"`,
+> since the shell expands them first. A key typed or pasted on the command line
+> also lands in shell history. In CI, where nothing can prompt, write the secret
+> to a file only the job can read and pass its path. Most CI systems can mount a
+> secret as a file.
 
 Either way the CLI checks the key before anything reaches the network, so the
 wrong file fails in a second rather than after an auth round-trip. A key whose
