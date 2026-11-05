@@ -114,7 +114,7 @@ export function fileOperations(setupError: SetupErrorFactory) {
    */
   function spawnGit(root: string, args: string[], stdout: "pipe" | "ignore") {
     try {
-      return Bun.spawn(["git", ...args], {
+      return Bun.spawn(["git", "--literal-pathspecs", ...args], {
         cwd: root,
         env: process.env,
         stdout,
