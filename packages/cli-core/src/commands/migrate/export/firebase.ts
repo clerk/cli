@@ -129,7 +129,7 @@ export function readServiceAccount(file: string): ServiceAccount {
 /**
  * Accepts what the prompt accepts: a path to the downloaded key file, or the
  * key's JSON pasted in whole. Console downloads land as a file, but a key
- * copied out of a password manager or CI secret never touches disk.
+ * pasted at the prompt from a password manager never touches disk.
  */
 export function loadServiceAccount(source: string): ServiceAccount {
   const trimmed = source.trim();
@@ -160,7 +160,7 @@ async function resolveServiceAccount(options: ExportFirebaseOptions): Promise<Se
   if (options.json || isAssumeYes() || !isHuman()) {
     throwUsageError(
       "`clerk migrate export firebase` needs a service account key and cannot prompt here. " +
-        "Pass --service-account with the path to the key file, or the key's JSON.",
+        "Pass --service-account with the path to the key file.",
       DOCS_URL,
       undefined,
       [
