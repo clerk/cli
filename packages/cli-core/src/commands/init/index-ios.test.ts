@@ -167,7 +167,10 @@ describe("clerk init for native Apple projects", () => {
   });
 
   test.each([
-    [{ starter: true, json: true }, "--json works with --starter only for a new iOS or macOS app"],
+    [
+      { starter: true, json: true },
+      "--json works with --starter only for a new iOS, macOS, or Android app",
+    ],
     [{ starter: true, dryRun: true }, "--dry-run works on an existing project"],
     [{ relink: true }, "--relink applies with --app"],
     [{ dryRun: true, app: "app_test" }, "--dry-run never signs in"],
@@ -487,7 +490,7 @@ describe("clerk init for native Apple projects", () => {
       track(check);
 
       await expect(init({ starter: true, framework: "ios", ...options })).rejects.toThrow(
-        `${flag} applies only to accountless web setup; iOS and macOS apps link a Clerk application instead.`,
+        `${flag} applies only to accountless web setup; iOS, macOS, and Android apps link a Clerk application instead.`,
       );
       expect(check).not.toHaveBeenCalled();
       expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();

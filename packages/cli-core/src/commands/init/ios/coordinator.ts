@@ -2,18 +2,16 @@ import { readdirSync } from "node:fs";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
-import {
-  CliError,
-  ERROR_CODE,
-  errorMessage,
-  throwUsageError,
-  throwUserAbort,
-} from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../../lib/errors.ts";
 import { setTelemetryStage } from "../../../lib/telemetry.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.ts";
 import { stopNativeProgress, withNativeSpinner } from "../native/progress.ts";
-import { applicationRequired as nativeApplicationRequired } from "../native/status.ts";
+import {
+  applicationRequired as nativeApplicationRequired,
+  setupInterrupted,
+  type StarterProjectSummary,
+} from "../native/status.ts";
 import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
@@ -171,30 +169,8 @@ export interface AppleInitOptions {
   starterProject?: StarterProjectSummary;
 }
 
-export interface StarterProjectSummary {
-  projectName: string;
-  platform: "ios" | "macos";
-  /** Where the new app was written. */
-  projectDir?: string;
-  /** The `clerk init` that finishes setting up the new app, run from where the starter ran. */
-  continuation?: string;
-}
-
-/**
- * A new app was written, but setup stopped with an error that has no status of its own. Running
- * `--starter` again would refuse the existing folder, so the agent continues inside the new app.
- */
-export function setupInterrupted(starter: StarterProjectSummary, error: unknown) {
-  return {
-    status: "setup-interrupted",
-    appIntegrationComplete: false,
-    error: errorMessage(error),
-    starter,
-    next: [
-      `Resolve the error, then run \`${starter.continuation}\` to finish setting up the new app. Don't run --starter again.`,
-    ],
-  };
-}
+export type { StarterProjectSummary } from "../native/status.ts";
+export { setupInterrupted } from "../native/status.ts";
 
 /**
  * Sets up an existing Xcode app. `applicationId` is the app `clerk init` already

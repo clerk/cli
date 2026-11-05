@@ -15,6 +15,11 @@ import {
 import { canSetUpXcode } from "./ios/coordinator.js";
 import { APPLE_STARTERS, promptAppleStarter, type AppleStarter } from "./ios/starter-bootstrap.js";
 import type { ApplePlatform } from "./ios/starter-project.js";
+import {
+  ANDROID_STARTER,
+  promptAndroidStarter,
+  type AndroidStarter,
+} from "./android/starter-bootstrap.js";
 
 async function spawnInherited(args: string[], cwd: string): Promise<number> {
   const proc = Bun.spawn(args, { cwd, stdout: "inherit", stderr: "inherit" });
@@ -32,16 +37,19 @@ const FRAMEWORK_CHOICES = BOOTSTRAP_REGISTRY.map((entry) => ({
 
 type StarterChoice =
   | { kind: "npm"; entry: BootstrapEntry }
-  | { kind: "apple"; platform: ApplePlatform };
+  | { kind: "apple"; platform: ApplePlatform }
+  | { kind: "android" };
 
-// Native starters write an Xcode project, so they're offered only where native setup can run.
-function starterChoices() {
-  return canSetUpXcode()
-    ? [
-        ...FRAMEWORK_CHOICES,
-        ...APPLE_STARTERS.map((starter) => ({ name: starter.label, value: starter.platform })),
-      ]
-    : FRAMEWORK_CHOICES;
+// Apple starters write an Xcode project, so they're offered only where native setup can run; the
+// Android starter is plain files, built later with the embedded Gradle wrapper, so it's always on.
+export function starterChoices() {
+  return [
+    ...FRAMEWORK_CHOICES,
+    ...(canSetUpXcode()
+      ? APPLE_STARTERS.map((starter) => ({ name: starter.label, value: starter.platform }))
+      : []),
+    { name: ANDROID_STARTER.label, value: ANDROID_STARTER.value },
+  ];
 }
 
 const PM_CHOICES: Array<{ name: string; value: PackageManager }> = [
@@ -61,6 +69,7 @@ async function pickFramework(
       message: "Which framework?",
       source: (term) => filterChoices(choices, term),
     });
+    if (chosen === ANDROID_STARTER.value) return { kind: "android" };
     const apple = APPLE_STARTERS.find((starter) => starter.platform === chosen);
     return apple
       ? { kind: "apple", platform: apple.platform }
@@ -68,12 +77,14 @@ async function pickFramework(
   }
 
   if (frameworkOverride.dep === "ios") return { kind: "apple", platform: applePlatform };
+  if (frameworkOverride.dep === "android") return { kind: "android" };
   const entry = findEntry(frameworkOverride.dep);
   if (entry) return { kind: "npm", entry };
 
   const supported = [
     ...BOOTSTRAP_REGISTRY.map((e) => e.label),
     ...APPLE_STARTERS.map((s) => s.label),
+    ANDROID_STARTER.label,
   ].join(", ");
   throw new CliError(
     `Bootstrap is not supported for ${frameworkOverride.name}. Supported: ${supported}`,
@@ -201,10 +212,10 @@ export async function confirmOverwrite(cwd: string): Promise<void> {
   if (!proceed) throwUserAbort();
 }
 
-/** iOS and macOS have no accountless setup, so a native starter can't take these flags. */
-export function rejectAccountlessApple(flags: readonly string[]): never {
+/** Native apps have no accountless setup, so a native starter can't take these flags. */
+export function rejectAccountlessNative(flags: readonly string[]): never {
   throwUsageError(
-    `${flags.join(", ")} ${flags.length === 1 ? "applies" : "apply"} only to accountless web setup; iOS and macOS apps link a Clerk application instead.`,
+    `${flags.join(", ")} ${flags.length === 1 ? "applies" : "apply"} only to accountless web setup; iOS, macOS, and Android apps link a Clerk application instead.`,
   );
 }
 
@@ -229,11 +240,35 @@ export type BootstrapOverrides = {
     signInWithApple?: boolean;
     flags: readonly string[];
   };
+  /** Answers for a native Android starter; `flags` names the Android flags that were passed. */
+  android?: {
+    applicationId?: string;
+    flags: readonly string[];
+  };
 };
 
 export type BootstrapResult =
-  | { projectDir: string; projectName: string; packageManager: PackageManager; apple?: undefined }
-  | { projectDir: string; projectName: string; apple: AppleStarter; packageManager?: undefined };
+  | {
+      projectDir: string;
+      projectName: string;
+      packageManager: PackageManager;
+      apple?: undefined;
+      android?: undefined;
+    }
+  | {
+      projectDir: string;
+      projectName: string;
+      apple: AppleStarter;
+      packageManager?: undefined;
+      android?: undefined;
+    }
+  | {
+      projectDir: string;
+      projectName: string;
+      android: AndroidStarter;
+      packageManager?: undefined;
+      apple?: undefined;
+    };
 
 /**
  * Interactive bootstrap flow.
@@ -251,6 +286,7 @@ export async function promptAndBootstrap(
     accountlessFlags = [],
     json,
     apple,
+    android,
     beforeWrite,
   }: BootstrapOverrides = { skipConfirm: false },
 ): Promise<BootstrapResult> {
@@ -275,11 +311,30 @@ export async function promptAndBootstrap(
     const valid = validateProjectName(nameOverride);
     if (valid !== true) throwUsageError(`Invalid --name "${nameOverride}": ${valid}`);
   };
-  if (frameworkOverride && frameworkOverride.dep !== "ios") validateName();
+  if (frameworkOverride && frameworkOverride.dep !== "ios" && frameworkOverride.dep !== "android")
+    validateName();
 
   const choice = await pickFramework(frameworkOverride, apple?.platform);
+  if (choice.kind === "android") {
+    if (accountlessFlags.length) rejectAccountlessNative(accountlessFlags);
+    if (apple?.flags.length)
+      throwUsageError(
+        `${apple.flags.join(", ")} ${apple.flags.length === 1 ? "applies" : "apply"} only to iOS and macOS apps.`,
+      );
+    return promptAndroidStarter(cwd, {
+      skipConfirm,
+      requireName: json,
+      name: nameOverride,
+      applicationId: android?.applicationId,
+      beforeWrite,
+    });
+  }
   if (choice.kind === "apple") {
-    if (accountlessFlags.length) rejectAccountlessApple(accountlessFlags);
+    if (accountlessFlags.length) rejectAccountlessNative(accountlessFlags);
+    if (android?.flags.length)
+      throwUsageError(
+        `${android.flags.join(", ")} ${android.flags.length === 1 ? "applies" : "apply"} only to Android apps.`,
+      );
     return promptAppleStarter(cwd, choice.platform, {
       skipConfirm,
       requireName: json,
@@ -294,6 +349,10 @@ export async function promptAndBootstrap(
   if (apple?.flags.length)
     throwUsageError(
       `${apple.flags.join(", ")} ${apple.flags.length === 1 ? "applies" : "apply"} only to iOS and macOS apps.`,
+    );
+  if (android?.flags.length)
+    throwUsageError(
+      `${android.flags.join(", ")} ${android.flags.length === 1 ? "applies" : "apply"} only to Android apps.`,
     );
 
   const { entry } = choice;
