@@ -954,11 +954,15 @@ instance (a `key_…` fallback ID), the fix points at the Dashboard instead: in
 
 The fixes are offers, not corrections: an instance that requires an email is
 configured as its owner intended, and fixing the export may be the answer. A
-fix that only keeps a name or a password counts the users that pass the
-checks: a rejected user brings neither across, so it isn't offered for them. A
-fix that clears a reject, such as making a required name optional, counts
-every user. When
-the instance settings cannot be read (BAPI `/v1/domains` → the instance's
+fix that only keeps a name, username, or password counts the users that pass
+the checks: a rejected user brings none of them across, so the checks don't
+offer it for them. A fix that clears a reject, such as making a required name
+optional, counts the rejected users too. No fix counts a user that no setting
+would let in, such as a duplicate, a skipped user, one with a bad password
+hash, or one the user limit leaves out. A rejected user whose only username is
+one Clerk refuses gets no offer to turn usernames on, though doing that and
+then allowing numeric usernames can import them. When the instance settings
+cannot be read (BAPI `/v1/domains` → the instance's
 Frontend API `/v1/environment`), required fields are not checked and the run
 says so. When a development instance's user count cannot be read, the run says
 so too, rather than checking the headroom against zero.
