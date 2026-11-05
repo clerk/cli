@@ -8,6 +8,8 @@ interface HandoffProgress {
   remaining: { id: string; detail: string }[];
   changedFiles: string[];
   signInUIRequested?: boolean;
+  /** Native Sign in with Google was requested; the Google Cloud steps only the user can do. */
+  google?: { steps: string[] };
 }
 
 // Returned as command output. This is a task description, not an executed agent.
@@ -71,6 +73,19 @@ export function integrationHandoff(
               instructions:
                 "If sign-in UI was requested, integrate the documented Clerk UI components (AuthView and the user controls) into the existing Compose UI, driven by Clerk.isInitialized and Clerk.userFlow. Reuse existing navigation; ask about placement only when unclear. Installing clerk-android-ui alone does not authorize UI changes.",
               documentation: [`${ANDROID_QUICKSTART}.md`],
+            },
+          ]
+        : []),
+      ...(progress.google
+        ? [
+            {
+              id: "google-cloud-oauth-clients",
+              status: "requires-user-action",
+              requiresUserIntent: false,
+              instructions: `Clerk's Google connection is configured by the CLI; the Google Cloud OAuth clients are not, and the Android one can't be verified from here. Ask the user to confirm these steps are done, or walk them through: ${progress.google.steps.join(" ")}`,
+              documentation: [
+                "https://clerk.com/docs/guides/configure/auth-strategies/sign-in-with-google.md",
+              ],
             },
           ]
         : []),

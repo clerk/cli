@@ -1,14 +1,16 @@
 import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import type { AndroidApplication } from "../../../lib/plapi.ts";
+import type { AndroidApplication, InstanceConfigSchema } from "../../../lib/plapi.ts";
 import { PlapiError } from "../../../lib/errors.ts";
 import type { NativeAPI } from "./remote.ts";
+import type { GoogleAPI } from "./native-google.ts";
 import type { DebugKeystore } from "./identity.ts";
 
 export const FIXTURE_KEY = `pk_test_${btoa("fixture.clerk.accounts.dev$")}`;
 export const DEBUG_FINGERPRINT = Array(32).fill("AB").join(":");
 export const RELEASE_FINGERPRINT = Array(32).fill("CD").join(":");
+export const DEBUG_SHA1 = Array(20).fill("1A").join(":");
 
 export interface AndroidFixtureOptions {
   /** Build script dialect. */
@@ -253,5 +255,67 @@ export function keystore(status: DebugKeystore["status"] = "found"): () => Promi
     keystore: "/Users/test/.android/debug.keystore",
     keytool: status === "no-keytool" ? undefined : "/usr/bin/keytool",
     fingerprint: status === "found" ? DEBUG_FINGERPRINT : undefined,
+    sha1: status === "found" ? DEBUG_SHA1 : undefined,
   });
+}
+
+export const FAKE_GOOGLE_CLIENT_ID = "123456789012-fakefakefakefake.apps.googleusercontent.com";
+export const FAKE_GOOGLE_CLIENT_SECRET = "GOCSPX-FAKE_SECRET_MUST_NOT_ESCAPE";
+
+/** An in-memory Platform API config endpoint for the Google connection. */
+export function fakeGoogleAPI(initial: Record<string, unknown> = { enabled: false }) {
+  const state = {
+    connection: { ...initial } as Record<string, unknown>,
+    configVersion: "v1_1234abcd",
+    events: [] as string[],
+    patches: [] as Record<string, unknown>[],
+    schemaMissing: false,
+    noVersion: false,
+    failPatch: false,
+  };
+  const api: GoogleAPI = {
+    async fetchInstanceConfig(_app, _instance, keys) {
+      if (!keys?.includes("connection_oauth_google")) throw new Error("Unexpected keys");
+      return {
+        ...(state.noVersion ? {} : { config_version: state.configVersion }),
+        connection_oauth_google: { ...state.connection },
+      };
+    },
+    async fetchInstanceConfigSchema(): Promise<InstanceConfigSchema> {
+      return state.schemaMissing
+        ? { properties: {} }
+        : {
+            properties: {
+              connection_oauth_google: {
+                type: "object",
+                properties: {
+                  enabled: { type: "boolean" },
+                  authenticatable: { type: "boolean" },
+                  client_id: { type: "string" },
+                  client_secret: { type: "string", "x-clerk-sensitive": true },
+                },
+              },
+            },
+          };
+    },
+    async patchInstanceConfig(_app, _instance, config, options) {
+      state.events.push(options.dryRun ? "google-dry-run" : "google-apply");
+      if (options.ifMatch !== state.configVersion) throw new Error("If-Match mismatch");
+      if (state.failPatch) throw new Error("Patch refused");
+      const patch = config.connection_oauth_google as Record<string, unknown>;
+      const before = { ...state.connection };
+      const after = { ...before, ...patch };
+      if (!options.dryRun) {
+        state.connection = after;
+        state.configVersion = "v1_9876fedc";
+        state.patches.push(patch);
+      }
+      return {
+        dry_run: options.dryRun,
+        before: { connection_oauth_google: before },
+        after: { connection_oauth_google: after },
+      };
+    },
+  };
+  return { api, state };
 }

@@ -1,6 +1,7 @@
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
 import { maskCode } from "./gradle.ts";
 import { describeIdentity, discoverIdentity, readDebugKeystore } from "./identity.ts";
+import { auditGoogleHealth, GOOGLE_GUIDE } from "./native-google.ts";
 import { auditRemote, nativeAPI, resolveInstance } from "./remote.ts";
 import { CLERK_ANDROID_MIN_SDK, sdkInstalled, type Check } from "./sdk.ts";
 import { KEY_RESOURCE } from "./project.ts";
@@ -205,6 +206,55 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       message: "No linked Clerk application; registration and Native API were not checked.",
       remedy: "Run clerk link, then clerk doctor again.",
     });
+  if (instance) {
+    try {
+      const google = await auditGoogleHealth(instance, dependencies.googleAPI);
+      const enabled = google.current?.enabled === true && google.current.authenticatable;
+      checks.push({
+        name: "Google connection",
+        status: google.status === "blocked" ? "fail" : enabled ? "pass" : "warn",
+        message:
+          google.status === "blocked"
+            ? google.blockers.map((blocker) => blocker.message).join(" ")
+            : enabled
+              ? "Google is enabled for authentication on the development instance."
+              : "Google is not enabled on the development instance, so native Sign in with Google is off.",
+        remedy:
+          google.status === "blocked"
+            ? "Review the Google connection in the Clerk Dashboard."
+            : enabled
+              ? undefined
+              : "Run clerk init --sign-in-with-google to enable it with a Google Web client.",
+      });
+      checks.push({
+        name: "Google Web client ID",
+        status: google.credentials === "satisfied" ? "pass" : enabled ? "fail" : "warn",
+        message:
+          google.credentials === "satisfied"
+            ? "A Web client ID is configured; the Android SDK reads it as the One Tap client ID."
+            : "No Web client ID is configured. The Android SDK needs one as the One Tap client ID; Clerk's shared development credentials don't provide it.",
+        remedy:
+          google.credentials === "satisfied"
+            ? undefined
+            : `Create a Web application OAuth client in Google Cloud and run clerk init --sign-in-with-google (${GOOGLE_GUIDE}).`,
+      });
+      if (enabled)
+        checks.push({
+          name: "Google Cloud Android client",
+          status: "warn",
+          message: `Not verifiable from here: Google Cloud must have an Android OAuth client for ${identity.applicationId} with the SHA-1 of each signing certificate${identity.debug.sha1 ? ` (debug: ${identity.debug.sha1})` : ""}.`,
+          remedy: `Check APIs & Services > Credentials in Google Cloud Console; see ${GOOGLE_GUIDE}.`,
+        });
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      checks.push({
+        name: "Google connection",
+        status: "warn",
+        message: `Google provider settings could not be read: ${errorMessage(error)}`,
+        remedy: "Review them in the Clerk Dashboard; no settings were changed.",
+      });
+    }
+  }
   return {
     ...describePreview(preview),
     identity: describeIdentity(identity),

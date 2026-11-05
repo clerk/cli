@@ -132,6 +132,9 @@ own remedy:
 | Native API                  | Native API is enabled on the development instance                                                                                                                                                                                                               |
 | Native registration         | The `applicationId` is registered there. A registration that lacks this machine's debug fingerprint fails with the Dashboard remedy, since the CLI can't update it yet                                                                                          |
 | Debug signing fingerprint   | This machine's debug certificate could be read and is registered (warns when there is no keystore or `keytool` yet)                                                                                                                                             |
+| Google connection           | Google is enabled for authentication on the development instance (warns when off or when the provider settings can't be read; fails when the enabled connection is blocked, such as not authenticatable)                                                        |
+| Google Web client ID        | The connection has a custom Web client ID, which the Android SDK reads as the One Tap client ID (fails when Google is enabled without one; warns when Google is off)                                                                                            |
+| Google Cloud Android client | Never passes: a note, while Google is enabled, that Google Cloud must have an Android OAuth client for the package and each signing certificate's SHA-1, which can't be checked from here                                                                       |
 
 Without a linked application the four Clerk checks (development publishable key, Native API, registration, and debug signing fingerprint) become one warning.
 
@@ -217,7 +220,8 @@ instances:
 
 Android projects read, for the development instance:
 
-| Method | Endpoint                                                                               | Description                                       |
-| ------ | -------------------------------------------------------------------------------------- | ------------------------------------------------- |
-| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_settings`             | Whether Native API is enabled                     |
-| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_applications/android` | Registered package names and signing fingerprints |
+| Method | Endpoint                                                                                       | Description                                       |
+| ------ | ---------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_settings`                     | Whether Native API is enabled                     |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/native_applications/android`         | Registered package names and signing fingerprints |
+| `GET`  | `/v1/platform/applications/{appID}/instances/{instanceID}/config?keys=connection_oauth_google` | Whether Google is enabled and has a Web client ID |
