@@ -202,7 +202,7 @@ function userHolds(user: unknown, kind: PendingIdentifier["kind"], value: string
       (entry) => entry.email_address?.toLowerCase() === wanted,
     );
   }
-  // Clerk stores phones in E.164; the source may carry spaces, dashes or parens.
+  // Clerk stores phones in E.164; the source may carry spaces, dashes, or parens.
   const digits = (phone: string) => phone.replace(/\D/g, "");
   return (record.phone_numbers ?? []).some(
     (entry) => digits(entry.phone_number ?? "") === digits(value),
