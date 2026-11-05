@@ -11,9 +11,26 @@ import { autolink, findClerkKeys, matchKeyToApp } from "../../lib/autolink.ts";
 import { getGitRepoIdentifier, getGitRepoRoot, getGitNormalizedRemote } from "../../lib/git.ts";
 import { dim, cyan } from "../../lib/color.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
+import {
+  ApiError,
+  AuthError,
+  CliError,
+  ERROR_CODE,
+  throwUsageError,
+  withApiContext,
+} from "../../lib/errors.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
+import { readKeylessBreadcrumb } from "../../lib/keyless.ts";
+import {
+  attemptAutoclaim,
+  CLAIM_OTHER_APP_HINT,
+  claimWarning,
+  CLAIM_FAILURE_ADVICE,
+  claimFailureKind,
+  keysMismatchMessage,
+  reportClaimed,
+} from "../../lib/autoclaim.ts";
 
 interface LinkOptions {
   app?: string;
@@ -28,6 +45,11 @@ interface LinkOptions {
   createIfMissing?: string;
   /** Callers that continue setup themselves (native `clerk init`) skip link's own next steps. */
   showNextSteps?: boolean;
+  /**
+   * Claim the app a signed-out `clerk init` left a token for before listing apps; set only by
+   * the `clerk link` command. Without it, signing in through `login()` still claims, unchecked.
+   */
+  claimKeylessApp?: boolean;
 }
 
 /**
@@ -69,18 +91,27 @@ export async function link(options: LinkOptions = {}): Promise<void> {
     return;
   }
 
-  if (!existing && !options.app && (options.skipIfLinked || agent)) {
+  let introShown = false;
+  let claimedApp: Application | undefined;
+  if (options.claimKeylessApp && !existing && !options.app) {
+    const outcome = await claimKeylessApp(cwd, options);
+    if (outcome.kind === "linked") return;
+    introShown = outcome.kind !== "no_breadcrumb";
+    if (outcome.kind === "claimed_unlinked") claimedApp = outcome.app;
+  }
+
+  if (!claimedApp && !existing && !options.app && (options.skipIfLinked || agent)) {
     const autolinked = await autolink(cwd);
     if (autolinked) return;
   }
 
-  if (agent && !existing && !options.app && !options.createIfMissing) {
+  if (!claimedApp && agent && !existing && !options.app && !options.createIfMissing) {
     throwUsageError(
       "Cannot select an application in agent mode. Pass --app <id>, or run `clerk apps list --json` and retry.",
     );
   }
 
-  intro("Linking project");
+  if (!introShown) intro("Linking project");
 
   if (existing && agent) {
     printExistingStatus(existing, normalizedRemote);
@@ -98,17 +129,23 @@ export async function link(options: LinkOptions = {}): Promise<void> {
 
   await ensureAuth();
 
-  const app = options.app
-    ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
-    : agent && options.createIfMissing
-      ? await withApiContext(
-          createApplication(options.createIfMissing),
-          "Failed to create application",
-        )
-      : await resolveApp(cwd, displayPath, !existing);
+  // A claimed app that didn't link is linked here, as `--app <its id>` would: a missing
+  // development instance or a failed config write then reports its own error.
+  const app =
+    claimedApp ??
+    (options.app
+      ? await withApiContext(fetchApplication(options.app), "Failed to fetch application")
+      : agent && options.createIfMissing
+        ? await withApiContext(
+            createApplication(options.createIfMissing),
+            "Failed to create application",
+          )
+        : await resolveApp(cwd, displayPath, !existing));
 
-  const devInstance = app.instances.find((i) => i.environment_type === "development");
-  const prodInstance = app.instances.find((i) => i.environment_type === "production");
+  // A claim response is untrusted JSON and may carry no instances at all.
+  const instances = app.instances ?? [];
+  const devInstance = instances.find((i) => i.environment_type === "development");
+  const prodInstance = instances.find((i) => i.environment_type === "production");
 
   if (!devInstance) {
     throw new CliError("Application has no development instance", {
@@ -132,7 +169,77 @@ export async function link(options: LinkOptions = {}): Promise<void> {
   await outro(options.showNextSteps === false ? undefined : NEXT_STEPS.LINK);
 }
 
-async function ensureAuth() {
+type ClaimOutcome =
+  | { kind: "no_breadcrumb" }
+  | { kind: "linked" }
+  | { kind: "claimed_unlinked"; app: Application }
+  | { kind: "not_claimed" };
+
+/**
+ * `linked` when the claim linked the folder, `claimed_unlinked` when `link()` must link the
+ * claimed app itself, `not_claimed` (after printing why) when the token is spent and `link()`
+ * carries on as usual. Throws on a key mismatch, and on a failure that keeps the token,
+ * because no picker or app list can show the app the token claims.
+ */
+async function claimKeylessApp(cwd: string, options: LinkOptions): Promise<ClaimOutcome> {
+  const breadcrumb = await readKeylessBreadcrumb(cwd);
+  if (!breadcrumb?.claimToken) return { kind: "no_breadcrumb" };
+
+  intro("Linking project");
+  // `login()` would claim on its own and swallow a key mismatch as a warning.
+  await ensureAuth({ claim: false });
+  const result = await attemptAutoclaim(cwd, { checkKeys: true });
+
+  switch (result.status) {
+    case "keys_mismatch":
+      throw new CliError(keysMismatchMessage(result), { code: ERROR_CODE.KEY_PAIR_MISMATCH });
+    case "failed":
+      throw claimFailure(result.error);
+    case "managed_workspace":
+      throw withAdvice(
+        result.error,
+        `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."} ` +
+          `Switch to a workspace you own and rerun \`clerk link\`, ${CLAIM_OTHER_APP_HINT}`,
+      );
+    case "claimed":
+      reportClaimed(result);
+      if (!result.linked) return { kind: "claimed_unlinked", app: result.app };
+      await outro(
+        options.showNextSteps === false
+          ? undefined
+          : result.envPulled
+            ? NEXT_STEPS.AUTOCLAIMED
+            : NEXT_STEPS.AUTOCLAIMED_NO_ENV,
+      );
+      return { kind: "linked" };
+    default: {
+      const warning = claimWarning(result);
+      if (warning) log.warn(warning);
+      return { kind: "not_claimed" };
+    }
+  }
+}
+
+function claimFailure(error: Error): Error {
+  const kind = claimFailureKind(error);
+  // The CLI's own errors (an expired session, a malformed key) already say what to do.
+  if (kind === "cli" || error instanceof AuthError) return error;
+  if (error instanceof ApiError) return withAdvice(error, CLAIM_FAILURE_ADVICE[kind]);
+  // A network failure is reported like any other, so its advice can only go in a warning.
+  log.warn(CLAIM_FAILURE_ADVICE[kind]);
+  return error;
+}
+
+/**
+ * Puts the advice in the API error's prefix, so the agent JSON carries it in `message` next
+ * to the API's own code, printed once: "<advice> (<status>): <reason>".
+ */
+function withAdvice(error: ApiError, advice: string): ApiError {
+  error.context = advice.replace(/\.$/, "");
+  return error;
+}
+
+async function ensureAuth({ claim }: { claim?: boolean } = {}) {
   // CLERK_PLATFORM_API_KEY is a valid non-interactive auth mechanism.
   // The PLAPI fetch helpers use it directly for API calls, so no OAuth
   // token is needed when this key is present.
@@ -140,7 +247,7 @@ async function ensureAuth() {
   const token = await getToken();
   if (!token) {
     log.info("Not logged in. Authenticating first...");
-    await login({ showNextSteps: false });
+    await login({ showNextSteps: false, claim });
   }
 }
 
@@ -231,5 +338,5 @@ export function registerLink(program: Program): void {
       { command: "clerk link", description: "Pick an app interactively" },
       { command: "clerk link --app app_abc123", description: "Link directly by application ID" },
     ])
-    .action(link);
+    .action(async (options: LinkOptions) => link({ ...options, claimKeylessApp: true }));
 }

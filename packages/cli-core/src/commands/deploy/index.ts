@@ -92,6 +92,7 @@ import {
   type LiveDeploySnapshot,
 } from "./status.ts";
 import { setTelemetryStage } from "../../lib/telemetry.ts";
+import { notLinkedMessage } from "../../lib/unlinked-advice.ts";
 import { resolveActiveReportState, type OAuthSetupFacts } from "./report-state.ts";
 import {
   recordDeployObservation,
@@ -163,10 +164,9 @@ export async function deploy(options: DeployOptions = {}) {
 async function runAgentDeploy(domain: string | undefined): Promise<void> {
   const ctx = await resolveDeployContext();
   if (!ctx.appId || !ctx.developmentInstanceId) {
-    throw new CliError(
-      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
+    throw new CliError(await notLinkedMessage(process.cwd(), "clerk deploy"), {
+      code: ERROR_CODE.NOT_LINKED,
+    });
   }
 
   if (!domain) {
@@ -316,10 +316,9 @@ function uncheckedDomainError(requested: string, entered = false): CliError {
 
 async function runDeploy(ctx: DeployContext, options: DeployOptions): Promise<void> {
   if (!ctx.appId || !ctx.developmentInstanceId) {
-    throw new CliError(
-      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.",
-      { code: ERROR_CODE.NOT_LINKED },
-    );
+    throw new CliError(await notLinkedMessage(process.cwd(), "clerk deploy"), {
+      code: ERROR_CODE.NOT_LINKED,
+    });
   }
 
   if (ctx.productionInstanceId) {

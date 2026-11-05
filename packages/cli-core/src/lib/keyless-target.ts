@@ -16,6 +16,7 @@ import { CliError, ERROR_CODE, throwUsageError } from "./errors.ts";
 import { decodePublishableKey } from "./fapi.ts";
 import { detectPublishableKeyName, detectSecretKeyName } from "./framework.ts";
 import { keylessCopy, type KeyAccess } from "./copy.ts";
+import { SDK_KEYLESS_FILE } from "./keyless.ts";
 import { log } from "./log.ts";
 
 export interface KeylessTarget {
@@ -40,13 +41,6 @@ export type InstanceTarget =
   | { kind: "keyless"; keyless: KeylessTarget; label: string };
 
 const ENV_FILES = [".env", ".env.local"];
-
-/**
- * Where the Clerk SDKs park the keys for a keyless app they created themselves
- * (running `next dev` with no keys configured). Shape:
- * `{ publishableKey, secretKey, claimUrl, apiKeysUrl }`.
- */
-const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
 
 /**
  * The `source` a key found in the SDK's own keyless file carries. Exported so
