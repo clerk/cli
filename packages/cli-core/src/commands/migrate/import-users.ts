@@ -615,7 +615,10 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   // Attach-only users count towards the bar too: a continue with only those
   // left would otherwise sit at 0/0.
   let attachedUsers = 0;
-  const progress = () => report?.({ done: processed + attachedUsers, ok: successful, failed });
+  // Of those, the ones whose identifiers all attached.
+  let finishedAttaching = 0;
+  const progress = () =>
+    report?.({ done: processed + attachedUsers, ok: successful + finishedAttaching, failed });
 
   const recordFailure = (
     userId: string,
@@ -647,6 +650,9 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   /**
    * Attaches a created user's extra identifiers. The user is already on record
    * with them `pending`, so a run stopped before they attach can finish them.
+   *
+   * @returns Whether every identifier this attempt tried attached: none
+   *   refused, none pending. `notes` from an earlier attempt don't count.
    */
   const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
     const { error: _error, pending: _pending, refused: earlier = [], ...base } = line;
@@ -668,6 +674,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         ...(attached.pending.length > 0 ? { pending: attached.pending } : {}),
       });
     }
+    return attached.pending.length === 0 && attached.notes.length === 0;
   };
 
   /**
@@ -820,10 +827,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     const earlier = (line.error ?? "")
       .split("; ")
       .filter((note) => note && !note.startsWith(NOT_ADDED_YET));
-    await finishUser(line, line.pending ?? [], earlier);
-    // Created by this run's earlier attempt, as an adopted user was: the bar,
-    // the summary and `result.created` all count it.
-    successful++;
+    if (await finishUser(line, line.pending ?? [], earlier)) {
+      finishedAttaching++;
+    }
+    // Created by this run's earlier attempt: done on the bar, but counted apart
+    // from the users this attempt creates.
     attachedUsers++;
     progress();
   };
@@ -841,6 +849,7 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   return {
     totalProcessed: total,
     successful,
+    attached: finishedAttaching,
     failed,
     notSent,
     ...(stopReason ? { stopReason } : {}),

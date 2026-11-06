@@ -918,16 +918,51 @@ describe("importUsers", () => {
       progress: ({ done, ok }) => reported.push({ done, ok }),
     });
 
-    // Created by the run's earlier attempt: the bar and the summary agree.
+    // Done on the bar, but created by the run's earlier attempt: the summary
+    // counts it as attached, not as imported again.
     expect(reported.at(-1)).toEqual({ done: 1, ok: 1 });
-    expect(summary.successful).toBe(1);
+    expect(summary).toMatchObject({ successful: 0, attached: 1 });
+  });
+
+  // One identifier attaches and the other stays pending: the user isn't finished.
+  test("an attach-only user with an identifier still pending is not counted as attached", async () => {
+    // No answer: left pending, with no note to say why.
+    stub((url) =>
+      url.endsWith("/v1/phone_numbers") ? clerkError(503, "unavailable") : ok("idn_1"),
+    );
+    const reported: { done: number; ok: number }[] = [];
+
+    const summary = await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          clerkId: "user_1",
+          status: "created",
+          pending: [
+            { kind: "email", value: "b@x.dev", verified: true },
+            { kind: "phone", value: "+15555550100", verified: false },
+          ],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      progress: ({ done, ok }) => reported.push({ done, ok }),
+    });
+
+    expect(summary).toMatchObject({ successful: 0, attached: 0 });
+    expect(reported.at(-1)).toEqual({ done: 1, ok: 0 });
+    expect(lines.at(-1)?.pending).toEqual([
+      { kind: "phone", value: "+15555550100", verified: false },
+    ]);
   });
 
   // The pending phone attaches now, but the email Clerk refused stays refused.
   test("an attach-only user keeps the error its earlier line recorded", async () => {
     stub(() => ok("idn_1"));
 
-    await importUsers({
+    const summary = await importUsers({
       users: [],
       attachOnly: [
         {
@@ -949,6 +984,8 @@ describe("importUsers", () => {
       error: "b@x.dev: That email address is taken.",
     });
     expect(lines.at(-1)?.pending).toBeUndefined();
+    // The earlier refusal was reported then. What was left to attach has now attached.
+    expect(summary.attached).toBe(1);
   });
 
   test("an adopted user is not created again; only its extras attach", async () => {

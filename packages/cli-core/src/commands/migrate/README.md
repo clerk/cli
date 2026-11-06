@@ -70,7 +70,8 @@ Every command follows these:
 
    A spinner takes the keyboard and exits 0 on Ctrl-C, so a script that deletes
    the export once the import succeeds would delete it after an interrupted
-   one. Without a terminal, the counts are printed at each 10%.
+   one. Without a terminal, the counts are printed at each 10%. A continue with
+   identifiers left to attach counts its users as finished rather than created.
 
 ## Targeting and auth
 
@@ -825,7 +826,9 @@ A continued run also finishes what the last one left open:
   all is it created.
 
 - A user whose `created` line has `pending` identifiers gets just those
-  attaches.
+  attaches. The run imported it before, so once every identifier left to
+  attach has attached, the summary counts it under "Finished attaching"
+  (`result.attached` in `--json`), not "Imported" (`result.created`).
 
 Every create sends the run's ID in the user's private metadata, as
 `clerkMigrateRun`, merged with any private metadata the source carries. It

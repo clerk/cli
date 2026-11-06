@@ -45,6 +45,12 @@ export type User = z.infer<typeof userSchema>;
 export type ImportSummary = {
   totalProcessed: number;
   successful: number;
+  /**
+   * Users the run's earlier attempt created whose remaining identifiers this
+   * one attached, every one of them: none it tried was refused, and none is
+   * left pending. Not in `successful`: they were imported before.
+   */
+  attached: number;
   failed: number;
   /**
    * Users never sent because a Ctrl-C or the instance's user quota stopped
