@@ -960,8 +960,8 @@ offer it for them. A fix that clears a reject, such as making a required name
 optional, counts the rejected users too. No fix counts a user that no setting
 would let in, such as a duplicate, a skipped user, one with a bad password
 hash, or one the user limit leaves out. A rejected user whose only username is
-one Clerk refuses gets no offer to turn usernames on, though doing that and
-then allowing numeric usernames can import them. When the instance settings
+numeric gets no offer to turn usernames on, though doing that and then allowing
+numeric usernames can import them. When the instance settings
 cannot be read (BAPI `/v1/domains` → the instance's
 Frontend API `/v1/environment`), required fields are not checked and the run
 says so. When a development instance's user count cannot be read, the run says
