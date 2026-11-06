@@ -1,0 +1,22 @@
+{
+  "name": "@clerk/cli-migrate-live-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test:migrate": "bun test-migrate.ts",
+    "test:migrate:all": "bash test-all.sh",
+    "test:custom": "bun test-custom-source.ts --all --sources-dir data/custom-sources-answers",
+    "teardown": "bun teardown.ts"
+  },
+  "devDependencies": {
+    "@clerk/backend": "3.17.0",
+    "@libsql/client": "0.18.0",
+    "@supabase/supabase-js": "2.112.4",
+    "@types/bcryptjs": "3.0.0",
+    "@workos-inc/node": "10.13.0",
+    "bcryptjs": "3.0.3",
+    "better-auth": "1.7.2",
+    "firebase-admin": "13.10.0",
+    "libphonenumber-js": "1.13.14"
+  }
+}

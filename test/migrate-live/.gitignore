@@ -1,0 +1,5 @@
+node_modules/
+test-results/
+clerk-runs/
+data/.locks/
+.clerk/
