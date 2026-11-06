@@ -497,11 +497,18 @@ export function undosOf(runs: RunRecord[], importId: string): RunRecord[] {
   return runs.filter((record) => record.kind === "undo" && record.undoes === importId);
 }
 
-/** True when a run's users are gone: it is marked undone, or an undo of it finished. */
-export function undoneInFull(runsDir: string, record: RunRecord): boolean {
+/**
+ * True when a run's users are gone: it is marked undone, or an undo of it
+ * finished. `runs` is the caller's `listRuns`, when it has one already.
+ */
+export function undoneInFull(
+  runsDir: string,
+  record: RunRecord,
+  runs = listRuns(runsDir),
+): boolean {
   return (
     runState(runsDir, record) === "undone" ||
-    undosOf(listRuns(runsDir), record.id).some((undo) => runState(runsDir, undo) === "complete")
+    undosOf(runs, record.id).some((undo) => runState(runsDir, undo) === "complete")
   );
 }
 

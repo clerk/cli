@@ -245,28 +245,81 @@ function printList(runsDir: string, records: RunRecord[]): void {
   log.info(dim(plural(records.length, "run")));
 }
 
+/**
+ * The users an undo of this import deleted. Undo writes its `deleted` lines to
+ * its own run: such a user is gone, whatever the import's last line says.
+ */
+function deletedByUndo(runsDir: string, records: RunRecord[], importId: string): Set<string> {
+  return new Set(
+    undosOf(records, importId).flatMap((undo) =>
+      [...latestUserLines(runsDir, undo.id).values()]
+        .filter((line) => line.status === "deleted")
+        .map((line) => line.sourceId),
+    ),
+  );
+}
+
+/**
+ * The run with the counts `runs` shows, which follow its lists: a user an undo
+ * deleted leaves the not-confirmed and left-to-attach counts, and once the run
+ * is undone in full, both are zero. An unconfirmed user an undo deleted was
+ * found by the run's marker, so the import did create it: it counts as created.
+ */
+function shownRun(runsDir: string, record: RunRecord, records: RunRecord[]): RunRecord {
+  const live = withLiveCounts(runsDir, record);
+  const deleted = deletedByUndo(runsDir, records, record.id);
+  const inFull = undoneInFull(runsDir, record, records);
+  if (deleted.size === 0 && !inFull) return live;
+  const lines = [...latestUserLines(runsDir, record.id).values()];
+  const kept = inFull ? [] : lines.filter((line) => !deleted.has(line.sourceId));
+  const creating = kept.filter((line) => line.status === "creating").length;
+  const pending = kept.filter(
+    (line) => line.status === "created" && (line.pending?.length ?? 0) > 0,
+  ).length;
+  const adopted = lines.filter(
+    (line) => line.status === "creating" && deleted.has(line.sourceId),
+  ).length;
+  const { creating: _creating, pending: _pending, ...counts } = live.counts;
+  return {
+    ...live,
+    counts: {
+      ...counts,
+      created: (counts.created ?? 0) + adopted,
+      ...(creating > 0 ? { creating } : {}),
+      ...(pending > 0 ? { pending } : {}),
+    },
+  };
+}
+
 /** One run in full: `--json` prints it, and `printRun` renders it. */
 function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const lines = [...latestUserLines(runsDir, record.id).values()];
   const state = runState(runsDir, record);
   // The undo's `deleted` lines are its own run's: these users are gone, so
-  // nothing they were imported without is worth a warning.
-  const created = undoneInFull(runsDir, record)
-    ? []
-    : lines.filter((line) => line.status === "created");
+  // nothing they were imported without is worth a warning. Once the run is
+  // undone in full, no user with the marker is left: undo looked up each
+  // in-flight one by the run's marker and deleted what it found.
+  const inFull = undoneInFull(runsDir, record);
+  const deleted = deletedByUndo(runsDir, listRuns(runsDir), record.id);
+  const left = (status: UserLine["status"]) =>
+    inFull ? [] : lines.filter((line) => line.status === status && !deleted.has(line.sourceId));
+  const created = left("created");
+  const unconfirmed = left("creating");
+  const failed = lines.filter((line) => line.status === "failed");
   return {
     runsDir,
     run: { ...record, state },
     next: nextCommands(runsDir, record, state, carry, lines),
-    errors: errorBreakdown(lines),
+    // Only the unconfirmed users still listed: for the rest, "a re-run checks" no longer holds.
+    errors: errorBreakdown([...failed, ...unconfirmed]),
     warnings: warningBreakdown(created),
-    failed: lines.filter((line) => line.status === "failed"),
+    failed,
     importedWithout: created.filter(
       (line) => line.phoneRefused !== undefined || (line.refused?.length ?? 0) > 0,
     ),
     leftToAttach: created.filter((line) => (line.pending?.length ?? 0) > 0),
     skipped: lines.filter((line) => line.status === "skipped"),
-    unconfirmed: lines.filter((line) => line.status === "creating"),
+    unconfirmed,
   };
 }
 
@@ -327,8 +380,10 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
   printUsers("Failed", view.failed, usersFile);
   printUsers("Imported without an email or phone Clerk refused", view.importedWithout, usersFile);
   printUsers("Identifiers left to attach", view.leftToAttach, usersFile);
+  // A run with an undo is not continued: undoing again looks them up.
+  const checks = undosOf(listRuns(runsDir), record.id).length > 0 ? "the undo" : "a continue";
   printUsers(
-    "Not confirmed (Clerk may have created them; a continue checks)",
+    `Not confirmed (Clerk may have created them; ${checks} checks)`,
     view.unconfirmed,
     usersFile,
   );
@@ -342,8 +397,9 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
 export async function runs(id: string | undefined, options: RunsOptions = {}): Promise<void> {
   const runsDir = await resolveRunsDir(options.runsDir);
 
+  const all = listRuns(runsDir);
   if (id === undefined) {
-    const records = listRuns(runsDir).map((record) => withLiveCounts(runsDir, record));
+    const records = all.map((record) => shownRun(runsDir, record, all));
     if (options.json) log.data(JSON.stringify(listJson(runsDir, records), null, 2));
     else printList(runsDir, records);
     return;
@@ -351,7 +407,7 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
 
   const stored = readRun(runsDir, id);
   if (!stored) throwUsageError(noRunMessage(runsDir, id, carryFlags({ runsDir: options.runsDir })));
-  const record = withLiveCounts(runsDir, stored);
+  const record = shownRun(runsDir, stored, all);
   recordMigrateSource(record.source, { custom: Boolean(record.sourceHash) });
   recordMigrateTarget(record.target);
 
