@@ -1056,10 +1056,10 @@ users that failed, were skipped, or are `creating` with no answer to confirm the
 create (`unconfirmed` in `--json`). It also warns about users imported without
 their phone, or an email or phone Clerk refused (`warnings` and
 `importedWithout` in `--json`), and lists users with identifiers left to attach
-and why (`leftToAttach`). The unconfirmed users, the warnings and the users
+and why (`leftToAttach`). The unconfirmed users, the warnings, and the users
 left to attach leave out anyone an undo of the run deleted, and are empty once
-the run is undone in full, and so do their counts (not confirmed, left to
-attach) in `runs <id>` and the listing. There, an unconfirmed user an undo
+the run is undone in full. The not-confirmed and left-to-attach counts in
+`runs <id>` and the listing follow them. There, an unconfirmed user an undo
 deleted counts as created rather than not confirmed. The error breakdown leaves
 out the unconfirmed users that aren't listed.
 Then it prints the path to the full record, and what

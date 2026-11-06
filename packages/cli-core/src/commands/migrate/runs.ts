@@ -297,8 +297,8 @@ function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const state = runState(runsDir, record);
   // The undo's `deleted` lines are its own run's: these users are gone, so
   // nothing they were imported without is worth a warning. Once the run is
-  // undone in full, no user is left: undo looked up each in-flight one by the
-  // run's marker and deleted what it found.
+  // undone in full, no user with the marker is left: undo looked up each
+  // in-flight one by the run's marker and deleted what it found.
   const inFull = undoneInFull(runsDir, record);
   const deleted = deletedByUndo(runsDir, listRuns(runsDir), record.id);
   const left = (status: UserLine["status"]) =>
