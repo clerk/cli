@@ -1170,6 +1170,114 @@ describe("warnings", () => {
     expect(checks.fixes.map((fix) => fix.label)).toEqual(["Enable First name"]);
   });
 
+  // A rejected user brings no name across, so turning names on helps nobody.
+  test("names no fix for a name only rejected users carry", async () => {
+    const checks = await checkImport(
+      input({
+        settings: bare({
+          email_address: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          password: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          first_name: { enabled: false },
+        }),
+        users: [user("a", { firstName: "Ada" })],
+      }),
+    );
+    expect(checks.rejects).toEqual([
+      { sourceId: "a", reason: "no password, and password is this instance's only way to sign in" },
+    ]);
+    expect(checks.warnings).toEqual([]);
+    expect(checks.fixes).toEqual([]);
+  });
+
+  // A required name rejects the users without one, and making it optional
+  // clears that reject, so the fix counts them.
+  test("still offers to make a required name optional for the users it rejects", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({
+          email_address: { enabled: true },
+          first_name: { enabled: true, required: true },
+        }),
+        users: [user("a"), user("b", { firstName: "Ada" })],
+      }),
+    );
+    expect(checks.rejects).toEqual([
+      { sourceId: "a", reason: "no first name, which this instance requires" },
+    ]);
+    expect(checks.fixes.map((fix) => fix.label)).toEqual(["Make First name optional at sign-up"]);
+  });
+
+  // Turning passwords on keeps a password, but a rejected user brings none.
+  test("names no password fix for a password only rejected users carry", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({
+          email_address: { enabled: true },
+          phone_number: { enabled: true, required: true },
+          password: { enabled: false },
+        }),
+        users: [user("a", { password: BCRYPT, passwordHasher: "bcrypt" })],
+      }),
+    );
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["a"]);
+    expect(checks.fixes.map((fix) => fix.label)).toEqual(["Make Phone optional at sign-up"]);
+  });
+
+  // Clerk stores a username with usernames off, so turning them on only keeps
+  // it, and a rejected user brings none across.
+  test("names no username fix for a username only rejected users carry", async () => {
+    const checks = await checkImport(
+      input({
+        settings: bare({
+          email_address: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          password: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          username: { enabled: false },
+        }),
+        users: [user("a", { username: "ada" })],
+      }),
+    );
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["a"]);
+    expect(checks.fixes).toEqual([]);
+  });
+
+  // Turning authenticator apps on clears the TOTP reject, but the user is
+  // still stopped by something no setting clears, so it imports nobody.
+  test.each([
+    ["a bad hash", { password: "x", passwordHasher: "bcrypt" }],
+    ["a skip reason", { skipReason: "anonymous Better Auth user" }],
+    ["only emails Clerk refuses", { email: "15551234@phone.local" }],
+  ] as const)("names no fix for a user with %s", async (_, fields) => {
+    const checks = await checkImport(
+      input({
+        settings: settings({
+          email_address: { enabled: true },
+          authenticator_app: { enabled: false },
+        }),
+        users: [user("a", { totpSecret: "SECRET", ...fields })],
+      }),
+    );
+    expect(checks.fixes).toEqual([]);
+  });
+
+  // "a" fills the one place left, so its phone still earns a fix. Turning
+  // authenticator apps on would clear the reject of "b", who has no room.
+  test("names no fix for users the user limit leaves out", async () => {
+    const checks = await checkImport(
+      input({
+        maxAllowedUsers: 2,
+        existingUsers: 1,
+        settings: settings({
+          email_address: { enabled: true },
+          phone_number: { enabled: false },
+          authenticator_app: { enabled: false },
+        }),
+        users: [user("a", { phone: "+15555550100" }), user("b", { totpSecret: "SECRET" })],
+      }),
+    );
+    expect(checks.rejects.map((reject) => reject.sourceId).sort()).toEqual(["b"]);
+    expect(checks.fixes.map((fix) => fix.label)).toEqual(["Enable Phone"]);
+  });
+
   test("says a password is kept, not dropped, when passwords are off", async () => {
     const checks = await checkImport(
       input({

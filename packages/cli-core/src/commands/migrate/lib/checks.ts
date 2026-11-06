@@ -35,7 +35,7 @@ import {
 } from "./clerk-config.ts";
 import { resolveUserLimit, type UserLimitSource } from "./instance.ts";
 import { buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
-import { acceptsIdentifier, buildReadinessReport } from "./readiness.ts";
+import { acceptsIdentifier, buildReadinessReport, type ReadinessItem } from "./readiness.ts";
 import type { ApiScheduler } from "./scheduler.ts";
 import {
   countSocialProviders,
@@ -926,8 +926,13 @@ function quoteJson(payload: unknown): string {
  *
  * These are offers, not corrections: an instance that requires an email is
  * configured as its owner intended, and fixing the export may be the answer.
+ *
+ * @param users - Everyone a fix could clear a reject for.
+ * @param importable - The users the import sends: a name, username or
+ *   password only rejected users carry isn't brought across, so a fix that
+ *   keeps it helps nobody.
  */
-function buildFixes(input: CheckInput, users: User[]): Fix[] {
+function buildFixes(input: CheckInput, users: User[], importable: User[]): Fix[] {
   if (!input.settings || users.length === 0) return [];
 
   const report = buildReadinessReport({
@@ -945,7 +950,22 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
       const identifiers = splitIdentifiers(user);
       return !identifiers.primaryEmail && identifiers.unverifiedEmails.length > 0;
     });
-  const flagged = report.blocking.slice();
+  // A name, username or password row that isn't a reject only keeps data:
+  // what a rejected user carries isn't brought across, so only the users the
+  // import sends count for it. A row that rejects (a required name) counts
+  // everyone.
+  // ponytail: turning usernames on can be the first of two fixes for a
+  // refused numeric username; counting that case needs the username fixes'
+  // own rules here.
+  const keepsData = (item: ReadinessItem) =>
+    item.consequence !== "rejects" &&
+    (item.section === "model" || item.section === "auth" || item.key === "username");
+  const kept = new Set(
+    buildReadinessReport({ analysis: analyzeFields(importable), settings: input.settings })
+      .blocking.filter(keepsData)
+      .map((item) => item.key),
+  );
+  const flagged = report.blocking.filter((item) => !keepsData(item) || kept.has(item.key));
   if (
     unverifiedOnly &&
     isRequired(input.settings, "email_address") &&
@@ -1116,6 +1136,11 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const refusedUsernames = new Set<string>();
   const loosePhoneUsers = new Set<string>();
   const loosePhones = loosePhoneCount(input.users, input.settings);
+  // Users no setting would let in, who earn no fix: a duplicate, one whose own
+  // record stops it, or one the user limit leaves out. A record is checked
+  // apart from the reason shown, since a fix for that one would not import a
+  // user the next one still stops.
+  const unfixable = new Set<User>();
   for (const original of input.users) {
     const named = dropRefusedNames(original);
     if (named.dropped) refusedNames.add(original.userId);
@@ -1135,6 +1160,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       user.password && user.passwordHasher
         ? hashShapeProblem(user.password, user.passwordHasher)
         : undefined;
+    if (!adopted(original) && (original.skipReason || refusedOnly || hashProblem))
+      unfixable.add(original);
     const reserve = reservesFor(input)(user);
     const reason = adopted(original)
       ? undefined
@@ -1182,8 +1209,6 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     }
   }
 
-  // No setting would let a duplicate in, so none earns a fix.
-  const duplicates = new Set<User>();
   // An adopted user already holds its email, phone and username in Clerk, so
   // it claims them first, wherever it sits in the file: a fresh record sharing
   // one is the create Clerk would refuse, and is not kept in its place.
@@ -1202,7 +1227,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         keptSourceId: holder,
         inFile: true,
       });
-      duplicates.add(originals.get(user) ?? user);
+      unfixable.add(originals.get(user) ?? user);
       continue;
     }
     // An adopted user is in Clerk already, so an earlier record sharing its
@@ -1217,7 +1242,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         ...(kept ? { keptSourceId: kept } : {}),
         inFile: true,
       });
-      duplicates.add(originals.get(user) ?? user);
+      unfixable.add(originals.get(user) ?? user);
     } else candidates.push(user);
   }
 
@@ -1230,7 +1255,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const reason = adopted(user) ? undefined : instanceDuplicates.get(user.userId);
     if (reason) {
       rejects.push({ sourceId: user.userId, reason });
-      duplicates.add(originals.get(user) ?? user);
+      unfixable.add(originals.get(user) ?? user);
     } else unique.push(user);
   }
   candidates = unique;
@@ -1248,6 +1273,12 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const fresh = candidates.filter((user) => !adopted(user));
     const over = Math.max(0, fresh.length - headroom);
     quota = { existing: input.existingUsers ?? null, limit, limitSource, headroom, over };
+    // Once the users that fit fill the room left, no setting lets another
+    // new user in.
+    if (fresh.length >= headroom) {
+      const fits = new Set(fresh.slice(0, headroom).map((user) => originals.get(user) ?? user));
+      for (const user of input.users) if (!adopted(user) && !fits.has(user)) unfixable.add(user);
+    }
     if (over > 0) {
       // Clerk's own refusal names the same fix: a paid plan in production.
       const reason =
@@ -1262,6 +1293,9 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     }
   }
 
+  // The users the import sends, with the fields a disabled setting strips put
+  // back, so the warnings and fixes can name what would be lost.
+  const unstrippedImportable = candidates.map((user) => unstripped.get(user) ?? user);
   return {
     total: input.users.length + input.failures.length,
     importable: candidates.map((user) =>
@@ -1272,10 +1306,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     skipped,
     skippedReasons: countReasons(skipped),
     warnings: [
-      ...buildWarnings(
-        input,
-        candidates.map((user) => unstripped.get(user) ?? user),
-      ),
+      ...buildWarnings(input, unstrippedImportable),
       ...placeholderWarning(candidates.filter((user) => placeholderEmails.has(user.userId)).length),
       ...refusedNameWarning(candidates.filter((user) => refusedNames.has(user.userId)).length),
       ...refusedUsernameWarning(
@@ -1295,7 +1326,8 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     ],
     fixes: buildFixes(
       input,
-      input.users.filter((user) => !duplicates.has(user)),
+      input.users.filter((user) => !unfixable.has(user)),
+      unstrippedImportable,
     ),
     ...(quota ? { quota } : {}),
     settingsUnavailable: input.settings === null,
