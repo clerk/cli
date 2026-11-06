@@ -1,0 +1,19 @@
+{
+  "pool": [
+    {
+      "name": "pool-1",
+      "keyEnv": "CLERK_POOL_1_SECRET_KEY",
+      "appEnv": "CLERK_POOL_1_APP_ID"
+    }
+  ],
+  "source": {
+    "name": "source",
+    "keyEnv": "CLERK_SOURCE_SECRET_KEY",
+    "appEnv": "CLERK_EVALS_SOURCE_APP_ID"
+  },
+  "migrate": {
+    "name": "migrate",
+    "keyEnv": "CLERK_MIGRATE_TESTS_1_SECRET_KEY",
+    "appEnv": "CLERK_MIGRATE_TESTS_1_APP_ID"
+  }
+}
