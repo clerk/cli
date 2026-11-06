@@ -70,7 +70,8 @@ Every command follows these:
 
    A spinner takes the keyboard and exits 0 on Ctrl-C, so a script that deletes
    the export once the import succeeds would delete it after an interrupted
-   one. Without a terminal, the counts are printed at each 10%.
+   one. Without a terminal, the counts are printed at each 10%. A continue with
+   identifiers left to attach counts its users as finished rather than created.
 
 ## Targeting and auth
 

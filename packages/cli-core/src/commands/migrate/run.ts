@@ -1584,7 +1584,12 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       const summary: ImportSummary =
         checks.importable.length > 0 || attachOnly.length > 0
           ? await withProgress(
-              { total: checks.importable.length + attachOnly.length, verb: "created" },
+              {
+                total: checks.importable.length + attachOnly.length,
+                // An attach-only user isn't created, so "created" would
+                // contradict "Imported" in the summary.
+                verb: attachOnly.length > 0 ? "finished" : "created",
+              },
               async (progress) =>
                 importUsers({
                   users: checks.importable,

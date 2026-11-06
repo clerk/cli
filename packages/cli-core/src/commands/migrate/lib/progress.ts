@@ -20,7 +20,7 @@ export type ProgressUpdate = (counts: ProgressCounts) => void;
 
 type ProgressLine = {
   total: number;
-  /** What happened to the users counted in `ok`: "created", "deleted". */
+  /** What happened to the users counted in `ok`: "created", "finished", "deleted". */
   verb: string;
   counts: ProgressCounts;
   elapsedMs: number;
