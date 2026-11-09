@@ -150,17 +150,28 @@ describe("logs list", () => {
     expect(JSON.parse(captured.out).cursor.next).toBeNull();
   });
 
-  test("returns the cursor to continue from after the request budget runs out", async () => {
+  test("stops with an error when the API repeats the cursor it was given", async () => {
     mockBapiRequest.mockResolvedValue(
-      page([], { next_page_status: "unknown", starting_after: "cur_older" }),
+      page([], { next_page_status: "unknown", starting_after: "cur_stuck" }),
     );
+
+    await expect(list({ json: true, cursor: "cur_stuck" })).rejects.toThrow("same cursor twice");
+    expect(mockBapiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test("returns the cursor to continue from after the request budget runs out", async () => {
+    let request = 0;
+    mockBapiRequest.mockImplementation(async () => {
+      request += 1;
+      return page([], { next_page_status: "unknown", starting_after: `cur_${request}` });
+    });
 
     await list({ json: true });
 
     expect(mockBapiRequest).toHaveBeenCalledTimes(MAX_REQUESTS);
     const output = JSON.parse(captured.out);
     expect(output.data).toEqual([]);
-    expect(output.cursor.next).toBe("cur_older");
+    expect(output.cursor.next).toBe(`cur_${MAX_REQUESTS}`);
   });
 
   test("prints a { data, cursor } envelope with the searched range and retention", async () => {

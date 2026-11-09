@@ -42,7 +42,13 @@ afterAll(async () => {
 }, 60_000);
 
 type ListOutput = {
-  data: Array<{ object: unknown; id: unknown; event_time: unknown; type: unknown }>;
+  data: Array<{
+    object: unknown;
+    id: unknown;
+    event_time: unknown;
+    type: unknown;
+    subject: unknown;
+  }>;
   cursor: {
     next: unknown;
     retention_limit_reached: unknown;
@@ -55,15 +61,22 @@ test("logs list --json returns a { data, cursor } envelope around the BAPI logs"
   const user = await createTestUser(configDir, { appId: APP_ID });
   userId = user.id;
 
+  const isUserCreated = (entry: ListOutput["data"][number]) =>
+    entry.type === "user.created" && entry.subject === user.id;
+
   // Logs reach ClickHouse through the event stream pipeline, so the new
-  // user's log can take a few seconds to show up.
+  // user's log can take a few seconds to show up. A failed run (a transient
+  // API error or rate limit) is retried the same way.
   let output: ListOutput | undefined;
   for (let attempt = 0; attempt < 10; attempt++) {
     const result = await Bun.$`bun ${CLI_PATH} logs list --json --limit 100 --app ${APP_ID}`
       .env({ ...process.env, CLERK_CONFIG_DIR: configDir, CLERK_TELEMETRY_DISABLED: "1" })
+      .nothrow()
       .quiet();
-    output = JSON.parse(result.stdout.toString()) as ListOutput;
-    if (output.data.some((entry) => entry.type === "user.created")) break;
+    if (result.exitCode === 0) {
+      output = JSON.parse(result.stdout.toString()) as ListOutput;
+      if (output.data.some(isUserCreated)) break;
+    }
     await Bun.sleep(3_000);
   }
 
@@ -80,7 +93,7 @@ test("logs list --json returns a { data, cursor } envelope around the BAPI logs"
         typeof entry.type === "string",
     ),
   ).toBe(true);
-  expect(output!.data.some((entry) => entry.type === "user.created")).toBe(true);
+  expect(output!.data.some(isUserCreated)).toBe(true);
 
   const times = output!.data.map((entry) => entry.event_time as number);
   expect(times).toEqual([...times].sort((a, b) => b - a));

@@ -11,7 +11,7 @@
 
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bold, cyan, dim } from "../../lib/color.ts";
-import { withApiContext } from "../../lib/errors.ts";
+import { CliError, withApiContext } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { closeStatusForError } from "../../lib/signals.ts";
 import { intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
@@ -80,8 +80,14 @@ async function fetchLogs(
     last = page.cursor ?? {};
     first ??= last;
 
-    startingAfter = last.starting_after ?? undefined;
-    if (last.next_page_status === "false" || !startingAfter) break;
+    const next = last.starting_after ?? undefined;
+    if (last.next_page_status === "false" || !next) break;
+    // A cursor that doesn't move would repeat the same request until the
+    // budget runs out and hand back a `next` that goes nowhere.
+    if (next === startingAfter) {
+      throw new CliError("The Logs API returned the same cursor twice, so paging can't continue.");
+    }
+    startingAfter = next;
   }
 
   const exhausted = !last || last.next_page_status === "false" || !last.starting_after;
