@@ -60,6 +60,22 @@ describe("bapi", () => {
     expect(capturedHeaders?.get("Authorization")).toBe("Bearer sk_test_abc");
   });
 
+  test("sends Clerk-API-Version only when apiVersion is set", async () => {
+    const versions: Array<string | null> = [];
+    stubFetch(async (_input, init) => {
+      versions.push(new Headers(init?.headers).get("Clerk-API-Version"));
+      return new Response(JSON.stringify({}), { status: 200 });
+    });
+    await bapiRequest({ method: "GET", path: "/logs", secretKey: "sk_test_abc" });
+    await bapiRequest({
+      method: "GET",
+      path: "/logs",
+      secretKey: "sk_test_abc",
+      apiVersion: "2026-08-20",
+    });
+    expect(versions).toEqual([null, "2026-08-20"]);
+  });
+
   test("sends Content-Type header when body is present", async () => {
     let capturedHeaders: Headers | undefined;
     stubFetch(async (_input, init) => {
