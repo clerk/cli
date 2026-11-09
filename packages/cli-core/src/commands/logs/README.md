@@ -36,15 +36,29 @@ List logs, newest first. `list` is the default subcommand, so `clerk logs` on it
 ```sh
 clerk logs
 clerk logs list --limit 200
+clerk logs --since 1h
+clerk logs --from 2026-11-01 --to 2026-11-02T12:00
 clerk logs list --cursor <cursor>
 clerk logs list --app app_123 --instance prod --json
 ```
 
-| Option              | Description                                     |
-| ------------------- | ----------------------------------------------- |
-| `--limit <number>`  | Maximum logs to return, 1-500 (default 50)      |
-| `--cursor <cursor>` | Continue from the cursor a previous run printed |
-| `--json`            | Output as JSON (implied in agent mode)          |
+| Option               | Description                                     |
+| -------------------- | ----------------------------------------------- |
+| `--limit <number>`   | Maximum logs to return, 1-500 (default 50)      |
+| `--cursor <cursor>`  | Continue from the cursor a previous run printed |
+| `--since <duration>` | Only logs from the last duration                |
+| `--from <timestamp>` | Only logs at or after a time                    |
+| `--to <timestamp>`   | Only logs at or before a time                   |
+| `--json`             | Output as JSON (implied in agent mode)          |
+
+#### Time range
+
+- `--since <duration>`: a number followed by `s`, `m`, `h`, `d` or `w`, combinable (`30m`, `2h`, `7d`, `1h30m`). Sent as `event_time_after = now - duration`.
+- `--from <timestamp>` / `--to <timestamp>`: sent as `event_time_after` / `event_time_before`, both inclusive. A timestamp is an ISO 8601 date-time (`2026-11-09T15:30:00Z`, `2026-11-09T10:30:00-05:00`; read as UTC when it has no offset, so a command means the same on any machine), a date (`2026-11-09`, midnight UTC) or Unix milliseconds.
+- `--since` and `--from` can't be combined; `--to` works with either. A range that starts after `--to` is a usage error, raised before any request.
+- Without a time flag the API returns the newest logs within the plan's retention. It also raises a start older than the retention floor to the floor, which the retention warning reports.
+
+#### Paging
 
 The API scans one time window per request, sized from the instance's event rate, so a page can come back short or even empty while older logs remain (`next_page_status: "unknown"`). The command keeps requesting pages until it has `--limit` logs or the API reports there are no more, up to 50 requests per run; past that it returns what it has and the cursor to continue from. An empty window never reads as "no logs". If a request fails after some logs were already fetched, the command still prints them, with `cursor.next` set to the page that failed, warns that listing stopped early, and exits with the error; `--cursor <next>` retries that page.
 

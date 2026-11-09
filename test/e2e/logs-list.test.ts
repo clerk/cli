@@ -109,3 +109,24 @@ test("logs list --json returns a { data, cursor } envelope around the BAPI logs"
   expect(typeof cursor.searched_from).toBe("number");
   expect(typeof cursor.searched_to).toBe("number");
 }, 90_000);
+
+// Runs after the test above, so the new user's log is already queryable.
+test("logs list --since keeps every log inside the window", async () => {
+  const windowStart = Date.now() - 60 * 60 * 1_000;
+  const result =
+    await Bun.$`bun ${CLI_PATH} logs list --json --since 1h --limit 100 --app ${APP_ID}`
+      .env({
+        ...process.env,
+        CLERK_CONFIG_DIR: configDir,
+        CLERK_TELEMETRY_DISABLED: "1",
+        CLERK_EXPERIMENTAL: "logs",
+      })
+      .quiet();
+  const output = JSON.parse(result.stdout.toString()) as ListOutput;
+
+  expect(output.data.length).toBeGreaterThan(0);
+  // The CLI computes the bound a moment after windowStart, so every log is at
+  // or after it.
+  expect(output.data.every((entry) => (entry.event_time as number) >= windowStart)).toBe(true);
+  expect(output.cursor.searched_from as number).toBeGreaterThanOrEqual(windowStart);
+}, 60_000);
