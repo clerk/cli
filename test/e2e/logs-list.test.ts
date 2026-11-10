@@ -70,7 +70,12 @@ test("logs list --json returns a { data, cursor } envelope around the BAPI logs"
   let output: ListOutput | undefined;
   for (let attempt = 0; attempt < 10; attempt++) {
     const result = await Bun.$`bun ${CLI_PATH} logs list --json --limit 100 --app ${APP_ID}`
-      .env({ ...process.env, CLERK_CONFIG_DIR: configDir, CLERK_TELEMETRY_DISABLED: "1" })
+      .env({
+        ...process.env,
+        CLERK_CONFIG_DIR: configDir,
+        CLERK_TELEMETRY_DISABLED: "1",
+        CLERK_EXPERIMENTAL: "logs",
+      })
       .nothrow()
       .quiet();
     if (result.exitCode === 0) {

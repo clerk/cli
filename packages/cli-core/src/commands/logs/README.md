@@ -1,5 +1,16 @@
 # `clerk logs`
 
+> **Experimental.** `clerk logs` is hidden from help and completion, and
+> refuses to run (exit 2, `experiment_disabled`), unless `CLERK_EXPERIMENTAL`
+> includes `logs`:
+>
+> ```sh
+> CLERK_EXPERIMENTAL=logs clerk logs list --help
+> ```
+>
+> `CLERK_EXPERIMENTAL` is a comma-separated list. Names are trimmed and
+> case-insensitive, and unknown names are ignored.
+
 Read an instance's [Application Logs](https://clerk.com/docs/guides/dashboard/logs/application-logs) from the Backend API: sign-ins, sign-ups, user and session changes, and the rest of the events Clerk records for the instance.
 
 ## Shared targeting and auth
