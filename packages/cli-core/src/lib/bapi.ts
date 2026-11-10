@@ -14,6 +14,8 @@ export async function bapiRequest(options: {
   secretKey: string;
   body?: string;
   baseUrl?: string;
+  /** Pins the response shape with a `Clerk-API-Version` header. Omitted, BAPI uses its default. */
+  apiVersion?: string;
 }): Promise<ApiResponse> {
   const base = options.baseUrl ?? getBapiBaseUrl();
   const path = normalizeBapiPath(options.path);
@@ -27,6 +29,10 @@ export async function bapiRequest(options: {
 
   if (options.body) {
     headers["Content-Type"] = "application/json";
+  }
+
+  if (options.apiVersion) {
+    headers["Clerk-API-Version"] = options.apiVersion;
   }
 
   const response = await loggedFetch(url, {
