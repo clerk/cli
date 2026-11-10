@@ -87,7 +87,15 @@ async function fetchLogs(
         logsRequest(buildListPath(pageSize, startingAfter), secretKey),
         "Failed to list logs",
       );
-      page = response.body as LogListPage;
+      // `bapiRequest` hands back the raw text when the body isn't JSON, and
+      // null for a literal `null`. Treat either as a failed request so the
+      // logs already in hand are kept instead of crashing or reading as "no
+      // more logs".
+      const body = response.body;
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        throw new CliError("The Logs API returned an unexpected response.");
+      }
+      page = body as LogListPage;
     } catch (error) {
       if (data.length === 0) throw error;
       return { result: toResult(data, first, last, startingAfter ?? null), error };

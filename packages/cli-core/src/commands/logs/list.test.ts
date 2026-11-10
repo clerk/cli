@@ -294,6 +294,48 @@ describe("logs list", () => {
     expect(requestedUrl(1).searchParams.get("starting_after")).toBe("cur_1");
   });
 
+  const malformedBodies = [
+    { label: "null", body: null },
+    { label: "a string", body: "<html>" },
+    { label: "an array", body: [makeLog("log_x")] },
+  ];
+
+  test.each(malformedBodies)(
+    "keeps the logs already fetched when a later page's body is $label",
+    async ({ body }) => {
+      mockBapiRequest
+        .mockResolvedValueOnce(
+          page([makeLog("log_1")], { next_page_status: "unknown", starting_after: "cur_1" }),
+        )
+        .mockResolvedValueOnce({ status: 200, headers: new Headers(), body, rawBody: "" });
+
+      await expect(list({ json: true, limit: 5 })).rejects.toThrow(
+        "The Logs API returned an unexpected response.",
+      );
+
+      const output = JSON.parse(captured.out);
+      expect(output.data.map((entry: { id: string }) => entry.id)).toEqual(["log_1"]);
+      expect(output.cursor.next).toBe("cur_1");
+    },
+  );
+
+  test.each(malformedBodies)(
+    "fails without printing data when the first page's body is $label",
+    async ({ body }) => {
+      mockBapiRequest.mockResolvedValueOnce({
+        status: 200,
+        headers: new Headers(),
+        body,
+        rawBody: "",
+      });
+
+      await expect(list({ json: true })).rejects.toThrow(
+        "The Logs API returned an unexpected response.",
+      );
+      expect(captured.out).toBe("");
+    },
+  );
+
   test("prints the table and a warning when a later page fails", async () => {
     mockBapiRequest
       .mockResolvedValueOnce(
