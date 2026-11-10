@@ -26,10 +26,12 @@ import {
   type LogListPage,
   type LogsTargetingOptions,
 } from "./shared.ts";
+import { resolveFilters, type LogFilterOptions, type LogFilters } from "./filters.ts";
 import { resolveTimeRange, type TimeRangeOptions } from "./time.ts";
 
 export type LogsListOptions = LogsTargetingOptions &
-  TimeRangeOptions & {
+  TimeRangeOptions &
+  LogFilterOptions & {
     limit?: number;
     cursor?: string;
   };
@@ -60,10 +62,18 @@ const MAX_PAGE_SIZE = 500;
  */
 export const MAX_REQUESTS = 50;
 
-function buildListPath(limit: number, startingAfter: string | undefined, range: TimeRange): string {
+/** What every request of a run filters on: the time range and the event filters. */
+type ListQuery = { range: TimeRange; filters: LogFilters };
+
+function buildListPath(
+  limit: number,
+  startingAfter: string | undefined,
+  { range, filters }: ListQuery,
+): string {
   const params = new URLSearchParams({ view: "flat", limit: String(limit) });
   if (range.after !== undefined) params.set("event_time_after", String(range.after));
   if (range.before !== undefined) params.set("event_time_before", String(range.before));
+  for (const [name, value] of filters) params.append(name, value);
   if (startingAfter) params.set("starting_after", startingAfter);
   return `/logs?${params}`;
 }
@@ -80,7 +90,7 @@ async function fetchLogs(
   secretKey: string,
   limit: number,
   cursor: string | undefined,
-  range: TimeRange,
+  query: ListQuery,
 ): Promise<FetchLogsOutcome> {
   const data: Log[] = [];
   let startingAfter = cursor;
@@ -92,7 +102,7 @@ async function fetchLogs(
     let page: LogListPage;
     try {
       const response = await withApiContext(
-        logsRequest(buildListPath(pageSize, startingAfter, range), secretKey),
+        logsRequest(buildListPath(pageSize, startingAfter, query), secretKey),
         "Failed to list logs",
       );
       // `bapiRequest` hands back the raw text when the body isn't JSON, and
@@ -145,16 +155,34 @@ function toResult(
   };
 }
 
-function printTable(logs: Log[]): void {
+/** Leaves of a (possibly nested) payload as `path=value`, space-separated. */
+export function formatPayload(payload: Record<string, unknown> | undefined): string {
+  const pairs: string[] = [];
+  const walk = (value: unknown, path: string): void => {
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      for (const [key, child] of Object.entries(value)) walk(child, path ? `${path}.${key}` : key);
+      return;
+    }
+    pairs.push(`${path}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+  };
+  walk(payload ?? {}, "");
+  return pairs.join(" ");
+}
+
+function printTable(logs: Log[], showPayload: boolean): void {
   const now = new Date();
+  const headers = ["TIME", "TYPE", "ACTOR", "SUBJECT", "LOCATION"];
+  if (showPayload) headers.push("PAYLOAD");
+  headers.push("LOG ID");
   const rows = [
-    ["TIME", "TYPE", "ACTOR", "SUBJECT", "LOCATION", "LOG ID"].map((header) => bold(header)),
+    headers.map((header) => bold(header)),
     ...logs.map((entry) => [
       formatLogTime(entry.event_time, now),
       cyan(entry.type),
       entry.actor || dim("-"),
       entry.subject || dim("-"),
       formatLogLocation(entry) || dim("-"),
+      ...(showPayload ? [formatPayload(entry.payload) || dim("-")] : []),
       dim(entry.id),
     ]),
   ];
@@ -173,12 +201,12 @@ function summary(result: LogsListResult): string {
   return parts.join(" · ");
 }
 
-function printHuman(result: LogsListResult): void {
+function printHuman(result: LogsListResult, showPayload: boolean): void {
   log.blank();
   if (result.data.length === 0) {
     log.warn("No logs found.");
   } else {
-    printTable(result.data);
+    printTable(result.data, showPayload);
   }
   log.info(dim(`\n${summary(result)}`));
   if (result.cursor.retention_limit_reached) {
@@ -199,19 +227,20 @@ export async function list(options: LogsListOptions = {}): Promise<void> {
 
   try {
     const range = resolveTimeRange(options);
+    const filters = resolveFilters(options);
     const secretKey = await resolveBapiSecretKey({
       secretKey: options.secretKey,
       app: options.app,
       instance: options.instance,
     });
     const { result, error } = await withSpinner("Fetching logs...", async () =>
-      fetchLogs(secretKey, options.limit ?? DEFAULT_LIMIT, options.cursor, range),
+      fetchLogs(secretKey, options.limit ?? DEFAULT_LIMIT, options.cursor, { range, filters }),
     );
 
     if (json) {
       log.data(JSON.stringify(result, null, 2));
     } else {
-      printHuman(result);
+      printHuman(result, options.fields !== undefined);
     }
 
     if (error) {

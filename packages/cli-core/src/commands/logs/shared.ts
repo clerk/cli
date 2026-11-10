@@ -30,6 +30,8 @@ export type Log = {
   event_context?: {
     device?: { ip_address?: string; location?: LogLocation };
   };
+  /** Only with `payload_fields`: the requested leaves, keyed by dot-path. */
+  payload?: Record<string, unknown>;
 };
 
 /** The `cursor` of a `GET /v1/logs` page. */

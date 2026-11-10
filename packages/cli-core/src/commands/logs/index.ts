@@ -1,6 +1,8 @@
+import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
 import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
-import { parseIntegerOption } from "../../lib/option-parsers.ts";
+import { collectOptionValues, parseIntegerOption } from "../../lib/option-parsers.ts";
+import { FILTER_MATCH_CHOICES } from "./filters.ts";
 import { list } from "./list.ts";
 import { parseDuration, parseTimestamp } from "./time.ts";
 
@@ -62,6 +64,31 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       "Only logs at or before a time (ISO 8601, YYYY-MM-DD or Unix ms)",
       (value) => parseTimestamp(value, "--to"),
     )
+    .option("--type <type>", "Only logs of a type; a trailing * matches a prefix (sign_in.*)")
+    .option("--user <user-id>", "Only logs where the user is the actor or subject")
+    .option(
+      "--identifier <value>",
+      "Only logs for an email, phone number, username or web3 wallet (exact)",
+    )
+    .option("--actor <id>", "Only logs with this actor")
+    .option("--subject <id>", "Only logs with this subject")
+    .option("--session <id>", "Only logs of a session")
+    .option("--client <id>", "Only logs of a client")
+    .option("--ip <address>", "Only logs from an IP address")
+    .option("--trace <id>", "Only logs of a trace")
+    .option("--impersonator <user-id>", "Only logs made while this user impersonated someone")
+    .option(
+      "--payload-filter <path=value>",
+      "Only logs whose payload field equals a value (repeatable; needs --type)",
+      collectOptionValues,
+    )
+    .option("--fields <paths>", "Payload fields to include, comma-separated (needs --type)")
+    .addOption(
+      createOption("--match <mode>", "Match all filters (default) or any of them").choices(
+        FILTER_MATCH_CHOICES,
+      ),
+    )
+    .option("--end-user-only", "Only event types shown to end users")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
@@ -72,6 +99,16 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       {
         command: "clerk logs list --from 2026-11-01 --to 2026-11-02",
         description: "Logs from November 1, UTC",
+      },
+      { command: "clerk logs list --type 'sign_in.*'", description: "Sign-in logs" },
+      { command: "clerk logs list --user user_123", description: "Logs about one user" },
+      {
+        command: "clerk logs list --type sms.failed --payload-filter phone_number=+15555550100",
+        description: "Failed SMS to one phone number",
+      },
+      {
+        command: "clerk logs list --type user.created --fields email_address,username",
+        description: "New users with their email address and username",
       },
       {
         command: "clerk logs list --cursor <cursor>",

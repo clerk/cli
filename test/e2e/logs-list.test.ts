@@ -31,7 +31,9 @@ type ListOutput = {
     id: unknown;
     event_time: unknown;
     type: unknown;
+    actor?: unknown;
     subject: unknown;
+    payload?: unknown;
   }>;
   cursor: {
     next: unknown;
@@ -140,4 +142,45 @@ test("logs list --since keeps every log inside the window", async () => {
   // or after it.
   expect(output.data.every((entry) => (entry.event_time as number) >= windowStart)).toBe(true);
   expect(output.cursor.searched_from as number).toBeGreaterThanOrEqual(windowStart);
+}, 60_000);
+
+test("logs list --type returns only logs of that type", async () => {
+  const result = await logsList(["--type", "user.created"]);
+  expect(result.exitCode).toBe(0);
+  const output = JSON.parse(result.stdout.toString()) as ListOutput;
+
+  expect(output.data.length).toBeGreaterThan(0);
+  expect(output.data.every((entry) => entry.type === "user.created")).toBe(true);
+  expect(output.data.some(isUserCreated)).toBe(true);
+}, 60_000);
+
+test("logs list --user returns only logs about that user", async () => {
+  const result = await logsList(["--user", userId!]);
+  expect(result.exitCode).toBe(0);
+  const output = JSON.parse(result.stdout.toString()) as ListOutput;
+
+  expect(output.data.some(isUserCreated)).toBe(true);
+  expect(output.data.every((entry) => entry.subject === userId || entry.actor === userId)).toBe(
+    true,
+  );
+}, 60_000);
+
+test("logs list --payload-filter and --fields filter on and return a payload field", async () => {
+  // user_id is a required field of the user.created payload.
+  const result = await logsList([
+    "--type",
+    "user.created",
+    "--payload-filter",
+    `user_id=${userId}`,
+    "--fields",
+    "user_id",
+  ]);
+  expect(result.exitCode).toBe(0);
+  const output = JSON.parse(result.stdout.toString()) as ListOutput;
+
+  expect(output.data.length).toBeGreaterThan(0);
+  expect(output.data.every(isUserCreated)).toBe(true);
+  expect(
+    output.data.every((entry) => (entry.payload as { user_id?: unknown })?.user_id === userId),
+  ).toBe(true);
 }, 60_000);

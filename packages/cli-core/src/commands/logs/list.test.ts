@@ -148,6 +148,89 @@ describe("logs list", () => {
     expect(mockBapiRequest).not.toHaveBeenCalled();
   });
 
+  test("encodes repeated payload filters as bracketed params", async () => {
+    await list({
+      json: true,
+      type: "user.created",
+      payloadFilter: ["user_id=user_1", "email_address=a+b@example.com"],
+    });
+
+    const request = mockBapiRequest.mock.calls[0]?.[0] as { path: string };
+    expect(request.path).toContain("payload_filter%5Buser_id%5D=user_1");
+    expect(request.path).toContain("payload_filter%5Bemail_address%5D=a%2Bb%40example.com");
+    expect(requestedUrl(0).searchParams.get("payload_filter[email_address]")).toBe(
+      "a+b@example.com",
+    );
+  });
+
+  test("sends the event filters on every page", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([], { next_page_status: "unknown", starting_after: "cur_1" }))
+      .mockResolvedValueOnce(page([makeLog("log_1")], { next_page_status: "false" }));
+
+    await list({
+      json: true,
+      type: "user.created",
+      user: "user_123",
+      payloadFilter: ["user_id=user_123"],
+      fields: "user_id",
+      endUserOnly: true,
+    });
+
+    expect(mockBapiRequest).toHaveBeenCalledTimes(2);
+    const later = requestedUrl(1).searchParams;
+    expect(later.get("starting_after")).toBe("cur_1");
+    expect(later.get("type")).toBe("user.created");
+    expect(later.get("user_id")).toBe("user_123");
+    expect(later.get("payload_filter[user_id]")).toBe("user_123");
+    expect(later.get("payload_fields")).toBe("user_id");
+    expect(later.get("end_user_facing_only")).toBe("true");
+  });
+
+  test("rejects invalid filters before resolving a key or calling the API", async () => {
+    await expect(list({ json: true, user: "user_1", actor: "user_2" })).rejects.toThrow(
+      "--user can't be combined with --actor.",
+    );
+    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+    expect(mockBapiRequest).not.toHaveBeenCalled();
+  });
+
+  test("adds a PAYLOAD column with the requested fields when --fields is set", async () => {
+    mockBapiRequest.mockResolvedValueOnce(
+      page(
+        [
+          makeLog("log_1", { payload: { user_id: "user_123", has_password: true } }),
+          makeLog("log_2", { payload: { "device.os": "iOS", nested: { a: 1 } } }),
+          makeLog("log_3", { payload: {} }),
+        ],
+        { next_page_status: "false" },
+      ),
+    );
+
+    await list({ type: "user.*", fields: "user_id,has_password" });
+
+    const plain = captured.err.replace(ANSI_ESCAPE_PATTERN, "");
+    expect(plain).toMatch(/LOCATION\s+PAYLOAD\s+LOG ID/);
+    expect(plain).toContain("user_id=user_123 has_password=true");
+    expect(plain).toContain("device.os=iOS nested.a=1");
+    expect(plain).toMatch(/Lima, PE\s+-\s+log_3/);
+  });
+
+  test("leaves the PAYLOAD column out without --fields", async () => {
+    await list();
+
+    expect(captured.err.replace(ANSI_ESCAPE_PATTERN, "")).not.toContain("PAYLOAD");
+  });
+
+  test("passes payloads through unchanged in JSON output", async () => {
+    const entry = makeLog("log_1", { payload: { user_id: "user_123" } });
+    mockBapiRequest.mockResolvedValueOnce(page([entry], { next_page_status: "false" }));
+
+    await list({ json: true, type: "user.created", fields: "user_id" });
+
+    expect(JSON.parse(captured.out).data).toEqual([entry]);
+  });
+
   test("keeps paging while next_page_status is unknown, asking only for what is left", async () => {
     mockBapiRequest
       .mockResolvedValueOnce(page([], { next_page_status: "unknown", starting_after: "cur_1" }))
