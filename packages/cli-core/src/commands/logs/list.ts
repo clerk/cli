@@ -163,7 +163,16 @@ export function formatPayload(payload: Record<string, unknown> | undefined): str
       for (const [key, child] of Object.entries(value)) walk(child, path ? `${path}.${key}` : key);
       return;
     }
-    pairs.push(`${path}=${typeof value === "string" ? value : JSON.stringify(value)}`);
+    // Payload strings are end-user input (usernames, email addresses), so
+    // control characters, C1 included, are escaped before reaching the terminal.
+    const text =
+      typeof value === "string"
+        ? value.replace(
+            /\p{Cc}/gu,
+            (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+          )
+        : JSON.stringify(value);
+    pairs.push(`${path}=${text}`);
   };
   walk(payload ?? {}, "");
   return pairs.join(" ");

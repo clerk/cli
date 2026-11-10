@@ -216,6 +216,20 @@ describe("logs list", () => {
     expect(plain).toMatch(/Lima, PE\s+-\s+log_3/);
   });
 
+  test("escapes control characters in payload strings in the PAYLOAD column", async () => {
+    mockBapiRequest.mockResolvedValueOnce(
+      page([makeLog("log_1", { payload: { username: "a\x1b[2Jb\x9bc\nd" } })], {
+        next_page_status: "false",
+      }),
+    );
+
+    await list({ type: "user.created", fields: "username" });
+
+    expect(captured.err).toContain("username=a\\u001b[2Jb\\u009bc\\u000ad");
+    expect(captured.err).not.toContain("\x1b[2J");
+    expect(captured.err).not.toContain("\x9b");
+  });
+
   test("leaves the PAYLOAD column out without --fields", async () => {
     await list();
 
