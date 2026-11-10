@@ -70,8 +70,10 @@ Every command follows these:
 
    A spinner takes the keyboard and exits 0 on Ctrl-C, so a script that deletes
    the export once the import succeeds would delete it after an interrupted
-   one. Without a terminal, the counts are printed at each 10%. A continue with
-   identifiers left to attach counts its users as finished rather than created.
+   one. In human mode with stderr redirected, the counts are printed at each 10%.
+   Agent mode, the default when stdout isn't a terminal, prints no progress. A
+   continue with identifiers left to attach counts its users as finished rather
+   than created.
 
 ## Targeting and auth
 
