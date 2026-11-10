@@ -64,6 +64,36 @@ function assertEventType(eventType: string | undefined): string {
   return value;
 }
 
+function isStringArray(value: unknown): value is string[] {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isRenderableField(value: unknown): boolean {
+  if (typeof value !== "object" || value === null) return false;
+  const field = value as Record<string, unknown>;
+  return (
+    typeof field.path === "string" &&
+    typeof field.type === "string" &&
+    typeof field.optional === "boolean" &&
+    (field.enum == null || isStringArray(field.enum))
+  );
+}
+
+/**
+ * Whether a response has the shape the human output reads. The JSON output
+ * passes the body through untouched, so only the table needs this.
+ */
+function isRenderableSchema(body: Record<string, unknown>): boolean {
+  const { event_type, description, severity, matched_event_types, fields } = body;
+  return (
+    typeof event_type === "string" &&
+    (description == null || typeof description === "string") &&
+    (severity == null || typeof severity === "string") &&
+    (matched_event_types == null || isStringArray(matched_event_types)) &&
+    (fields == null || (Array.isArray(fields) && fields.every(isRenderableField)))
+  );
+}
+
 /** Quotes a value for the shell when it holds characters a shell would expand. */
 function shellArg(value: string): string {
   return /^[\w.\-=]+$/.test(value) ? value : `'${value.replaceAll("'", `'\\''`)}'`;
@@ -138,6 +168,9 @@ export async function schema(
     if (json) {
       log.data(JSON.stringify(result, null, 2));
     } else {
+      if (!isRenderableSchema(body as Record<string, unknown>)) {
+        throw new CliError("The Logs API returned an unexpected response.");
+      }
       printHuman({ ...result, fields: result.fields ?? [] });
     }
     closeStatus = "success";

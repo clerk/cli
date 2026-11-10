@@ -171,6 +171,48 @@ describe("logs schema", () => {
   });
 
   test.each([
+    ["fields is not an array", { ...CONCRETE_SCHEMA, fields: "sign_in_id" }],
+    ["a field has no path", { ...CONCRETE_SCHEMA, fields: [{ type: "string", optional: false }] }],
+    [
+      "a field's enum is not an array",
+      {
+        ...CONCRETE_SCHEMA,
+        fields: [{ path: "strategy", type: "string", optional: true, enum: "password" }],
+      },
+    ],
+    [
+      "matched_event_types is not an array",
+      { ...WILDCARD_SCHEMA, matched_event_types: "sign_in.completed" },
+    ],
+    ["event_type is missing", { object: "log_schema", fields: [] }],
+  ])("fails with the unexpected-response error when %s", async (_label, body) => {
+    mockBapiRequest.mockResolvedValueOnce(response(body));
+
+    await expect(schema("sign_in.completed")).rejects.toThrow(
+      "The Logs API returned an unexpected response.",
+    );
+    expect(plain(captured.err)).not.toContain("PATH");
+  });
+
+  test("prints a malformed object as-is with --json", async () => {
+    const body = { ...CONCRETE_SCHEMA, fields: "sign_in_id" };
+    mockBapiRequest.mockResolvedValueOnce(response(body));
+
+    await schema("sign_in.completed", { json: true });
+
+    expect(JSON.parse(captured.out)).toEqual(body);
+  });
+
+  test("treats missing fields as no fields", async () => {
+    const { fields: _fields, ...body } = CONCRETE_SCHEMA;
+    mockBapiRequest.mockResolvedValueOnce(response(body));
+
+    await schema("sign_in.completed");
+
+    expect(plain(captured.err)).toContain("This event type has no payload fields.");
+  });
+
+  test.each([
     ["a concrete type", CONCRETE_SCHEMA],
     ["a wildcard", WILDCARD_SCHEMA],
   ])("prints the log_schema object as-is for %s with --json", async (_label, body) => {
