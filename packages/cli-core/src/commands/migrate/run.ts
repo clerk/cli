@@ -701,7 +701,6 @@ function formatSummary(
   summary: ImportSummary,
   skipped: number,
   record: RunRecord,
-  runFolder: string,
   instanceType: InstanceType,
 ): string[] {
   const lines = [
@@ -748,7 +747,6 @@ function formatSummary(
     }
   }
   for (const note of explainErrors(explainedErrors(summary), instanceType)) lines.push("", note);
-  lines.push("", dim(`Run ${record.id}: ${runFolder}`));
   return lines;
 }
 
@@ -1651,7 +1649,6 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
         summary,
         checks.rejects.length + checks.skipped.length + withoutPassword.length,
         record,
-        run.dir,
         limits.instanceType,
       )) {
         log.info(line);

@@ -31,6 +31,7 @@ import {
   listRuns,
   patchRun,
   readRun,
+  runDir,
   sha256File,
   startRun,
   importLockFile,
@@ -1324,6 +1325,19 @@ describe("run", () => {
     expect(captured.err).toContain('Unknown password hasher "rot13"');
     expect(error.exitCode).toBe(EXIT_CODE.USAGE);
     expect(created()).toHaveLength(0);
+  });
+
+  // Printed as the import starts, for a Ctrl-C; the summary doesn't repeat it.
+  test("names the run folder once", async () => {
+    stubClerk();
+
+    await run(baseOptions);
+
+    const [record] = listRuns(runsDir());
+    expect(record).toBeDefined();
+    const line = `Run ${record!.id}: ${runDir(runsDir(), record!.id)}`;
+    expect(captured.err).toContain(line);
+    expect(captured.err.split(line)).toHaveLength(2);
   });
 
   test("exits 1 when some users failed", async () => {
