@@ -72,7 +72,9 @@ beforeAll(async () => {
   // Logs reach ClickHouse through the event stream pipeline, so the new
   // user's log can take a few seconds to show up. A failed run (a transient
   // API error or rate limit) is retried the same way.
-  for (let attempt = 0; attempt < 10; attempt++) {
+  const attempts = 10;
+  let lastAttempt = "";
+  for (let attempt = 1; attempt <= attempts; attempt++) {
     const result = await logsList([]);
     if (result.exitCode === 0) {
       const output = JSON.parse(result.stdout.toString()) as ListOutput;
@@ -80,9 +82,15 @@ beforeAll(async () => {
         listed = output;
         return;
       }
+      lastAttempt = `exit 0, ${output.data.length} logs, none of them user.created for ${userId}`;
+    } else {
+      lastAttempt = `exit ${result.exitCode}: ${result.stderr.toString().trim().slice(0, 500)}`;
     }
-    await Bun.sleep(3_000);
+    if (attempt < attempts) await Bun.sleep(3_000);
   }
+  throw new Error(
+    `No user.created log for ${userId} after ${attempts} \`logs list\` attempts. Last attempt: ${lastAttempt}`,
+  );
 }, 90_000);
 
 afterAll(async () => {
