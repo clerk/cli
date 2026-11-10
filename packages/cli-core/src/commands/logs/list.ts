@@ -61,12 +61,19 @@ function buildListPath(limit: number, startingAfter: string | undefined): string
   return `/logs?${params}`;
 }
 
+/**
+ * What {@link fetchLogs} hands back. `error` is set when a request failed after
+ * some logs were already in hand: `result` keeps them, with `cursor.next`
+ * pointing at the page that failed so `--cursor` retries it.
+ */
+type FetchLogsOutcome = { result: LogsListResult; error?: unknown };
+
 /** Pages through `GET /v1/logs` until `limit` logs are in hand or the API runs out. */
 async function fetchLogs(
   secretKey: string,
   limit: number,
   cursor: string | undefined,
-): Promise<LogsListResult> {
+): Promise<FetchLogsOutcome> {
   const data: Log[] = [];
   let startingAfter = cursor;
   let first: LogListCursor | undefined;
@@ -74,8 +81,17 @@ async function fetchLogs(
 
   for (let request = 0; request < MAX_REQUESTS && data.length < limit; request++) {
     const pageSize = Math.min(limit - data.length, MAX_PAGE_SIZE);
-    const response = await logsRequest(buildListPath(pageSize, startingAfter), secretKey);
-    const page = response.body as LogListPage;
+    let page: LogListPage;
+    try {
+      const response = await withApiContext(
+        logsRequest(buildListPath(pageSize, startingAfter), secretKey),
+        "Failed to list logs",
+      );
+      page = response.body as LogListPage;
+    } catch (error) {
+      if (data.length === 0) throw error;
+      return { result: toResult(data, first, last, startingAfter ?? null), error };
+    }
     data.push(...(page.data ?? []));
     last = page.cursor ?? {};
     first ??= last;
@@ -91,10 +107,19 @@ async function fetchLogs(
   }
 
   const exhausted = !last || last.next_page_status === "false" || !last.starting_after;
+  return { result: toResult(data, first, last, exhausted ? null : last!.starting_after!) };
+}
+
+function toResult(
+  data: Log[],
+  first: LogListCursor | undefined,
+  last: LogListCursor | undefined,
+  next: string | null,
+): LogsListResult {
   return {
     data,
     cursor: {
-      next: exhausted ? null : last!.starting_after!,
+      next,
       retention_limit_reached: Boolean(last?.retention_limit_reached),
       retention_days: last?.retention_days ?? null,
       // Newest bound from the first page, oldest from the last.
@@ -132,6 +157,24 @@ function summary(result: LogsListResult): string {
   return parts.join(" · ");
 }
 
+function printHuman(result: LogsListResult): void {
+  log.blank();
+  if (result.data.length === 0) {
+    log.warn("No logs found.");
+  } else {
+    printTable(result.data);
+  }
+  log.info(dim(`\n${summary(result)}`));
+  if (result.cursor.retention_limit_reached) {
+    const days = result.cursor.retention_days;
+    log.warn(
+      days
+        ? `Results only go back ${days} days, your plan's log retention.`
+        : "Results only go back as far as your plan's log retention.",
+    );
+  }
+}
+
 export async function list(options: LogsListOptions = {}): Promise<void> {
   const json = Boolean(options.json) || isAgent();
   const shouldWrap = !isInsideGutter() && !json;
@@ -144,29 +187,21 @@ export async function list(options: LogsListOptions = {}): Promise<void> {
       app: options.app,
       instance: options.instance,
     });
-    const result = await withSpinner("Fetching logs...", async () =>
-      withApiContext(
-        fetchLogs(secretKey, options.limit ?? DEFAULT_LIMIT, options.cursor),
-        "Failed to list logs",
-      ),
+    const { result, error } = await withSpinner("Fetching logs...", async () =>
+      fetchLogs(secretKey, options.limit ?? DEFAULT_LIMIT, options.cursor),
     );
 
     if (json) {
       log.data(JSON.stringify(result, null, 2));
-      return;
+    } else {
+      printHuman(result);
     }
 
-    log.blank();
-    if (result.data.length === 0) {
-      log.warn("No logs found.");
-    } else {
-      printTable(result.data);
-    }
-    log.info(dim(`\n${summary(result)}`));
-    if (result.cursor.retention_limit_reached) {
-      const days = result.cursor.retention_days;
-      const retention = days ? `${days}-day log retention` : "log retention";
-      log.warn(`Results stop at your plan's ${retention}. Older logs can't be listed.`);
+    if (error) {
+      log.warn(
+        `Listing stopped early because a request failed. Re-run with \`--cursor ${result.cursor.next}\` to continue from the page that failed.`,
+      );
+      throw error;
     }
     closeStatus = "success";
   } catch (error) {

@@ -35,9 +35,9 @@ clerk logs list --app app_123 --instance prod --json
 | `--cursor <cursor>` | Continue from the cursor a previous run printed |
 | `--json`            | Output as JSON (implied in agent mode)          |
 
-The API scans one time window per request, sized from the instance's event rate, so a page can come back short or even empty while older logs remain (`next_page_status: "unknown"`). The command keeps requesting pages until it has `--limit` logs or the API reports there are no more, up to 50 requests per run; past that it returns what it has and the cursor to continue from. An empty window never reads as "no logs".
+The API scans one time window per request, sized from the instance's event rate, so a page can come back short or even empty while older logs remain (`next_page_status: "unknown"`). The command keeps requesting pages until it has `--limit` logs or the API reports there are no more, up to 50 requests per run; past that it returns what it has and the cursor to continue from. An empty window never reads as "no logs". If a request fails after some logs were already fetched, the command still prints them, with `cursor.next` set to the page that failed, warns that listing stopped early, and exits with the error; `--cursor <next>` retries that page.
 
-Human output is a table (`TIME`, `TYPE`, `ACTOR`, `SUBJECT`, `LOCATION`, `LOG ID`) with times in local time, followed by the count, the time range searched and, when more logs are available, the `--cursor` to continue from. When the plan's log retention cut the results, a warning says so.
+Human output is a table (`TIME`, `TYPE`, `ACTOR`, `SUBJECT`, `LOCATION`, `LOG ID`) with times in local time, followed by the count, the time range searched and, when more logs are available, the `--cursor` to continue from. When the search reached the plan's log retention window, a warning says how far back results go.
 
 JSON output:
 
@@ -58,7 +58,7 @@ JSON output:
 
 - `data`: the log objects exactly as the Backend API returns them.
 - `cursor.next`: pass to `--cursor` for older logs; `null` when there are none.
-- `cursor.retention_limit_reached`: the plan's log retention (`retention_days`) cut the results.
+- `cursor.retention_limit_reached`: the search reached the plan's log retention window (`retention_days`); nothing older can be listed.
 - `cursor.searched_from` / `cursor.searched_to`: the time range searched, in Unix milliseconds.
 
 ## API endpoints

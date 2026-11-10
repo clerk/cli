@@ -258,12 +258,55 @@ describe("logs list", () => {
 
     await list();
 
-    expect(captured.err).toContain("7-day log retention");
+    expect(captured.err).toContain("Results only go back 7 days, your plan's log retention.");
   });
 
-  test("propagates API errors", async () => {
+  test("propagates API errors from the first request without printing data", async () => {
     mockBapiRequest.mockRejectedValueOnce(new Error("boom"));
 
     await expect(list({ json: true })).rejects.toThrow("boom");
+    expect(captured.out).toBe("");
+  });
+
+  test("propagates API errors when no logs were collected before the failure", async () => {
+    const failure = new Error("boom");
+    mockBapiRequest
+      .mockResolvedValueOnce(page([], { next_page_status: "unknown", starting_after: "cur_1" }))
+      .mockRejectedValueOnce(failure);
+
+    await expect(list({ json: true })).rejects.toBe(failure);
+    expect(captured.out).toBe("");
+  });
+
+  test("prints the logs already fetched as JSON when a later page fails", async () => {
+    const failure = new Error("boom");
+    mockBapiRequest
+      .mockResolvedValueOnce(
+        page([makeLog("log_1")], { next_page_status: "unknown", starting_after: "cur_1" }),
+      )
+      .mockRejectedValueOnce(failure);
+
+    await expect(list({ json: true, limit: 5 })).rejects.toBe(failure);
+
+    const output = JSON.parse(captured.out);
+    expect(output.data.map((entry: { id: string }) => entry.id)).toEqual(["log_1"]);
+    expect(output.cursor.next).toBe("cur_1");
+    expect(requestedUrl(1).searchParams.get("starting_after")).toBe("cur_1");
+  });
+
+  test("prints the table and a warning when a later page fails", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(
+        page([makeLog("log_1")], { next_page_status: "unknown", starting_after: "cur_1" }),
+      )
+      .mockRejectedValueOnce(new Error("boom"));
+
+    await expect(list({ limit: 5 })).rejects.toThrow("boom");
+
+    expect(captured.out).toBe("");
+    expect(captured.err).toContain("log_1");
+    expect(captured.err).toContain("1 log");
+    expect(captured.err).toContain("Listing stopped early because a request failed");
+    expect(captured.err).toContain("--cursor cur_1");
   });
 });
