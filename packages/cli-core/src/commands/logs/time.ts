@@ -63,11 +63,22 @@ export function parseTimestamp(value: string, flag: string): number {
     const iso = trimmed.replace(" ", "T");
     ms = Date.parse(/(Z|[+-]\d{2}:\d{2})$/i.test(iso) ? iso : `${iso}Z`);
   }
+  // The runtime rolls an impossible day like 2026-02-30 over into March, so
+  // check the calendar date itself before trusting the parsed time.
+  if (!UNIX_MS_PATTERN.test(trimmed) && !isCalendarDate(trimmed.slice(0, 10))) {
+    ms = Number.NaN;
+  }
 
   if (!Number.isFinite(ms)) {
     throwUsageError(`Invalid ${flag} value "${value}". Use ${TIMESTAMP_FORMATS}.`);
   }
   return ms;
+}
+
+/** Whether `YYYY-MM-DD` names a day that exists, so 2026-02-30 doesn't. */
+function isCalendarDate(date: string): boolean {
+  const midnight = Date.parse(`${date}T00:00:00Z`);
+  return Number.isFinite(midnight) && new Date(midnight).toISOString().slice(0, 10) === date;
 }
 
 export type TimeRangeOptions = {

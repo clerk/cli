@@ -22,24 +22,8 @@ const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
 let APP_ID: string;
 let configDir: string;
 let userId: string | undefined;
-
-beforeAll(() => {
-  const appId = process.env.CLERK_CLI_TEST_APP_ID;
-  const platformKey = process.env.CLERK_PLATFORM_API_KEY;
-  if (!appId || !platformKey) {
-    throw new Error(
-      "CLERK_CLI_TEST_APP_ID and CLERK_PLATFORM_API_KEY are required. " +
-        "Run via `bun run test:e2e:op` for local 1Password injection.",
-    );
-  }
-  APP_ID = appId;
-  configDir = mkdtempSync(join(tmpdir(), "clerk-cli-e2e-logs-list-"));
-});
-
-afterAll(async () => {
-  if (userId) await deleteTestUser(userId, configDir, { appId: APP_ID });
-  rmSync(configDir, { recursive: true, force: true });
-}, 60_000);
+// The first `logs list` page that includes the new user's `user.created` log.
+let listed: ListOutput | undefined;
 
 type ListOutput = {
   data: Array<{
@@ -57,40 +41,67 @@ type ListOutput = {
   };
 };
 
-test("logs list --json returns a { data, cursor } envelope around the BAPI logs", async () => {
+function logsList(args: string[]) {
+  return Bun.$`bun ${CLI_PATH} logs list --json --limit 100 --app ${APP_ID} ${args}`
+    .env({
+      ...process.env,
+      CLERK_CONFIG_DIR: configDir,
+      CLERK_TELEMETRY_DISABLED: "1",
+      CLERK_EXPERIMENTAL: "logs",
+    })
+    .nothrow()
+    .quiet();
+}
+
+// Shared setup, so each test also passes when run alone with `-t`.
+beforeAll(async () => {
+  const appId = process.env.CLERK_CLI_TEST_APP_ID;
+  const platformKey = process.env.CLERK_PLATFORM_API_KEY;
+  if (!appId || !platformKey) {
+    throw new Error(
+      "CLERK_CLI_TEST_APP_ID and CLERK_PLATFORM_API_KEY are required. " +
+        "Run via `bun run test:e2e:op` for local 1Password injection.",
+    );
+  }
+  APP_ID = appId;
+  configDir = mkdtempSync(join(tmpdir(), "clerk-cli-e2e-logs-list-"));
+
   const user = await createTestUser(configDir, { appId: APP_ID });
   userId = user.id;
-
-  const isUserCreated = (entry: ListOutput["data"][number]) =>
-    entry.type === "user.created" && entry.subject === user.id;
 
   // Logs reach ClickHouse through the event stream pipeline, so the new
   // user's log can take a few seconds to show up. A failed run (a transient
   // API error or rate limit) is retried the same way.
-  let output: ListOutput | undefined;
   for (let attempt = 0; attempt < 10; attempt++) {
-    const result = await Bun.$`bun ${CLI_PATH} logs list --json --limit 100 --app ${APP_ID}`
-      .env({
-        ...process.env,
-        CLERK_CONFIG_DIR: configDir,
-        CLERK_TELEMETRY_DISABLED: "1",
-        CLERK_EXPERIMENTAL: "logs",
-      })
-      .nothrow()
-      .quiet();
+    const result = await logsList([]);
     if (result.exitCode === 0) {
-      output = JSON.parse(result.stdout.toString()) as ListOutput;
-      if (output.data.some(isUserCreated)) break;
+      const output = JSON.parse(result.stdout.toString()) as ListOutput;
+      if (output.data.some(isUserCreated)) {
+        listed = output;
+        return;
+      }
     }
     await Bun.sleep(3_000);
   }
+}, 90_000);
 
-  expect(output).toBeDefined();
-  expect(Array.isArray(output!.data)).toBe(true);
-  expect(output!.data.length).toBeGreaterThan(0);
-  expect(output!.data.length).toBeLessThanOrEqual(100);
+afterAll(async () => {
+  if (userId) await deleteTestUser(userId, configDir, { appId: APP_ID });
+  rmSync(configDir, { recursive: true, force: true });
+}, 60_000);
+
+function isUserCreated(entry: ListOutput["data"][number]): boolean {
+  return entry.type === "user.created" && entry.subject === userId;
+}
+
+test("logs list --json returns a { data, cursor } envelope around the BAPI logs", () => {
+  expect(listed).toBeDefined();
+  const output = listed!;
+  expect(Array.isArray(output.data)).toBe(true);
+  expect(output.data.length).toBeGreaterThan(0);
+  expect(output.data.length).toBeLessThanOrEqual(100);
   expect(
-    output!.data.every(
+    output.data.every(
       (entry) =>
         entry.object === "log" &&
         typeof entry.id === "string" &&
@@ -98,30 +109,22 @@ test("logs list --json returns a { data, cursor } envelope around the BAPI logs"
         typeof entry.type === "string",
     ),
   ).toBe(true);
-  expect(output!.data.some(isUserCreated)).toBe(true);
+  expect(output.data.some(isUserCreated)).toBe(true);
 
-  const times = output!.data.map((entry) => entry.event_time as number);
+  const times = output.data.map((entry) => entry.event_time as number);
   expect(times).toEqual([...times].sort((a, b) => b - a));
 
-  const { cursor } = output!;
+  const { cursor } = output;
   expect(cursor.next === null || typeof cursor.next === "string").toBe(true);
   expect(typeof cursor.retention_limit_reached).toBe("boolean");
   expect(typeof cursor.searched_from).toBe("number");
   expect(typeof cursor.searched_to).toBe("number");
-}, 90_000);
+});
 
-// Runs after the test above, so the new user's log is already queryable.
 test("logs list --since keeps every log inside the window", async () => {
   const windowStart = Date.now() - 60 * 60 * 1_000;
-  const result =
-    await Bun.$`bun ${CLI_PATH} logs list --json --since 1h --limit 100 --app ${APP_ID}`
-      .env({
-        ...process.env,
-        CLERK_CONFIG_DIR: configDir,
-        CLERK_TELEMETRY_DISABLED: "1",
-        CLERK_EXPERIMENTAL: "logs",
-      })
-      .quiet();
+  const result = await logsList(["--since", "1h"]);
+  expect(result.exitCode).toBe(0);
   const output = JSON.parse(result.stdout.toString()) as ListOutput;
 
   expect(output.data.length).toBeGreaterThan(0);

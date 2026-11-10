@@ -39,16 +39,28 @@ describe("parseTimestamp", () => {
     ["a date-time with a space and no seconds", "2026-11-09 15:30", Date.UTC(2026, 10, 9, 15, 30)],
     ["fractional seconds", "2026-11-09T15:30:00.250Z", Date.UTC(2026, 10, 9, 15, 30, 0, 250)],
     ["an offset", "2026-11-09T10:30:00-05:00", Date.UTC(2026, 10, 9, 15, 30)],
+    ["an offset that crosses midnight", "2026-11-09T23:30:00-05:00", Date.UTC(2026, 10, 10, 4, 30)],
+    ["a leap day", "2028-02-29", Date.UTC(2028, 1, 29)],
+    ["a leap day date-time", "2028-02-29T12:00:00Z", Date.UTC(2028, 1, 29, 12)],
   ])("parses %s", (_name, value, expected) => {
     expect(parseTimestamp(value, "--from")).toBe(expected);
   });
 
-  test.each(["", "yesterday", "11/09/2026", "2026-11-09T25:00:00Z", "2026-13-01", "1.5"])(
-    "rejects %p naming the flag",
-    (value) => {
-      expect(() => parseTimestamp(value, "--to")).toThrow(`Invalid --to value "${value}"`);
-    },
-  );
+  test.each([
+    "",
+    "yesterday",
+    "11/09/2026",
+    "2026-11-09T25:00:00Z",
+    "2026-13-01",
+    "1.5",
+    "2026-02-30",
+    "2026-04-31",
+    "2027-02-29",
+    "2026-02-31T10:00",
+    "2026-02-30T10:00:00-05:00",
+  ])("rejects %p naming the flag", (value) => {
+    expect(() => parseTimestamp(value, "--to")).toThrow(`Invalid --to value "${value}"`);
+  });
 });
 
 describe("resolveTimeRange", () => {
