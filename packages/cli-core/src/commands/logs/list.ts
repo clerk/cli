@@ -26,11 +26,16 @@ import {
   type LogListPage,
   type LogsTargetingOptions,
 } from "./shared.ts";
+import { resolveTimeRange, type TimeRangeOptions } from "./time.ts";
 
-export type LogsListOptions = LogsTargetingOptions & {
-  limit?: number;
-  cursor?: string;
-};
+export type LogsListOptions = LogsTargetingOptions &
+  TimeRangeOptions & {
+    limit?: number;
+    cursor?: string;
+  };
+
+/** `event_time_after` / `event_time_before`, inclusive Unix milliseconds. */
+type TimeRange = { after?: number; before?: number };
 
 /** What `--json` prints: the logs and where to continue from. */
 export type LogsListResult = {
@@ -55,8 +60,10 @@ const MAX_PAGE_SIZE = 500;
  */
 export const MAX_REQUESTS = 50;
 
-function buildListPath(limit: number, startingAfter: string | undefined): string {
+function buildListPath(limit: number, startingAfter: string | undefined, range: TimeRange): string {
   const params = new URLSearchParams({ view: "flat", limit: String(limit) });
+  if (range.after !== undefined) params.set("event_time_after", String(range.after));
+  if (range.before !== undefined) params.set("event_time_before", String(range.before));
   if (startingAfter) params.set("starting_after", startingAfter);
   return `/logs?${params}`;
 }
@@ -73,6 +80,7 @@ async function fetchLogs(
   secretKey: string,
   limit: number,
   cursor: string | undefined,
+  range: TimeRange,
 ): Promise<FetchLogsOutcome> {
   const data: Log[] = [];
   let startingAfter = cursor;
@@ -84,7 +92,7 @@ async function fetchLogs(
     let page: LogListPage;
     try {
       const response = await withApiContext(
-        logsRequest(buildListPath(pageSize, startingAfter), secretKey),
+        logsRequest(buildListPath(pageSize, startingAfter, range), secretKey),
         "Failed to list logs",
       );
       // `bapiRequest` hands back the raw text when the body isn't JSON, and
@@ -190,13 +198,14 @@ export async function list(options: LogsListOptions = {}): Promise<void> {
   let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
+    const range = resolveTimeRange(options);
     const secretKey = await resolveBapiSecretKey({
       secretKey: options.secretKey,
       app: options.app,
       instance: options.instance,
     });
     const { result, error } = await withSpinner("Fetching logs...", async () =>
-      fetchLogs(secretKey, options.limit ?? DEFAULT_LIMIT, options.cursor),
+      fetchLogs(secretKey, options.limit ?? DEFAULT_LIMIT, options.cursor, range),
     );
 
     if (json) {

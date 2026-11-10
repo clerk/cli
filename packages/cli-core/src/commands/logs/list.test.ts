@@ -109,6 +109,45 @@ describe("logs list", () => {
     expect(url.searchParams.get("starting_after")).toBe("cur_prev");
   });
 
+  test("sends the time range as event_time_after / event_time_before on every page", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([], { next_page_status: "unknown", starting_after: "cur_1" }))
+      .mockResolvedValueOnce(page([makeLog("log_1")], { next_page_status: "false" }));
+
+    await list({ json: true, from: 1_000, to: 2_000 });
+
+    expect(requestedUrl(0).searchParams.get("event_time_after")).toBe("1000");
+    expect(requestedUrl(0).searchParams.get("event_time_before")).toBe("2000");
+    expect(requestedUrl(1).searchParams.get("event_time_after")).toBe("1000");
+    expect(requestedUrl(1).searchParams.get("event_time_before")).toBe("2000");
+  });
+
+  test("turns --since into event_time_after relative to now", async () => {
+    const before = Date.now();
+    await list({ json: true, since: 3_600_000 });
+    const after = Date.now();
+
+    const sent = Number(requestedUrl(0).searchParams.get("event_time_after"));
+    expect(sent).toBeGreaterThanOrEqual(before - 3_600_000);
+    expect(sent).toBeLessThanOrEqual(after - 3_600_000);
+    expect(requestedUrl(0).searchParams.get("event_time_before")).toBeNull();
+  });
+
+  test("sends no time bounds without time flags", async () => {
+    await list({ json: true });
+
+    expect(requestedUrl(0).searchParams.has("event_time_after")).toBe(false);
+    expect(requestedUrl(0).searchParams.has("event_time_before")).toBe(false);
+  });
+
+  test("rejects an invalid time range before resolving a key or calling the API", async () => {
+    await expect(list({ json: true, since: 3_600_000, from: 1_000 })).rejects.toThrow(
+      "Pass either --since or --from, not both.",
+    );
+    expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+    expect(mockBapiRequest).not.toHaveBeenCalled();
+  });
+
   test("keeps paging while next_page_status is unknown, asking only for what is left", async () => {
     mockBapiRequest
       .mockResolvedValueOnce(page([], { next_page_status: "unknown", starting_after: "cur_1" }))
