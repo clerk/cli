@@ -708,6 +708,8 @@ function formatSummary(
     `${green("Imported:")} ${summary.successful}`,
     `${red("Failed:")} ${summary.failed}`,
   ];
+  // No answer, so Clerk may hold them: a continue checks.
+  if (summary.unconfirmed > 0) lines.push(`${yellow("Not confirmed:")} ${summary.unconfirmed}`);
   if (skipped > 0) lines.push(`${yellow("Skipped:")} ${skipped}`);
   // The user quota stopped the run: these go out on a re-run.
   if (summary.notSent > 0) lines.push(`${yellow("Not sent:")} ${summary.notSent}`);
@@ -1581,6 +1583,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               totalProcessed: 0,
               successful: 0,
               failed: 0,
+              unconfirmed: 0,
               notSent: 0,
               droppedPhones: new Map(),
               droppedIdentifiers: new Map(),
@@ -1597,7 +1600,8 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
       }
       const record = run.finish({ notSent: summary.notSent });
       setTelemetryStage("done");
-      if (summary.failed > 0) {
+      // Unconfirmed users aren't done either: Clerk may not hold them.
+      if (summary.failed > 0 || summary.unconfirmed > 0) {
         process.exitCode = 1;
         declareSoftExitOutcome("error", "migrate_import_partial");
       }
@@ -1614,6 +1618,7 @@ async function runImport(rawOptions: MigrateRunOptions, lock: ImportLock): Promi
               result: {
                 created: summary.successful,
                 failed: summary.failed,
+                unconfirmed: summary.unconfirmed,
                 notSent: summary.notSent,
                 pending: record.counts.pending ?? 0,
                 ...(summary.stopReason ? { stopReason: summary.stopReason } : {}),

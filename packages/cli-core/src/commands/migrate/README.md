@@ -56,9 +56,9 @@ Every command follows these:
 4. **Every command prints its target first:** the environment, app and
    instance, and where the key came from.
 5. **Every subcommand takes `--json`.** Exit codes: `0` all good, `1` some users
-   failed, `2` a usage error or a refusal, and `130` (death by SIGINT) when
-   Ctrl-C stops an import or an undo partway. The UI goes to stderr and data to
-   stdout.
+   failed or are not confirmed, `2` a usage error or a refusal, and `130` (death
+   by SIGINT) when Ctrl-C stops an import or an undo partway. The UI goes to
+   stderr and data to stdout.
 
    While users are created or deleted, a terminal shows a bar and the counts under it, not
    a spinner:
@@ -161,10 +161,13 @@ continue replaces rather than repeats.
 
 `creating` is written as a user's `POST /v1/users` goes out. It stays the latest
 status when no answer says whether the create landed: an abort, a network error,
-or a 5xx. The import counts a network error or a 5xx as failed, and a second
-`creating` line records its `error`. A `created` line with `pending` lists the
-extra emails and phones not yet attached, and `counts.pending` (`result.pending`
-in the import's `--json`) counts those users.
+or a 5xx. The import counts a network error or a 5xx as not confirmed, not
+failed ("Not confirmed" in the summary, `result.unconfirmed` in `--json`),
+since Clerk may hold the user. A second `creating` line records its `error`,
+and a continue looks the user up before creating it again.
+A `created` line with `pending` lists the extra emails and phones not yet
+attached, and `counts.pending` (`result.pending` in the import's `--json`)
+counts those users.
 
 A run is `partial` when any user failed, was skipped, is still `creating`, has
 identifiers still `pending`, or was never sent (`counts.notSent`), and
@@ -769,7 +772,7 @@ Failures do not stop the run: each user's outcome is written to the
 [run](#the-run-store) and the import continues. A `429` backs off —
 honouring `Retry-After` when the response carries it — and retries up to 5
 times before the user is recorded as failed. The command exits 1 if any user
-failed.
+failed or is not confirmed.
 
 `--require-password` records each user it leaves out as `skipped`, with
 `code: "no_password"`, so the run ends `partial`. A continue carries the flag
@@ -1564,12 +1567,12 @@ Stages, in the order each subcommand runs them. Telemetry sends the last stage s
 
 A run that finishes part-way exits nonzero without throwing, and carries a code so it is not an uncoded error:
 
-| Ending                                     | `error_code`               | Exit |
-| ------------------------------------------ | -------------------------- | ---- |
-| `import --dry-run` the checks would refuse | `migrate_checks_rejected`  | 2    |
-| `import` where some users failed           | `migrate_import_partial`   | 1    |
-| `undo` with deletes left                   | `migrate_undo_incomplete`  | 1    |
-| `export` the platform cut short            | `migrate_export_truncated` | 1    |
+| Ending                                                | `error_code`               | Exit |
+| ----------------------------------------------------- | -------------------------- | ---- |
+| `import --dry-run` the checks would refuse            | `migrate_checks_rejected`  | 2    |
+| `import` where some users failed or are not confirmed | `migrate_import_partial`   | 1    |
+| `undo` with deletes left                              | `migrate_undo_incomplete`  | 1    |
+| `export` the platform cut short                       | `migrate_export_truncated` | 1    |
 
 `clerk migrate` also adds a `migrate` segment to the `User-Agent` of its Backend API requests (`Clerk-CLI/<version> (…; migrate)`), so Clerk's logs can count the users each migration creates. The CLI follows the same rules as for telemetry: it leaves the segment out when telemetry is off and, outside CI, until the telemetry notice has shown.
 
