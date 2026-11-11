@@ -72,7 +72,7 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     )
     .option("--actor <id>", "Only logs with this actor")
     .option("--subject <id>", "Only logs with this subject")
-    .option("--session <id>", "Only logs of a session")
+    .option("--session <id>", "Only logs from requests made with this session")
     .option("--client <id>", "Only logs of a client")
     .option("--ip <address>", "Only logs from an IP address")
     .option("--trace <id>", "Only logs of a trace")

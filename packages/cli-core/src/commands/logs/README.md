@@ -63,24 +63,24 @@ clerk logs list --app app_123 --instance prod --json
 
 #### Filters
 
-Each filter flag is sent as a `GET /v1/logs` query parameter on every request of a run, like the time range. By default a log must match every filter; `--match any` keeps logs that match at least one of the string filters (the time range and `--end-user-only` always apply).
+Each filter flag is sent as a `GET /v1/logs` query parameter on every request of a run, like the time range. By default a log must match every filter; `--match any` keeps logs that match at least one of the string and `--payload-filter` filters (the time range and `--end-user-only` always apply).
 
-| Flag                            | API parameter                  | Notes                                                                 |
-| ------------------------------- | ------------------------------ | --------------------------------------------------------------------- |
-| `--type <type>`                 | `type`                         | An event type, or a prefix with a trailing `*` (`sign_in.*`)          |
-| `--user <user-id>`              | `user_id`                      | Logs where the user is the actor or the subject                       |
-| `--identifier <value>`          | `identifier`                   | An email address, phone number, username or web3 wallet; exact match  |
-| `--actor <id>`                  | `actor`                        |                                                                       |
-| `--subject <id>`                | `subject`                      |                                                                       |
-| `--session <id>`                | `session_id`                   |                                                                       |
-| `--client <id>`                 | `client_id`                    |                                                                       |
-| `--ip <address>`                | `ip_address`                   |                                                                       |
-| `--trace <id>`                  | `trace_id`                     |                                                                       |
-| `--impersonator <user-id>`      | `impersonator_user_id`         |                                                                       |
-| `--payload-filter <path=value>` | `payload_filter[<path>]=value` | Repeatable; a payload field (dot path) equals a value. Needs `--type` |
-| `--fields <a,b>`                | `payload_fields`               | Payload fields to return in each log's `payload`. Needs `--type`      |
-| `--match <all\|any>`            | `filter_match`                 | `all` (default) sends nothing                                         |
-| `--end-user-only`               | `end_user_facing_only=true`    | Only event types shown to end users                                   |
+| Flag                            | API parameter                  | Notes                                                                   |
+| ------------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
+| `--type <type>`                 | `type`                         | An event type, or a prefix with a trailing `*` (`sign_in.*`)            |
+| `--user <user-id>`              | `user_id`                      | Logs where the user is the actor or the subject                         |
+| `--identifier <value>`          | `identifier`                   | An email address, phone number, username or web3 wallet; exact match    |
+| `--actor <id>`                  | `actor`                        |                                                                         |
+| `--subject <id>`                | `subject`                      |                                                                         |
+| `--session <id>`                | `session_id`                   | The session that made the request, not one a `session.*` event is about |
+| `--client <id>`                 | `client_id`                    |                                                                         |
+| `--ip <address>`                | `ip_address`                   |                                                                         |
+| `--trace <id>`                  | `trace_id`                     |                                                                         |
+| `--impersonator <user-id>`      | `impersonator_user_id`         |                                                                         |
+| `--payload-filter <path=value>` | `payload_filter[<path>]=value` | Repeatable; a payload field (dot path) equals a value. Needs `--type`   |
+| `--fields <a,b>`                | `payload_fields`               | Payload fields to return in each log's `payload`. Needs `--type`        |
+| `--match <all\|any>`            | `filter_match`                 | `all` (default) sends nothing                                           |
+| `--end-user-only`               | `end_user_facing_only=true`    | Only event types shown to end users                                     |
 
 These combinations are usage errors, raised before any request, matching the Backend API's own checks:
 
@@ -88,9 +88,10 @@ These combinations are usage errors, raised before any request, matching the Bac
 - `--user` that isn't a user ID (`user_…`), or `--identifier` that is one.
 - `--type` with a `*` anywhere but the end, or more than one.
 - `--payload-filter` or `--fields` without `--type`, and `--fields` with `--match any`.
-- A `--payload-filter` without `=`, with an empty path or value, or a value over 256 characters; a path more than 4 levels deep; more than 10 paths, or the same path twice, in `--payload-filter` or in `--fields`.
+- An empty value for any string filter flag (`--user ""`, as from an unset shell variable), since the API would treat it as no filter and list every log.
+- A `--payload-filter` without `=` or with an empty path or value, and a payload path with an empty segment (`a..b`).
 
-Whether a payload path exists for the type is left to the API: an unknown path fails with the API's error, which lists the allowed paths.
+The API's own limits on payload paths (how many, how deep, how long a value) and whether a path exists for the type are left to the API: a path it rejects fails with its error, which lists the allowed paths for the type.
 
 With `--fields`, the table gets a `PAYLOAD` column with the returned fields as `path=value` pairs. JSON output passes each log's `payload` through as the API returns it.
 

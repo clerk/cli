@@ -1,18 +1,14 @@
 /**
  * The `clerk logs list` event filters. Each flag maps to a `GET /v1/logs`
- * query parameter; the checks here mirror the Backend API's own
- * (`parseReadAllParams` in clerk_go) so a bad combination fails as a usage
- * error before a key is resolved or a request is made. Whether a payload path
- * exists for the type is left to the API, which lists the allowed paths.
+ * query parameter. The checks here cover syntax and flag combinations, which
+ * mirror the Backend API's own (`parseReadAllParams` in clerk_go) so the error
+ * names the CLI flag instead of the API parameter and fails before a key is
+ * resolved or a request is made. The API's numeric limits on payload paths
+ * (count, depth, value length) and whether a path exists for the type are left
+ * to the API, whose 422 lists the allowed paths and tracks its own limits.
  */
 
 import { throwUsageError } from "../../lib/errors.ts";
-
-/** The API's per-request cap on payload paths, for `payload_filter` and `payload_fields` each. */
-export const MAX_PAYLOAD_PATHS = 10;
-/** Dot segments in a payload path; deeper fields aren't addressable. */
-export const MAX_PAYLOAD_PATH_DEPTH = 4;
-export const MAX_PAYLOAD_FILTER_VALUE_LENGTH = 256;
 
 export const FILTER_MATCH_CHOICES = ["all", "any"] as const;
 export type FilterMatch = (typeof FILTER_MATCH_CHOICES)[number];
@@ -74,33 +70,12 @@ function parsePayloadFilter(raw: string): PayloadFilter {
   if (!value) {
     throwUsageError(`Invalid --payload-filter "${raw}". The value after "=" can't be empty.`);
   }
-  if (value.length > MAX_PAYLOAD_FILTER_VALUE_LENGTH) {
-    throwUsageError(
-      `Invalid --payload-filter for "${path}". The value can be at most ${MAX_PAYLOAD_FILTER_VALUE_LENGTH} characters.`,
-    );
-  }
   return { path, value };
 }
 
 function checkPayloadPath(path: string, flag: string): void {
   if (path.split(".").some((segment) => segment === "")) {
     throwUsageError(`Invalid ${flag} path "${path}". Use dot-separated field names, like a.b.`);
-  }
-  if (path.split(".").length > MAX_PAYLOAD_PATH_DEPTH) {
-    throwUsageError(
-      `Invalid ${flag} path "${path}". Paths can be at most ${MAX_PAYLOAD_PATH_DEPTH} levels deep.`,
-    );
-  }
-}
-
-function checkPayloadPathCount(paths: string[], flag: string): void {
-  if (paths.length > MAX_PAYLOAD_PATHS) {
-    throwUsageError(`Pass at most ${MAX_PAYLOAD_PATHS} ${flag} paths.`);
-  }
-  const seen = new Set<string>();
-  for (const path of paths) {
-    if (seen.has(path)) throwUsageError(`${flag} names "${path}" more than once.`);
-    seen.add(path);
   }
 }
 
@@ -109,6 +84,14 @@ function checkPayloadPathCount(paths: string[], flag: string): void {
  * combination the API would reject.
  */
 export function resolveFilters(options: LogFilterOptions): LogFilters {
+  // The API treats an empty value like a missing one, so `--user "$UNSET"`
+  // would list every log instead of failing.
+  for (const [flag, key] of STRING_FILTERS) {
+    if (options[key]?.trim() === "") {
+      throwUsageError(`${flag} needs a value; it was given an empty string.`);
+    }
+  }
+
   const { type, user, identifier, actor, subject } = options;
 
   if (user) {
@@ -153,13 +136,8 @@ export function resolveFilters(options: LogFilterOptions): LogFilters {
   if (fields && !type) {
     throwUsageError("--fields requires --type.");
   }
-  checkPayloadPathCount(
-    payloadFilters.map((filter) => filter.path),
-    "--payload-filter",
-  );
   if (fields) {
     for (const field of fields) checkPayloadPath(field, "--fields");
-    checkPayloadPathCount(fields, "--fields");
   }
   if (fields && options.match === "any") {
     throwUsageError(

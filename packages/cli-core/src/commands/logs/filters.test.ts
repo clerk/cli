@@ -131,38 +131,7 @@ describe("resolveFilters", () => {
       { type: "t", payloadFilter: ["a..b=x"] },
       'Invalid --payload-filter path "a..b"',
     ],
-    [
-      "--payload-filter deeper than 4 levels",
-      { type: "t", payloadFilter: ["a.b.c.d.e=x"] },
-      "at most 4 levels deep",
-    ],
-    [
-      "--payload-filter with a value over 256 characters",
-      { type: "t", payloadFilter: [`user_id=${"x".repeat(257)}`] },
-      "at most 256 characters",
-    ],
-    [
-      "more than 10 --payload-filter",
-      { type: "t", payloadFilter: Array.from({ length: 11 }, (_, i) => `f${i}=x`) },
-      "Pass at most 10 --payload-filter paths.",
-    ],
-    [
-      "a repeated --payload-filter path",
-      { type: "t", payloadFilter: ["user_id=a", "user_id=b"] },
-      '--payload-filter names "user_id" more than once.',
-    ],
     ["an empty --fields", { type: "t", fields: " , " }, "--fields needs at least one payload path"],
-    ["--fields deeper than 4 levels", { type: "t", fields: "a.b.c.d.e" }, "at most 4 levels deep"],
-    [
-      "more than 10 --fields",
-      { type: "t", fields: Array.from({ length: 11 }, (_, i) => `f${i}`).join(",") },
-      "Pass at most 10 --fields paths.",
-    ],
-    [
-      "a repeated --fields path",
-      { type: "t", fields: "user_id,user_id" },
-      '--fields names "user_id" more than once.',
-    ],
     [
       "--fields with --match any",
       { type: "t", fields: "user_id", match: "any" },
@@ -172,11 +141,32 @@ describe("resolveFilters", () => {
     expect(() => resolveFilters(options)).toThrow(message);
   });
 
-  test("accepts a 256-character payload filter value", () => {
-    const value = "x".repeat(256);
-    expect(resolveFilters({ type: "t", payloadFilter: [`user_id=${value}`] })).toContainEqual([
-      "payload_filter[user_id]",
-      value,
+  test.each([
+    ["--type", "type"],
+    ["--user", "user"],
+    ["--identifier", "identifier"],
+    ["--actor", "actor"],
+    ["--subject", "subject"],
+    ["--session", "session"],
+    ["--client", "client"],
+    ["--ip", "ip"],
+    ["--trace", "trace"],
+    ["--impersonator", "impersonator"],
+  ] as const)("rejects an empty %s", (flag, key) => {
+    expect(() => resolveFilters({ [key]: "" })).toThrow(`${flag} needs a value`);
+    expect(() => resolveFilters({ [key]: "  " })).toThrow(`${flag} needs a value`);
+  });
+
+  test("leaves payload path limits to the API", () => {
+    const value = "値".repeat(200);
+    const fields = Array.from({ length: 11 }, (_, i) => `f${i}`).join(",");
+    expect(
+      resolveFilters({ type: "t", payloadFilter: [`a.b.c.d.e=${value}`, "a.b.c.d.e=y"], fields }),
+    ).toEqual([
+      ["type", "t"],
+      ["payload_filter[a.b.c.d.e]", value],
+      ["payload_filter[a.b.c.d.e]", "y"],
+      ["payload_fields", fields],
     ]);
   });
 });
