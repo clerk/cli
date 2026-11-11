@@ -123,8 +123,47 @@ JSON output:
 - `cursor.retention_limit_reached`: the search reached the plan's log retention window (`retention_days`); nothing older can be listed.
 - `cursor.searched_from` / `cursor.searched_to`: the time range searched, in Unix milliseconds.
 
+### `clerk logs schema <event-type>`
+
+Show the payload fields of a log event type: the dot-paths, their types, whether each is optional, and the accepted values of enum fields.
+
+```sh
+clerk logs schema sign_in.completed
+clerk logs schema 'sign_in.*'
+clerk logs schema sign_in
+clerk logs schema user.created --json
+```
+
+| Option   | Description                            |
+| -------- | -------------------------------------- |
+| `--json` | Output as JSON (implied in agent mode) |
+
+The event type is passed to the API as-is. It can be:
+
+- a concrete type, like `sign_in.completed`;
+- a trailing-`*` wildcard, like `sign_in.*` (quote it so the shell doesn't expand it);
+- a bare family name, like `sign_in`, which the API reads as `sign_in.*` when no concrete type has that name.
+
+For a wildcard or family, the fields are only the ones every matched type shares, and `matched_event_types` lists those types. Running the command without an event type, or with a bare `*`, is a usage error raised before any request. An unknown event type, or one the instance can't read (such as SMS or email types behind a feature gate), fails with the API's 422 error.
+
+Human output is a header with the event type, its description and severity (or, for a wildcard, the matched event types), then a table (`PATH`, `TYPE`, `OPTIONAL`, `ENUM`), and a hint showing how to filter logs on the first field.
+
+JSON output is the `log_schema` object exactly as the Backend API returns it:
+
+```json
+{
+  "object": "log_schema",
+  "event_type": "sign_in.*",
+  "matched_event_types": ["sign_in.completed", "sign_in.failed"],
+  "fields": [{ "path": "sign_in_id", "type": "string", "optional": false }]
+}
+```
+
+`fields[].type` is `string`, `boolean`, `integer` or `number`; enum-backed fields are `string` with an `enum` list. `description`, `severity` and `docs_group` are present only for a concrete type.
+
 ## API endpoints
 
-| Method | Path       | Description                                                                                                                                                                                                                                                                                                                     |
-| ------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/logs` | List logs (`view=flat`, `limit`, `starting_after`, `event_time_after`, `event_time_before`, `type`, `user_id`, `identifier`, `actor`, `subject`, `session_id`, `client_id`, `ip_address`, `trace_id`, `impersonator_user_id`, `payload_filter[<path>]`, `payload_fields`, `filter_match`, `end_user_facing_only`), newest first |
+| Method | Path               | Description                                                                                                                                                                                                                                                                                                                     |
+| ------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/logs`         | List logs (`view=flat`, `limit`, `starting_after`, `event_time_after`, `event_time_before`, `type`, `user_id`, `identifier`, `actor`, `subject`, `session_id`, `client_id`, `ip_address`, `trace_id`, `impersonator_user_id`, `payload_filter[<path>]`, `payload_fields`, `filter_match`, `end_user_facing_only`), newest first |
+| `GET`  | `/v1/logs/schemas` | Payload schema of an event type (`type`)                                                                                                                                                                                                                                                                                        |

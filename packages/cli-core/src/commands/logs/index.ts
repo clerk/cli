@@ -4,9 +4,10 @@ import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.t
 import { collectOptionValues, parseIntegerOption } from "../../lib/option-parsers.ts";
 import { FILTER_MATCH_CHOICES } from "./filters.ts";
 import { list } from "./list.ts";
+import { schema } from "./schema.ts";
 import { parseDuration, parseTimestamp } from "./time.ts";
 
-const logs = { list };
+const logs = { list, schema };
 
 export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.env): void {
   // Experimental until `clerk logs` is ready to ship (Linear project
@@ -121,5 +122,31 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     ])
     .action(async (_opts, cmd) =>
       logs.list(cmd.optsWithGlobals() as Parameters<typeof logs.list>[0]),
+    );
+
+  logsCommand
+    .command("schema")
+    .description("Show the payload fields of a log event type")
+    .argument(
+      "[event-type]",
+      "An event type (sign_in.completed), a wildcard (sign_in.*) or a family (sign_in)",
+    )
+    .option("--json", "Output as JSON")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .setExamples([
+      {
+        command: "clerk logs schema sign_in.completed",
+        description: "Fields of one event type",
+      },
+      {
+        command: "clerk logs schema 'sign_in.*'",
+        description: "Fields every sign_in event type shares",
+      },
+      { command: "clerk logs schema user.created --json", description: "The schema as JSON" },
+    ])
+    .action(async (eventType: string | undefined, _opts, cmd) =>
+      logs.schema(eventType, cmd.optsWithGlobals() as Parameters<typeof logs.schema>[1]),
     );
 }
