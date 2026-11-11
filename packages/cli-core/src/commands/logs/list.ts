@@ -93,12 +93,19 @@ export type LogsPageRequest = (path: string) => Promise<ApiResponse>;
 
 /**
  * The page of a `GET /v1/logs` response, or a {@link CliError} when the body
- * isn't a JSON object. `bapiRequest` hands back the raw text when the body
- * isn't JSON, and null for a literal `null`.
+ * isn't a JSON object with a `data` array. `bapiRequest` hands back the raw
+ * text when the body isn't JSON, and null for a literal `null`. A body without
+ * `data` would otherwise read as an empty page: the end of a list, or a quiet
+ * poll that moves `--follow` past logs it never printed.
  */
 export function readLogsPage(response: ApiResponse): LogListPage {
   const body = response.body;
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    Array.isArray(body) ||
+    !Array.isArray((body as { data?: unknown }).data)
+  ) {
     throw new CliError("The Logs API returned an unexpected response.");
   }
   return body as LogListPage;
@@ -136,7 +143,7 @@ export async function fetchLogs(
       if (data.length === 0) throw error;
       return { result: toResult(data, first, last, startingAfter ?? null), error };
     }
-    data.push(...(page.data ?? []));
+    data.push(...page.data);
     last = page.cursor ?? {};
     first ??= last;
 

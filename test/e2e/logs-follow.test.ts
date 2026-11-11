@@ -2,7 +2,7 @@
  * Live-BAPI test for `clerk logs --follow`. Starts a follow, creates a user
  * once the follow is polling, and waits for that user's `user.created` log to
  * stream out as an NDJSON line. Then stops the follow with Ctrl-C, which must
- * exit 0.
+ * end it by SIGINT (exit 130), as any interrupted operation does.
  *
  * Requires `CLERK_PLATFORM_API_KEY` and `CLERK_CLI_TEST_APP_ID`. Locally,
  * run via `bun run test:e2e:op` so 1Password resolves both in-memory.
@@ -61,7 +61,7 @@ async function readLines(
   }
 }
 
-test("logs --follow --json streams a new user's user.created log and stops cleanly on Ctrl-C", async () => {
+test("logs --follow --json streams a new user's user.created log and dies by SIGINT on Ctrl-C", async () => {
   const proc = Bun.spawn(
     [
       "bun",
@@ -91,20 +91,23 @@ test("logs --follow --json streams a new user's user.created log and stops clean
 
   const stdout: string[] = [];
   const stderr: string[] = [];
-  let logRequests = 0;
   let resolvePolling!: () => void;
   const polling = new Promise<void>((resolve) => (resolvePolling = resolve));
   let resolveFound!: (line: string) => void;
   const found = new Promise<string>((resolve) => (resolveFound = resolve));
 
-  // `--verbose` logs every request; the second `GET /v1/logs` is the first
-  // poll, so the backfill is done and anything created from here on is new.
+  // `--verbose` logs every request. The backfill asks for `limit=1`; only a
+  // poll asks for the API's maximum, so the first of those means the backfill
+  // is done and anything created from here on is new.
   const stderrDone = readLines(proc.stderr, stderr, (line) => {
-    if (/bapi: GET \S+\/v1\/logs\?/.test(line) && ++logRequests === 2) resolvePolling();
+    if (/bapi: GET \S+\/v1\/logs\?view=flat&limit=500&/.test(line)) resolvePolling();
   });
-  const stdoutDone = readLines(proc.stdout, stdout, (line) => {
+  const isUserCreated = (line: string) => {
     const entry = JSON.parse(line) as { type?: string; subject?: string };
-    if (userId && entry.type === "user.created" && entry.subject === userId) resolveFound(line);
+    return userId !== undefined && entry.type === "user.created" && entry.subject === userId;
+  };
+  const stdoutDone = readLines(proc.stdout, stdout, (line) => {
+    if (isUserCreated(line)) resolveFound(line);
   });
 
   const timeout = (label: string) =>
@@ -125,6 +128,9 @@ test("logs --follow --json streams a new user's user.created log and stops clean
 
     const user = await createTestUser(configDir, { appId: APP_ID });
     userId = user.id;
+    // The log may have streamed out while `createTestUser` was still returning.
+    const early = stdout.find(isUserCreated);
+    if (early) resolveFound(early);
 
     const line = await Promise.race([found, timeout(`the user.created log for ${userId}`)]);
     const entry = JSON.parse(line) as Record<string, unknown>;
@@ -136,11 +142,15 @@ test("logs --follow --json streams a new user's user.created log and stops clean
     expect(
       stdout.every((output) => (JSON.parse(output) as { object?: string }).object === "log"),
     ).toBe(true);
-    const times = stdout.map((output) => (JSON.parse(output) as { event_time: number }).event_time);
-    expect(times).toEqual([...times].sort((a, b) => a - b));
+    // No log is printed twice. Order isn't checked: a log the pipeline
+    // delivers late prints after newer ones.
+    const ids = stdout.map((output) => (JSON.parse(output) as { id: string }).id);
+    expect(new Set(ids).size).toBe(ids.length);
 
     proc.kill("SIGINT");
-    expect(await proc.exited).toBe(0);
+    await proc.exited;
+    // Ctrl-C ends an operation by SIGINT, so a wrapping script stops too.
+    expect(proc.signalCode).toBe("SIGINT");
   } finally {
     proc.kill();
     await Promise.allSettled([stdoutDone, stderrDone]);

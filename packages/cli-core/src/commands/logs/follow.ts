@@ -1,12 +1,12 @@
 /**
  * `clerk logs --follow` — print the normal backfill, then keep polling
- * `GET /v1/logs` for logs newer than the newest one printed, oldest first,
- * until Ctrl-C.
+ * `GET /v1/logs` for new logs, oldest first, until Ctrl-C.
  *
- * Each poll asks for `event_time_after = <newest event_time seen>`. The bound
- * is inclusive, so the logs that share that millisecond come back again; they
- * are told apart by ID. Only the IDs at the boundary millisecond are kept, so
- * memory stays flat however long the command runs.
+ * Logs reach the API through a pipeline, so one can show up after a newer one
+ * was already printed. Each poll therefore looks back {@link LOOKBACK_MS}
+ * before the newest `event_time` printed, and skips the logs it already
+ * printed by ID. Only the IDs inside that window are kept, so memory is bounded
+ * by how many logs the window holds, however long the command runs.
  */
 
 import { setTimeout as delay } from "node:timers/promises";
@@ -21,7 +21,7 @@ import {
   withApiContext,
 } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
-import { CLI_SIGINT_HANDLER } from "../../lib/signals.ts";
+import { interruptSignal } from "../../lib/signals.ts";
 import { intro, outro } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import { resolveFilters } from "./filters.ts";
@@ -48,13 +48,23 @@ export const MIN_FOLLOW_INTERVAL_MS = 1_000;
 /** First backoff after a transient failure; it doubles per attempt up to {@link MAX_RETRY_DELAY_MS}. */
 export const BASE_RETRY_DELAY_MS = 1_000;
 export const MAX_RETRY_DELAY_MS = 30_000;
+/** How long transient failures may go on, with no successful request between them, before the follow gives up. */
+export const RETRY_GIVE_UP_MS = 5 * 60_000;
+/**
+ * How far before the newest log printed each poll looks, so a log the pipeline
+ * delivers late still gets printed (out of order, after newer ones).
+ */
+export const LOOKBACK_MS = 10_000;
 
 /** The clock, the timer and the stop signal, injectable so tests don't wait in real time. */
 export type FollowDeps = {
   now: () => number;
   /** Waits `ms`, settling early (resolve or reject) once `signal` aborts. */
   sleep: (ms: number, signal: AbortSignal) => Promise<void>;
-  /** Ends the follow cleanly. Without one, the first Ctrl-C does. */
+  /**
+   * Ends the follow. Defaults to the CLI's {@link interruptSignal}: Ctrl-C is
+   * handled by the CLI's own handler, which aborts it and exits 130.
+   */
   signal?: AbortSignal;
 };
 
@@ -90,38 +100,56 @@ export function resolveFollowOptions(options: LogsFollowOptions): number {
 
 /**
  * Which logs have been printed, as far as the next poll can return them: the
- * newest `event_time` printed and the IDs printed at that millisecond.
+ * newest `event_time` printed, and the ID and `event_time` of every log printed
+ * within {@link LOOKBACK_MS} of it.
  */
-export class FollowBoundary {
-  private ids = new Set<string>();
+export class FollowWindow {
+  private readonly seen = new Map<string, number>();
+  private newest: number | undefined;
 
-  constructor(private time?: number) {}
+  /**
+   * @param anchor Where the window ends until a log is printed: the end of the
+   *   range the backfill searched.
+   * @param floor The oldest `event_time` the follow may print. Older logs
+   *   belong to the backfill, even when it left them out.
+   */
+  constructor(
+    private readonly anchor: number,
+    private readonly floor?: number,
+  ) {}
 
   /** The `event_time_after` for the next poll. */
-  get after(): number | undefined {
-    return this.time;
+  get after(): number {
+    const after = (this.newest ?? this.anchor) - LOOKBACK_MS;
+    return this.floor === undefined ? after : Math.max(after, this.floor);
   }
 
-  /** Whether `entry` hasn't been printed yet. */
-  isNew(entry: Log): boolean {
-    if (this.time === undefined || entry.event_time > this.time) return true;
-    // Older than the boundary can only be a log printed before the bound moved.
-    return entry.event_time === this.time && !this.ids.has(entry.id);
+  /** Whether `entry`, returned by a poll from `from`, hasn't been printed yet. */
+  isNew(entry: Log, from: number = this.after): boolean {
+    // An older log can only be one printed before its ID was let go.
+    return entry.event_time >= from && !this.seen.has(entry.id);
   }
 
-  /** Record `entry` as printed. Call in chronological order. */
+  /** Record `entry` as printed. */
   mark(entry: Log): void {
-    if (this.time === undefined || entry.event_time > this.time) {
-      this.time = entry.event_time;
-      this.ids = new Set([entry.id]);
-    } else if (entry.event_time === this.time) {
-      this.ids.add(entry.id);
+    this.seen.set(entry.id, entry.event_time);
+    if (this.newest === undefined || entry.event_time > this.newest) this.newest = entry.event_time;
+  }
+
+  /**
+   * Forget the IDs no poll can return again: those older than the window, or
+   * than `keepFrom` while a poll from there is still being finished.
+   */
+  evict(keepFrom?: number): void {
+    const cutoff = keepFrom === undefined ? this.after : Math.min(this.after, keepFrom);
+    for (const [id, time] of this.seen) {
+      if (time < cutoff) this.seen.delete(id);
     }
   }
 
-  /** IDs remembered at the boundary millisecond. For tests: it never holds more. */
+  /** IDs remembered. For tests: it never holds more than the window's logs. */
   get size(): number {
-    return this.ids.size;
+    return this.seen.size;
   }
 }
 
@@ -165,20 +193,31 @@ function describeFailure(error: unknown): string {
 
 /**
  * A page request that retries transient failures, warning before each wait,
- * until it succeeds, fails for good, or `signal` aborts. Retries don't give
- * up: a follow is meant to outlast an outage.
+ * until it succeeds, fails for good, or `signal` aborts. A follow is meant to
+ * outlast a short outage, so it gives up only after {@link RETRY_GIVE_UP_MS}
+ * of failures with no successful request in between, with the last error.
  */
 function retryingRequest(
   secretKey: string,
   deps: FollowDeps,
   signal: AbortSignal,
 ): LogsPageRequest {
+  // When the current run of failures started. Shared by every request, so a
+  // failure that alternates between pages still counts as one outage.
+  let failingSince: number | undefined;
   return async (path) => {
     for (let attempt = 1; ; attempt++) {
       try {
-        return await logsRequest(path, secretKey, signal);
+        const response = await logsRequest(path, secretKey, signal);
+        failingSince = undefined;
+        return response;
       } catch (error) {
         if (signal.aborted || !isTransientError(error)) throw error;
+        failingSince ??= deps.now();
+        if (deps.now() - failingSince >= RETRY_GIVE_UP_MS) {
+          log.warn(`Fetching logs has failed for ${RETRY_GIVE_UP_MS / 60_000} minutes. Giving up.`);
+          throw error;
+        }
         const wait = retryDelayMs(error, attempt);
         log.warn(
           `Fetching logs failed (${describeFailure(error)}). Retrying in ${Math.ceil(wait / 1_000)}s (attempt ${attempt}).`,
@@ -190,35 +229,59 @@ function retryingRequest(
   };
 }
 
+/** Where a poll that hit {@link MAX_REQUESTS} stopped, so the next one picks up there. */
+export type PollResume = { after: number; startingAfter: string };
+
+type PollResult = {
+  /** The logs fetched, newest first. */
+  logs: Log[];
+  /** Set when the poll stopped at the request cap with older pages left. */
+  resume?: PollResume;
+};
+
 /**
- * Every log newer than (or at) `after`, newest first, paging while the API
- * says there may be more. Each poll's window is only as old as the last log,
- * so this is normally one request.
+ * Every log at or after `after`, newest first, paging while the API says
+ * there may be more. Each poll's window is only as old as the lookback, so this
+ * is normally one request. A poll that hits {@link MAX_REQUESTS} hands back
+ * where it stopped instead of dropping the rest. A stop mid-poll keeps the
+ * pages already fetched, so they still get printed.
  */
-async function poll(request: LogsPageRequest, after: number, base: ListQuery): Promise<Log[]> {
+async function poll(
+  request: LogsPageRequest,
+  after: number,
+  base: ListQuery,
+  signal: AbortSignal,
+  startingAfter?: string,
+): Promise<PollResult> {
   const query: ListQuery = { range: { after }, filters: base.filters };
   const logs: Log[] = [];
-  let startingAfter: string | undefined;
+  let cursor = startingAfter;
 
   for (let requests = 0; requests < MAX_REQUESTS; requests++) {
-    const response = await withApiContext(
-      request(buildListPath(MAX_PAGE_SIZE, startingAfter, query)),
-      "Failed to follow logs",
-    );
-    const page = readLogsPage(response);
-    logs.push(...(page.data ?? []));
+    let page: ReturnType<typeof readLogsPage>;
+    try {
+      const response = await withApiContext(
+        request(buildListPath(MAX_PAGE_SIZE, cursor, query)),
+        "Failed to follow logs",
+      );
+      page = readLogsPage(response);
+    } catch (error) {
+      if (signal.aborted) return { logs };
+      throw error;
+    }
+    logs.push(...page.data);
 
     const next = page.cursor?.starting_after ?? undefined;
-    if (page.cursor?.next_page_status === "false" || !next) return logs;
-    if (next === startingAfter) {
+    if (page.cursor?.next_page_status === "false" || !next) return { logs };
+    if (next === cursor) {
       throw new CliError("The Logs API returned the same cursor twice, so paging can't continue.");
     }
-    startingAfter = next;
+    cursor = next;
   }
   log.warn(
-    `A poll stopped after ${MAX_REQUESTS} requests, so some logs since the last one printed may be missing.`,
+    `A poll reached ${MAX_REQUESTS} requests. Catching up on the older logs next, so they print after newer ones.`,
   );
-  return logs;
+  return { logs, resume: { after, startingAfter: cursor! } };
 }
 
 /** Minimum column widths of a streamed line; a longer value pushes the rest of its line right. */
@@ -287,30 +350,6 @@ export function formatFollowLine(entry: Log, showPayload: boolean, now: Date): s
   });
 }
 
-/**
- * Ends the follow on the first Ctrl-C instead of the CLI's interrupt handler,
- * so stopping a follow exits 0: it is how a follow is meant to end, and every
- * log fetched has already been printed. A second Ctrl-C goes back to the CLI's
- * handler and exits by signal, for a stop that hangs.
- */
-function stopOnCtrlC(): { signal: AbortSignal; dispose: () => void } {
-  const controller = new AbortController();
-  const hadCliHandler = process.listeners("SIGINT").includes(CLI_SIGINT_HANDLER);
-  const restore = () => {
-    process.removeListener("SIGINT", onSigint);
-    if (hadCliHandler && !process.listeners("SIGINT").includes(CLI_SIGINT_HANDLER)) {
-      process.on("SIGINT", CLI_SIGINT_HANDLER);
-    }
-  };
-  const onSigint = () => {
-    restore();
-    controller.abort();
-  };
-  if (hadCliHandler) process.removeListener("SIGINT", CLI_SIGINT_HANDLER);
-  process.on("SIGINT", onSigint);
-  return { signal: controller.signal, dispose: restore };
-}
-
 export async function follow(
   options: LogsFollowOptions = {},
   overrides: Partial<FollowDeps> = {},
@@ -327,8 +366,9 @@ export async function follow(
     instance: options.instance,
   });
 
-  const ctrlC = overrides.signal ? undefined : stopOnCtrlC();
-  const signal = overrides.signal ?? ctrlC!.signal;
+  // Ctrl-C is the CLI's interrupt handler's to handle: it aborts this signal,
+  // which cancels the sleep or the request in flight, and exits 130.
+  const signal = overrides.signal ?? interruptSignal();
   const shouldWrap = !isInsideGutter() && !json;
   if (shouldWrap) intro("Following logs");
   let failed = false;
@@ -366,39 +406,45 @@ export async function follow(
       throw outcome.error;
     }
 
-    // With nothing to start from, follow from the end of the window the
-    // backfill searched: the API's own clock, so local clock skew can't open a
-    // gap or replay old logs.
-    const boundary = new FollowBoundary(
-      backfill.length > 0 ? undefined : (outcome.result.cursor.searched_to ?? deps.now()),
+    // With nothing printed yet, the window ends where the backfill searched
+    // to: the API's own clock, so local clock skew can't open a gap or replay
+    // old logs. When `--limit` cut the backfill short, the logs older than the
+    // oldest one it printed were left out on purpose, so the follow doesn't
+    // print them either.
+    const truncated = outcome.result.cursor.next !== null;
+    const printed = new FollowWindow(
+      outcome.result.cursor.searched_to ?? deps.now(),
+      truncated && backfill.length > 0 ? backfill[0]!.event_time + 1 : range.after,
     );
-    for (const entry of backfill) boundary.mark(entry);
+    for (const entry of backfill) printed.mark(entry);
 
+    let resume: PollResume | undefined;
     while (!signal.aborted) {
-      await deps.sleep(interval, signal);
+      // A poll cut short at the request cap carries on at once.
+      if (!resume) await deps.sleep(interval, signal);
       if (signal.aborted) break;
 
-      let fetched: Log[];
+      const from = resume?.after ?? printed.after;
+      let result: PollResult;
       try {
-        fetched = await poll(request, boundary.after!, query);
+        result = await poll(request, from, query, signal, resume?.startingAfter);
       } catch (error) {
         if (signal.aborted) break;
         throw error;
       }
 
-      const seen = new Set<string>();
-      for (const entry of chronological(fetched)) {
-        if (seen.has(entry.id) || !boundary.isNew(entry)) continue;
-        seen.add(entry.id);
+      for (const entry of chronological(result.logs)) {
+        if (!printed.isNew(entry, from)) continue;
         print(entry);
-        boundary.mark(entry);
+        printed.mark(entry);
       }
+      resume = result.resume;
+      printed.evict(resume?.after);
     }
   } catch (error) {
     failed = true;
     throw error;
   } finally {
-    ctrlC?.dispose();
     if (shouldWrap) await outro(failed ? "Failed" : "Stopped following");
   }
 }

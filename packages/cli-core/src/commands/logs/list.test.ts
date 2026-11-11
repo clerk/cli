@@ -434,6 +434,8 @@ describe("logs list", () => {
     { label: "null", body: null },
     { label: "a string", body: "<html>" },
     { label: "an array", body: [makeLog("log_x")] },
+    { label: "an object without data", body: { cursor: { next_page_status: "false" } } },
+    { label: "an object whose data isn't an array", body: { data: {} } },
   ];
 
   test.each(malformedBodies)(
