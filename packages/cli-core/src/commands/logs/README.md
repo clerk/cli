@@ -38,6 +38,8 @@ clerk logs
 clerk logs list --limit 200
 clerk logs --since 1h
 clerk logs --from 2026-11-01 --to 2026-11-02T12:00
+clerk logs --type 'sign_in.*' --user user_123
+clerk logs --type user.created --fields email_address,username
 clerk logs list --cursor <cursor>
 clerk logs list --app app_123 --instance prod --json
 ```
@@ -49,6 +51,7 @@ clerk logs list --app app_123 --instance prod --json
 | `--since <duration>` | Only logs from the last duration                |
 | `--from <timestamp>` | Only logs at or after a time                    |
 | `--to <timestamp>`   | Only logs at or before a time                   |
+| Filter flags         | See [Filters](#filters)                         |
 | `--json`             | Output as JSON (implied in agent mode)          |
 
 #### Time range
@@ -57,6 +60,40 @@ clerk logs list --app app_123 --instance prod --json
 - `--from <timestamp>` / `--to <timestamp>`: sent as `event_time_after` / `event_time_before`, both inclusive. A timestamp is an ISO 8601 date-time (`2026-11-09T15:30:00Z`, `2026-11-09T10:30:00-05:00`; read as UTC when it has no offset, so a command means the same on any machine), a date (`2026-11-09`, midnight UTC) or Unix milliseconds.
 - `--since` and `--from` can't be combined; `--to` works with either. A range that starts after `--to` is a usage error, raised before any request.
 - Without a time flag the API returns the newest logs within the plan's retention. It also raises a start older than the retention floor to the floor, which the retention warning reports.
+
+#### Filters
+
+Each filter flag is sent as a `GET /v1/logs` query parameter on every request of a run, like the time range. By default a log must match every filter; `--match any` keeps logs that match at least one of the string and `--payload-filter` filters (the time range and `--end-user-only` always apply).
+
+| Flag                            | API parameter                  | Notes                                                                   |
+| ------------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
+| `--type <type>`                 | `type`                         | An event type, or a prefix with a trailing `*` (`sign_in.*`)            |
+| `--user <user-id>`              | `user_id`                      | Logs where the user is the actor or the subject                         |
+| `--identifier <value>`          | `identifier`                   | An email address, phone number, username or web3 wallet; exact match    |
+| `--actor <id>`                  | `actor`                        |                                                                         |
+| `--subject <id>`                | `subject`                      |                                                                         |
+| `--session <id>`                | `session_id`                   | The session that made the request, not one a `session.*` event is about |
+| `--client <id>`                 | `client_id`                    |                                                                         |
+| `--ip <address>`                | `ip_address`                   |                                                                         |
+| `--trace <id>`                  | `trace_id`                     |                                                                         |
+| `--impersonator <user-id>`      | `impersonator_user_id`         |                                                                         |
+| `--payload-filter <path=value>` | `payload_filter[<path>]=value` | Repeatable; a payload field (dot path) equals a value. Needs `--type`   |
+| `--fields <a,b>`                | `payload_fields`               | Payload fields to return in each log's `payload`. Needs `--type`        |
+| `--match <all\|any>`            | `filter_match`                 | `all` (default) sends nothing                                           |
+| `--end-user-only`               | `end_user_facing_only=true`    | Only event types shown to end users                                     |
+
+These combinations are usage errors, raised before any request, matching the Backend API's own checks:
+
+- `--user` with `--identifier`, `--actor` or `--subject`; `--identifier` with `--actor` or `--subject`.
+- `--user` that isn't a user ID (`user_…`), or `--identifier` that is one.
+- `--type` with a `*` anywhere but the end, or more than one.
+- `--payload-filter` or `--fields` without `--type`, and `--fields` with `--match any`.
+- An empty value for any string filter flag (`--user ""`, as from an unset shell variable), since the API would treat it as no filter and list every log.
+- A `--payload-filter` without `=` or with an empty path or value, and a payload path with an empty segment (`a..b`).
+
+The API's own limits on payload paths (how many, how deep, how long a value) and whether a path exists for the type are left to the API: a path it rejects fails with its error, which lists the allowed paths for the type.
+
+With `--fields`, the table gets a `PAYLOAD` column with the returned fields as `path=value` pairs. JSON output passes each log's `payload` through as the API returns it.
 
 #### Paging
 
@@ -88,6 +125,6 @@ JSON output:
 
 ## API endpoints
 
-| Method | Path       | Description                                                      |
-| ------ | ---------- | ---------------------------------------------------------------- |
-| `GET`  | `/v1/logs` | List logs (`view=flat`, `limit`, `starting_after`), newest first |
+| Method | Path       | Description                                                                                                                                                                                                                                                                                                                     |
+| ------ | ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/logs` | List logs (`view=flat`, `limit`, `starting_after`, `event_time_after`, `event_time_before`, `type`, `user_id`, `identifier`, `actor`, `subject`, `session_id`, `client_id`, `ip_address`, `trace_id`, `impersonator_user_id`, `payload_filter[<path>]`, `payload_fields`, `filter_match`, `end_user_facing_only`), newest first |
