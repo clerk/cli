@@ -5,6 +5,7 @@ import { collectOptionValues, parseIntegerOption } from "../../lib/option-parser
 import { FILTER_MATCH_CHOICES } from "./filters.ts";
 import { follow } from "./follow.ts";
 import { get, MAX_LIMIT as GET_MAX_LIMIT } from "./get.ts";
+import { collectChoice, GROUP_STATUS_CHOICES, GROUP_TYPE_CHOICES } from "./grouped.ts";
 import { list } from "./list.ts";
 import { schema } from "./schema.ts";
 import { parseDuration, parseTimestamp } from "./time.ts";
@@ -63,10 +64,27 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     )
     .option(
       "--limit <number>",
-      "Maximum logs to return (1-500, default 50; with --follow, the backfill)",
+      "Maximum logs to return (1-500, default 50; at most 100 with --grouped; with --follow, the backfill)",
       (value) => parseIntegerOption(value, "--limit", { min: 1, max: 500 }),
     )
     .option("--cursor <cursor>", "Continue from the cursor a previous run printed")
+    .option(
+      "--grouped",
+      "One row per sign-in or sign-up flow, with its events below. Filters keep flows with a matching event; the time range picks flows by when they started",
+    )
+    .addOption(
+      createOption("--group-type <type>", "With --grouped, only flows of this type; repeatable")
+        .choices(GROUP_TYPE_CHOICES)
+        .argParser(collectChoice("--group-type", GROUP_TYPE_CHOICES)),
+    )
+    .addOption(
+      createOption(
+        "--status <status>",
+        "With --grouped, only flows that ended this way; repeatable",
+      )
+        .choices(GROUP_STATUS_CHOICES)
+        .argParser(collectChoice("--status", GROUP_STATUS_CHOICES)),
+    )
     .option(
       "--since <duration>",
       "Only logs from the last duration (30m, 2h, 7d, 1h30m)",
@@ -127,6 +145,14 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       {
         command: "clerk logs list --type user.created --fields email_address,username",
         description: "New users with their email address and username",
+      },
+      {
+        command: "clerk logs list --grouped",
+        description: "Sign-in and sign-up flows, one row each, with their events",
+      },
+      {
+        command: "clerk logs list --grouped --group-type sign_in --status failed",
+        description: "Failed sign-ins",
       },
       { command: "clerk logs list --follow", description: "Print new logs as they arrive" },
       {

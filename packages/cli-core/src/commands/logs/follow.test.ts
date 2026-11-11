@@ -703,6 +703,16 @@ describe("logs --follow", () => {
       message: "--follow can't be combined with --cursor.",
     },
     {
+      label: "--grouped",
+      options: { grouped: true },
+      message: "--follow can't be combined with --grouped.",
+    },
+    {
+      label: "--group-type without --grouped",
+      options: { groupType: ["sign_in"] },
+      message: "--group-type requires --grouped.",
+    },
+    {
       label: "an interval under 1s",
       options: { interval: 500 },
       message: "--interval must be at least 1s.",

@@ -11,28 +11,38 @@
 
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import type { ApiResponse } from "../../lib/fetch.ts";
-import { bold, cyan, dim } from "../../lib/color.ts";
+import { bold, dim } from "../../lib/color.ts";
 import { CliError, throwUsageError, withApiContext } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { closeStatusForError } from "../../lib/signals.ts";
 import { intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import {
-  formatLogLocation,
   formatLogTime,
+  logColumnHeaders,
+  logRowCells,
   logsRequest,
   pad,
   type Log,
   type LogListCursor,
+  type LogListItem,
   type LogListPage,
   type LogsTargetingOptions,
 } from "./shared.ts";
 import { resolveFilters, type LogFilterOptions, type LogFilters } from "./filters.ts";
+import {
+  GROUPED_MAX_LIMIT,
+  groupedCount,
+  printGroupedTable,
+  resolveListView,
+  type GroupedOptions,
+} from "./grouped.ts";
 import { resolveTimeRange, type TimeRangeOptions } from "./time.ts";
 
 export type LogsListOptions = LogsTargetingOptions &
   TimeRangeOptions &
-  LogFilterOptions & {
+  LogFilterOptions &
+  GroupedOptions & {
     limit?: number;
     cursor?: string;
     /** Only valid with `--follow`, which `follow.ts` handles; rejected here. */
@@ -42,9 +52,12 @@ export type LogsListOptions = LogsTargetingOptions &
 /** `event_time_after` / `event_time_before`, inclusive Unix milliseconds. */
 export type TimeRange = { after?: number; before?: number };
 
-/** What `--json` prints: the logs and where to continue from. */
-export type LogsListResult = {
-  data: Log[];
+/**
+ * What `--json` prints: the logs (with `--grouped`, groups and the logs
+ * outside any group) and where to continue from.
+ */
+export type LogsListResult<T extends LogListItem = Log> = {
+  data: T[];
   cursor: {
     /** Pass to `--cursor` for the next page. Null when there are no older logs. */
     next: string | null;
@@ -65,18 +78,27 @@ export const MAX_PAGE_SIZE = 500;
  */
 export const MAX_REQUESTS = 50;
 
-/** What every request of a run filters on: the time range and the event filters. */
-export type ListQuery = { range: TimeRange; filters: LogFilters };
+/**
+ * What every request of a run filters on: the time range, the event filters
+ * and, with `--grouped`, the view (`flat` when left out) and its group filters.
+ */
+export type ListQuery = {
+  range: TimeRange;
+  filters: LogFilters;
+  view?: "flat" | "grouped";
+  groupFilters?: LogFilters;
+};
 
 export function buildListPath(
   limit: number,
   startingAfter: string | undefined,
-  { range, filters }: ListQuery,
+  { range, filters, view = "flat", groupFilters = [] }: ListQuery,
 ): string {
-  const params = new URLSearchParams({ view: "flat", limit: String(limit) });
+  const params = new URLSearchParams({ view, limit: String(limit) });
   if (range.after !== undefined) params.set("event_time_after", String(range.after));
   if (range.before !== undefined) params.set("event_time_before", String(range.before));
   for (const [name, value] of filters) params.append(name, value);
+  for (const [name, value] of groupFilters) params.append(name, value);
   if (startingAfter) params.set("starting_after", startingAfter);
   return `/logs?${params}`;
 }
@@ -86,7 +108,10 @@ export function buildListPath(
  * some logs were already in hand: `result` keeps them, with `cursor.next`
  * pointing at the page that failed so `--cursor` retries it.
  */
-export type FetchLogsOutcome = { result: LogsListResult; error?: unknown };
+export type FetchLogsOutcome<T extends LogListItem = Log> = {
+  result: LogsListResult<T>;
+  error?: unknown;
+};
 
 /** Sends one `GET /v1/logs` request for a path built by {@link buildListPath}. */
 export type LogsPageRequest = (path: string) => Promise<ApiResponse>;
@@ -103,33 +128,35 @@ function isObject(value: unknown): value is Record<string, unknown> {
  * quiet poll that moves `--follow` past logs it never printed. An item that
  * isn't an object would fail later with a `TypeError` instead.
  */
-export function readLogsPage(response: ApiResponse): LogListPage {
+export function readLogsPage<T extends LogListItem = Log>(response: ApiResponse): LogListPage<T> {
   const body = response.body;
   if (!isObject(body) || !Array.isArray(body.data) || !body.data.every(isObject)) {
     throw new CliError("The Logs API returned an unexpected response.");
   }
-  return body as LogListPage;
+  return body as LogListPage<T>;
 }
 
 /**
  * Pages through `GET /v1/logs` until `limit` logs are in hand or the API runs
  * out. `sendRequest` sends each page; `clerk logs --follow` passes one that retries.
+ * The grouped view pages the same way, with groups and ungrouped logs as items.
  */
-export async function fetchLogs(
+export async function fetchLogs<T extends LogListItem = Log>(
   secretKey: string,
   limit: number,
   cursor: string | undefined,
   query: ListQuery,
   sendRequest: LogsPageRequest = async (path) => logsRequest(path, secretKey),
-): Promise<FetchLogsOutcome> {
-  const data: Log[] = [];
+): Promise<FetchLogsOutcome<T>> {
+  const maxPageSize = query.view === "grouped" ? GROUPED_MAX_LIMIT : MAX_PAGE_SIZE;
+  const data: T[] = [];
   let startingAfter = cursor;
   let first: LogListCursor | undefined;
   let last: LogListCursor | undefined;
 
   for (let request = 0; request < MAX_REQUESTS && data.length < limit; request++) {
-    const pageSize = Math.min(limit - data.length, MAX_PAGE_SIZE);
-    let page: LogListPage;
+    const pageSize = Math.min(limit - data.length, maxPageSize);
+    let page: LogListPage<T>;
     try {
       const response = await withApiContext(
         sendRequest(buildListPath(pageSize, startingAfter, query)),
@@ -138,7 +165,7 @@ export async function fetchLogs(
       // A body that isn't a JSON object counts as a failed request, so the
       // logs already in hand are kept instead of crashing or reading as "no
       // more logs".
-      page = readLogsPage(response);
+      page = readLogsPage<T>(response);
     } catch (error) {
       if (data.length === 0) throw error;
       return { result: toResult(data, first, last, startingAfter ?? null), error };
@@ -161,12 +188,12 @@ export async function fetchLogs(
   return { result: toResult(data, first, last, exhausted ? null : last!.starting_after!) };
 }
 
-function toResult(
-  data: Log[],
+function toResult<T extends LogListItem>(
+  data: T[],
   first: LogListCursor | undefined,
   last: LogListCursor | undefined,
   next: string | null,
-): LogsListResult {
+): LogsListResult<T> {
   return {
     data,
     cursor: {
@@ -180,58 +207,18 @@ function toResult(
   };
 }
 
-/** Leaves of a (possibly nested) payload as `path=value`, space-separated. */
-export function formatPayload(payload: Record<string, unknown> | undefined): string {
-  const pairs: string[] = [];
-  const walk = (value: unknown, path: string): void => {
-    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
-      for (const [key, child] of Object.entries(value)) walk(child, path ? `${path}.${key}` : key);
-      return;
-    }
-    // Payload strings are end-user input (usernames, email addresses), so
-    // control characters, C1 included, are escaped before reaching the terminal.
-    const text =
-      typeof value === "string"
-        ? value.replace(
-            /\p{Cc}/gu,
-            (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
-          )
-        : JSON.stringify(value);
-    pairs.push(`${path}=${text}`);
-  };
-  walk(payload ?? {}, "");
-  return pairs.join(" ");
-}
-
-/** The table's column headers, `PAYLOAD` only with `--fields`. */
-export function logColumnHeaders(showPayload: boolean): string[] {
-  const headers = ["TIME", "TYPE", "ACTOR", "SUBJECT", "LOCATION"];
-  if (showPayload) headers.push("PAYLOAD");
-  headers.push("LOG ID");
-  return headers;
-}
-
 /** The `list` table: one row per log, columns sized to the widest cell. */
 export function printTable(logs: Log[], showPayload: boolean): void {
   const now = new Date();
   const headers = logColumnHeaders(showPayload);
   const rows = [
     headers.map((header) => bold(header)),
-    ...logs.map((entry) => [
-      formatLogTime(entry.event_time, now),
-      cyan(entry.type),
-      entry.actor || dim("-"),
-      entry.subject || dim("-"),
-      formatLogLocation(entry) || dim("-"),
-      ...(showPayload ? [formatPayload(entry.payload) || dim("-")] : []),
-      dim(entry.id),
-    ]),
+    ...logs.map((entry) => logRowCells(entry, showPayload, now)),
   ];
   for (const line of pad(rows)) log.info(line);
 }
 
-function summary(result: LogsListResult): string {
-  const count = `${result.data.length} ${result.data.length === 1 ? "log" : "logs"}`;
+function summary(result: LogsListResult<LogListItem>, count: string): string {
   const parts = [count];
   const { searched_from: from, searched_to: to, next } = result.cursor;
   if (from !== null && to !== null) {
@@ -242,14 +229,23 @@ function summary(result: LogsListResult): string {
   return parts.join(" · ");
 }
 
-function printHuman(result: LogsListResult, showPayload: boolean): void {
+function printHuman(
+  result: LogsListResult<LogListItem>,
+  showPayload: boolean,
+  grouped: boolean,
+): void {
   log.blank();
   if (result.data.length === 0) {
     log.warn("No logs found.");
+  } else if (grouped) {
+    printGroupedTable(result.data, showPayload);
   } else {
-    printTable(result.data, showPayload);
+    printTable(result.data as Log[], showPayload);
   }
-  log.info(dim(`\n${summary(result)}`));
+  const count = grouped
+    ? groupedCount(result.data)
+    : `${result.data.length} ${result.data.length === 1 ? "log" : "logs"}`;
+  log.info(dim(`\n${summary(result, count)}`));
   if (result.cursor.retention_limit_reached) {
     const days = result.cursor.retention_days;
     log.warn(
@@ -268,6 +264,7 @@ export async function list(options: LogsListOptions = {}): Promise<void> {
   let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
+    const { view, groupFilters } = resolveListView(options);
     const range = resolveTimeRange(options);
     const filters = resolveFilters(options);
     const secretKey = await resolveBapiSecretKey({
@@ -276,13 +273,18 @@ export async function list(options: LogsListOptions = {}): Promise<void> {
       instance: options.instance,
     });
     const { result, error } = await withSpinner("Fetching logs...", async () =>
-      fetchLogs(secretKey, options.limit ?? DEFAULT_LIMIT, options.cursor, { range, filters }),
+      fetchLogs<LogListItem>(secretKey, options.limit ?? DEFAULT_LIMIT, options.cursor, {
+        range,
+        filters,
+        view,
+        groupFilters,
+      }),
     );
 
     if (json) {
       log.data(JSON.stringify(result, null, 2));
     } else {
-      printHuman(result, options.fields !== undefined);
+      printHuman(result, options.fields !== undefined, view === "grouped");
     }
 
     if (error) {
