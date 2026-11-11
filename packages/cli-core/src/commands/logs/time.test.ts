@@ -1,5 +1,16 @@
 import { test, expect, describe } from "bun:test";
+import { EXIT_CODE } from "../../lib/errors.ts";
 import { parseDuration, parseTimestamp, resolveTimeRange } from "./time.ts";
+
+function captureError(fn: () => unknown): Error {
+  try {
+    fn();
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw error;
+  }
+  throw new Error("Expected the call to throw");
+}
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -33,6 +44,9 @@ describe("parseDuration", () => {
 describe("parseTimestamp", () => {
   test.each([
     ["Unix milliseconds", "1762702200000", 1_762_702_200_000],
+    ["the smallest accepted Unix milliseconds", "100000000000", 100_000_000_000],
+    ["Unix milliseconds with leading zeros", "0001762702200000", 1_762_702_200_000],
+    ["Unix milliseconds with surrounding spaces", " 1762702200000 ", 1_762_702_200_000],
     ["a date, as midnight UTC", "2026-11-09", Date.UTC(2026, 10, 9)],
     ["a UTC date-time", "2026-11-09T15:30:00Z", Date.UTC(2026, 10, 9, 15, 30)],
     ["a date-time without an offset, as UTC", "2026-11-09T15:30:00", Date.UTC(2026, 10, 9, 15, 30)],
@@ -58,9 +72,36 @@ describe("parseTimestamp", () => {
     "2027-02-29",
     "2026-02-31T10:00",
     "2026-02-30T10:00:00-05:00",
+    "-1762702200000",
+    "-1",
   ])("rejects %p naming the flag", (value) => {
     expect(() => parseTimestamp(value, "--to")).toThrow(`Invalid --to value "${value}"`);
   });
+
+  test.each([
+    ["current Unix seconds", "1762702200", "1762702200000"],
+    ["the largest rejected number", "99999999999", "99999999999000"],
+    ["the smallest number read as seconds", "100000000", "100000000000"],
+    ["Unix seconds with leading zeros", "01762702200", "1762702200000"],
+  ])("rejects %s as Unix seconds, suggesting milliseconds", (_name, value, suggestion) => {
+    const error = captureError(() => parseTimestamp(value, "--from"));
+    expect(error.message).toBe(
+      `Invalid --from value "${value}". It looks like Unix seconds, but --from takes Unix milliseconds. Use ${suggestion} or an ISO 8601 date-time like 2026-11-09T15:30:00Z.`,
+    );
+    expect(error).toMatchObject({ exitCode: EXIT_CODE.USAGE });
+  });
+
+  test.each(["0", "000", "1000", "99999999"])(
+    "rejects %p as too early to be a log time",
+    (value) => {
+      const error = captureError(() => parseTimestamp(value, "--to"));
+      expect(error.message).toStartWith(
+        `Invalid --to value "${value}". As Unix milliseconds it's before March 1973`,
+      );
+      expect(error.message).not.toContain("Unix seconds");
+      expect(error).toMatchObject({ exitCode: EXIT_CODE.USAGE });
+    },
+  );
 });
 
 describe("resolveTimeRange", () => {
