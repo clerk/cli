@@ -1,0 +1,478 @@
+import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
+import { BapiError, CliError } from "../../lib/errors.ts";
+import { useCaptureLog } from "../../test/lib/stubs.ts";
+
+const mockBapiRequest = mock();
+mock.module("../../lib/bapi.ts", () => ({
+  bapiRequest: (...args: unknown[]) => mockBapiRequest(...args),
+}));
+
+const mockResolveBapiSecretKey = mock();
+mock.module("../../lib/bapi-command.ts", () => ({
+  resolveBapiSecretKey: (...args: unknown[]) => mockResolveBapiSecretKey(...args),
+}));
+
+mock.module("../../lib/spinner.ts", () => ({
+  intro: () => {},
+  outro: () => {},
+  pausedOutro: () => {},
+  bar: () => {},
+  withSpinner: (_msg: string, fn: () => Promise<unknown>) => fn(),
+}));
+
+const mockIsAgent = mock();
+mock.module("../../mode.ts", () => ({
+  isAgent: (...args: unknown[]) => mockIsAgent(...args),
+  isHuman: (...args: unknown[]) => !mockIsAgent(...args),
+  setMode: () => {},
+  getMode: () => "human",
+}));
+
+const {
+  follow,
+  FollowBoundary,
+  DEFAULT_FOLLOW_INTERVAL_MS,
+  MAX_RETRY_DELAY_MS,
+  isTransientError,
+  retryDelayMs,
+} = await import("./follow.ts");
+const { list } = await import("./list.ts");
+
+const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\x1b\[[0-9;]*m`, "g");
+const NOW = Date.UTC(2026, 10, 9, 15, 30, 0);
+
+function makeLog(id: string, eventTime: number, overrides: Record<string, unknown> = {}) {
+  return {
+    object: "log",
+    id,
+    event_time: eventTime,
+    type: "user.created",
+    actor: "user_123",
+    subject: "user_123",
+    event_context: {
+      device: { ip_address: "203.0.113.7", location: { city: "Lima", country_code: "PE" } },
+    },
+    ...overrides,
+  };
+}
+
+function page(data: unknown[], cursor: Record<string, unknown> = { next_page_status: "false" }) {
+  return { status: 200, headers: new Headers(), body: { data, cursor }, rawBody: "" };
+}
+
+function apiError(status: number, headers: Record<string, string> = {}) {
+  return new BapiError(
+    status,
+    JSON.stringify({ errors: [{ message: `status ${status}`, code: "error" }] }),
+    new Headers(headers),
+  );
+}
+
+function requestedUrl(call: number): URL {
+  const request = mockBapiRequest.mock.calls[call]?.[0] as { path: string };
+  return new URL(request.path, "https://api.clerk.test");
+}
+
+function printedIds(out: string): string[] {
+  return out
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => (JSON.parse(line) as { id: string }).id);
+}
+
+/**
+ * Runs `follow` with a fake clock and a sleep that returns at once, stopping
+ * (as Ctrl-C would) when the poll interval is slept for the `polls + 1`th time.
+ */
+async function runFollow(options: Parameters<typeof follow>[0], polls: number) {
+  const controller = new AbortController();
+  const sleeps: number[] = [];
+  let intervals = 0;
+  const sleep = mock(async (ms: number) => {
+    sleeps.push(ms);
+    if (ms === (options?.interval ?? DEFAULT_FOLLOW_INTERVAL_MS) && ++intervals > polls) {
+      controller.abort();
+    }
+  });
+  await follow(options, { now: () => NOW, sleep, signal: controller.signal });
+  return { sleeps, controller };
+}
+
+describe("logs --follow", () => {
+  const captured = useCaptureLog();
+
+  beforeEach(() => {
+    mockIsAgent.mockReturnValue(false);
+    mockResolveBapiSecretKey.mockResolvedValue("sk_test_123");
+    mockBapiRequest.mockResolvedValue(page([]));
+  });
+
+  afterEach(() => {
+    mockBapiRequest.mockReset();
+    mockResolveBapiSecretKey.mockReset();
+    mockIsAgent.mockReset();
+  });
+
+  test("prints the backfill oldest first, then polls from the newest event_time", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([makeLog("log_2", 2_000), makeLog("log_1", 1_000)]))
+      .mockResolvedValueOnce(page([makeLog("log_3", 3_000), makeLog("log_2", 2_000)]))
+      .mockResolvedValueOnce(page([makeLog("log_3", 3_000)]));
+
+    await runFollow({ json: true }, 2);
+
+    expect(printedIds(captured.out)).toEqual(["log_1", "log_2", "log_3"]);
+    expect(requestedUrl(0).searchParams.has("event_time_after")).toBe(false);
+    expect(requestedUrl(1).searchParams.get("event_time_after")).toBe("2000");
+    expect(requestedUrl(2).searchParams.get("event_time_after")).toBe("3000");
+    expect(requestedUrl(1).searchParams.get("limit")).toBe("500");
+    expect(requestedUrl(1).searchParams.get("view")).toBe("flat");
+  });
+
+  test("waits the interval between polls, 2s by default", async () => {
+    const { sleeps } = await runFollow({ json: true }, 2);
+    expect(sleeps).toEqual([2_000, 2_000, 2_000]);
+  });
+
+  test("honors --interval", async () => {
+    const { sleeps } = await runFollow({ json: true, interval: 5_000 }, 1);
+    expect(sleeps).toEqual([5_000, 5_000]);
+  });
+
+  test("bounds only the backfill with --limit", async () => {
+    mockBapiRequest.mockResolvedValueOnce(page([makeLog("log_1", 1_000)]));
+
+    await runFollow({ json: true, limit: 7 }, 1);
+
+    expect(requestedUrl(0).searchParams.get("limit")).toBe("7");
+    expect(requestedUrl(1).searchParams.get("limit")).toBe("500");
+  });
+
+  test("dedupes logs that share the boundary millisecond by ID", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([makeLog("log_b", 5_000), makeLog("log_a", 5_000)]))
+      // Same millisecond: log_a and log_b again, log_c new.
+      .mockResolvedValueOnce(
+        page([makeLog("log_c", 5_000), makeLog("log_b", 5_000), makeLog("log_a", 5_000)]),
+      )
+      .mockResolvedValueOnce(page([makeLog("log_d", 6_000), makeLog("log_c", 5_000)]));
+
+    await runFollow({ json: true }, 2);
+
+    expect(printedIds(captured.out)).toEqual(["log_a", "log_b", "log_c", "log_d"]);
+    expect(requestedUrl(2).searchParams.get("event_time_after")).toBe("5000");
+  });
+
+  test("prints every log of a poll in chronological order", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([makeLog("log_1", 1_000)]))
+      .mockResolvedValueOnce(
+        page([makeLog("log_4", 4_000), makeLog("log_3", 3_000), makeLog("log_2", 2_000)]),
+      );
+
+    await runFollow({ json: true }, 1);
+
+    expect(printedIds(captured.out)).toEqual(["log_1", "log_2", "log_3", "log_4"]);
+  });
+
+  test("keeps paging a poll while next_page_status is unknown", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([makeLog("log_1", 1_000)]))
+      .mockResolvedValueOnce(page([], { next_page_status: "unknown", starting_after: "cur_1" }))
+      .mockResolvedValueOnce(
+        page([makeLog("log_3", 3_000)], { next_page_status: "unknown", starting_after: "cur_2" }),
+      )
+      .mockResolvedValueOnce(page([makeLog("log_2", 2_000)], { next_page_status: "false" }));
+
+    await runFollow({ json: true }, 1);
+
+    expect(mockBapiRequest).toHaveBeenCalledTimes(4);
+    expect(requestedUrl(2).searchParams.get("starting_after")).toBe("cur_1");
+    expect(requestedUrl(3).searchParams.get("starting_after")).toBe("cur_2");
+    expect(requestedUrl(3).searchParams.get("event_time_after")).toBe("1000");
+    expect(printedIds(captured.out)).toEqual(["log_1", "log_2", "log_3"]);
+  });
+
+  test("follows from the end of the searched window when the backfill is empty", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([], { next_page_status: "false", searched_to: 9_000 }))
+      .mockResolvedValueOnce(page([makeLog("log_1", 9_000)]));
+
+    await runFollow({ json: true }, 1);
+
+    expect(requestedUrl(1).searchParams.get("event_time_after")).toBe("9000");
+    expect(printedIds(captured.out)).toEqual(["log_1"]);
+  });
+
+  test("sends the time range and filters on the backfill and the event filters on every poll", async () => {
+    mockBapiRequest.mockResolvedValueOnce(page([makeLog("log_1", NOW - 1_000)]));
+
+    await runFollow({ json: true, since: 3_600_000, type: "user.created", user: "user_123" }, 1);
+
+    expect(requestedUrl(0).searchParams.get("event_time_after")).toBe(String(NOW - 3_600_000));
+    const poll = requestedUrl(1).searchParams;
+    expect(poll.get("event_time_after")).toBe(String(NOW - 1_000));
+    expect(poll.get("type")).toBe("user.created");
+    expect(poll.get("user_id")).toBe("user_123");
+  });
+
+  test("prints NDJSON: one log object per line", async () => {
+    const entry = makeLog("log_1", 1_000);
+    mockBapiRequest.mockResolvedValueOnce(page([entry, makeLog("log_0", 500)]));
+
+    await runFollow({ json: true }, 0);
+
+    const lines = captured.out.trim().split("\n");
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[1]!)).toEqual(entry);
+    expect(captured.err).not.toContain("LOG ID");
+  });
+
+  test("prints NDJSON in agent mode without --json", async () => {
+    mockIsAgent.mockReturnValue(true);
+    mockBapiRequest.mockResolvedValueOnce(page([makeLog("log_1", 1_000)]));
+
+    await runFollow({}, 0);
+
+    expect(printedIds(captured.out)).toEqual(["log_1"]);
+  });
+
+  test("prints fixed-width lines under a header to stderr in human mode", async () => {
+    mockBapiRequest.mockResolvedValueOnce(
+      page([makeLog("log_2", NOW, { actor: "", type: "session.created" }), makeLog("log_1", NOW)]),
+    );
+
+    await runFollow({}, 0);
+
+    expect(captured.out).toBe("");
+    const lines = captured.err.replace(ANSI_ESCAPE_PATTERN, "").split("\n");
+    const header = lines.find((line) => line.includes("LOG ID"))!;
+    expect(header).toMatch(/TIME\s+TYPE\s+ACTOR\s+SUBJECT\s+LOCATION\s+LOG ID/);
+    const first = lines.findIndex((line) => line.includes("log_1"));
+    const second = lines.findIndex((line) => line.includes("log_2"));
+    expect(first).toBeLessThan(second);
+    // Fixed widths: the LOG ID column starts at the same offset on every line.
+    expect(lines[first]!.indexOf("log_1")).toBe(header.indexOf("LOG ID"));
+    expect(lines[second]!.indexOf("log_2")).toBe(header.indexOf("LOG ID"));
+    expect(lines[second]).toContain("session.created");
+    expect(captured.err).toContain("Press Ctrl-C to stop");
+  });
+
+  test("puts the PAYLOAD column last with --fields", async () => {
+    mockBapiRequest.mockResolvedValueOnce(
+      page([makeLog("log_1", NOW, { payload: { user_id: "user_123" } })]),
+    );
+
+    await runFollow({ type: "user.created", fields: "user_id" }, 0);
+
+    const plain = captured.err.replace(ANSI_ESCAPE_PATTERN, "");
+    expect(plain).toMatch(/LOCATION\s+LOG ID\s+PAYLOAD/);
+    expect(plain).toMatch(/log_1\s+user_id=user_123/);
+  });
+
+  test("retries a transient failure with backoff and a warning, then keeps following", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([makeLog("log_1", 1_000)]))
+      .mockRejectedValueOnce(apiError(503))
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce(page([makeLog("log_2", 2_000)]));
+
+    // An interval the backoff can't be mistaken for.
+    const { sleeps } = await runFollow({ json: true, interval: 5_000 }, 1);
+
+    expect(sleeps).toEqual([5_000, 1_000, 2_000, 5_000]);
+    expect(printedIds(captured.out)).toEqual(["log_1", "log_2"]);
+    expect(captured.err).toContain("Fetching logs failed (503: status 503). Retrying in 1s");
+    expect(captured.err).toContain("Fetching logs failed (fetch failed). Retrying in 2s");
+  });
+
+  test("retries a failed backfill request too", async () => {
+    mockBapiRequest
+      .mockRejectedValueOnce(apiError(500))
+      .mockResolvedValueOnce(page([makeLog("log_1", 1_000)]));
+
+    await runFollow({ json: true }, 0);
+
+    expect(printedIds(captured.out)).toEqual(["log_1"]);
+    expect(captured.err).toContain("Retrying in 1s");
+  });
+
+  test("waits out a 429's Retry-After", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([]))
+      .mockRejectedValueOnce(apiError(429, { "retry-after": "7" }))
+      .mockResolvedValueOnce(page([]));
+
+    const { sleeps } = await runFollow({ json: true }, 1);
+
+    expect(sleeps).toContain(7_000);
+    expect(captured.err).toContain("Retrying in 7s");
+  });
+
+  test.each([401, 403, 400, 404])("exits with the API error on a %d", async (status) => {
+    mockBapiRequest.mockResolvedValueOnce(page([makeLog("log_1", 1_000)]));
+    mockBapiRequest.mockRejectedValueOnce(apiError(status));
+
+    await expect(runFollow({ json: true }, 5)).rejects.toMatchObject({ status });
+    expect(mockBapiRequest).toHaveBeenCalledTimes(2);
+    expect(captured.err).not.toContain("Retrying");
+  });
+
+  test("exits with the API error when the backfill is unauthorized", async () => {
+    mockBapiRequest.mockRejectedValueOnce(apiError(401));
+
+    await expect(runFollow({ json: true }, 5)).rejects.toMatchObject({ status: 401 });
+    expect(captured.out).toBe("");
+  });
+
+  test("stops cleanly when the signal aborts during the interval", async () => {
+    mockBapiRequest.mockResolvedValueOnce(page([makeLog("log_1", 1_000)]));
+
+    const { controller } = await runFollow({ json: true }, 0);
+
+    expect(controller.signal.aborted).toBe(true);
+    expect(mockBapiRequest).toHaveBeenCalledTimes(1);
+  });
+
+  test("stops cleanly when the signal aborts an in-flight poll", async () => {
+    const controller = new AbortController();
+    mockBapiRequest
+      .mockResolvedValueOnce(page([makeLog("log_1", 1_000)]))
+      .mockImplementationOnce(async () => {
+        controller.abort();
+        throw new DOMException("The operation was aborted.", "AbortError");
+      });
+
+    await follow(
+      { json: true },
+      { now: () => NOW, sleep: async () => {}, signal: controller.signal },
+    );
+
+    expect(printedIds(captured.out)).toEqual(["log_1"]);
+    expect(captured.err).not.toContain("Retrying");
+  });
+
+  test("passes its stop signal to every request", async () => {
+    const { controller } = await runFollow({ json: true }, 1);
+
+    const request = mockBapiRequest.mock.calls[1]?.[0] as { signal?: AbortSignal };
+    expect(request.signal).toBe(controller.signal);
+  });
+
+  test("stops on Ctrl-C and gives the SIGINT listeners back", async () => {
+    const before = process.listeners("SIGINT");
+    let sleeps = 0;
+    const done = follow(
+      { json: true },
+      {
+        now: () => NOW,
+        sleep: async () => {
+          if (++sleeps === 2) process.emit("SIGINT");
+        },
+      },
+    );
+
+    await done;
+
+    expect(sleeps).toBe(2);
+    expect(process.listeners("SIGINT")).toEqual(before);
+  });
+
+  test("stops with an error when a poll repeats its cursor", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([]))
+      .mockResolvedValueOnce(page([], { next_page_status: "unknown", starting_after: "cur_1" }))
+      .mockResolvedValueOnce(page([], { next_page_status: "unknown", starting_after: "cur_1" }));
+
+    await expect(runFollow({ json: true }, 5)).rejects.toThrow("same cursor twice");
+  });
+
+  const invalid = [
+    { label: "--to", options: { to: 1_000 }, message: "--follow can't be combined with --to" },
+    {
+      label: "--cursor",
+      options: { cursor: "cur_1" },
+      message: "--follow can't be combined with --cursor.",
+    },
+    {
+      label: "an interval under 1s",
+      options: { interval: 500 },
+      message: "--interval must be at least 1s.",
+    },
+    {
+      label: "--since with --from",
+      options: { since: 1_000, from: 1_000 },
+      message: "Pass either --since or --from, not both.",
+    },
+    {
+      label: "an invalid filter",
+      options: { user: "user_1", actor: "user_2" },
+      message: "--user can't be combined with --actor.",
+    },
+  ];
+
+  test.each(invalid)(
+    "rejects $label before resolving a key or calling the API",
+    async ({ options, message }) => {
+      await expect(runFollow({ json: true, ...options }, 0)).rejects.toThrow(message);
+      expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+      expect(mockBapiRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  test("rejects --interval without --follow", async () => {
+    await expect(list({ json: true, interval: 2_000 })).rejects.toThrow(
+      "--interval requires --follow.",
+    );
+    expect(mockBapiRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe("FollowBoundary", () => {
+  test("only remembers the IDs at the newest millisecond", () => {
+    const boundary = new FollowBoundary();
+    boundary.mark(makeLog("log_1", 1_000) as never);
+    boundary.mark(makeLog("log_2", 1_000) as never);
+    expect(boundary.size).toBe(2);
+
+    boundary.mark(makeLog("log_3", 2_000) as never);
+
+    expect(boundary.size).toBe(1);
+    expect(boundary.after).toBe(2_000);
+    expect(boundary.isNew(makeLog("log_3", 2_000) as never)).toBe(false);
+    expect(boundary.isNew(makeLog("log_4", 2_000) as never)).toBe(true);
+    expect(boundary.isNew(makeLog("log_1", 1_000) as never)).toBe(false);
+  });
+});
+
+describe("retry policy", () => {
+  test.each([
+    { error: apiError(500), transient: true },
+    { error: apiError(503), transient: true },
+    { error: apiError(429), transient: true },
+    { error: new TypeError("fetch failed"), transient: true },
+    { error: apiError(401), transient: false },
+    { error: apiError(403), transient: false },
+    { error: apiError(422), transient: false },
+    { error: new CliError("The Logs API returned an unexpected response."), transient: false },
+    { error: new DOMException("aborted", "AbortError"), transient: false },
+  ])("treats $error.message as transient: $transient", ({ error, transient }) => {
+    expect(isTransientError(error)).toBe(transient);
+  });
+
+  test.each([
+    [1, 1_000],
+    [2, 2_000],
+    [3, 4_000],
+    [5, 16_000],
+    [6, MAX_RETRY_DELAY_MS],
+    [20, MAX_RETRY_DELAY_MS],
+  ])("backs off attempt %d by %dms", (attempt, expected) => {
+    expect(retryDelayMs(apiError(503), attempt)).toBe(expected);
+  });
+
+  test("caps a 429's Retry-After at the maximum backoff", () => {
+    expect(retryDelayMs(apiError(429, { "retry-after": "600" }), 1)).toBe(MAX_RETRY_DELAY_MS);
+  });
+});

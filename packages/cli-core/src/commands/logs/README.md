@@ -31,7 +31,7 @@ Every request sends `Clerk-API-Version: 2026-08-20`, the Backend API version who
 
 ### `clerk logs list`
 
-List logs, newest first. `list` is the default subcommand, so `clerk logs` on its own does the same.
+List logs, newest first, or with `--follow`, keep printing new logs as they arrive. `list` is the default subcommand, so `clerk logs` on its own does the same.
 
 ```sh
 clerk logs
@@ -42,17 +42,21 @@ clerk logs --type 'sign_in.*' --user user_123
 clerk logs --type user.created --fields email_address,username
 clerk logs list --cursor <cursor>
 clerk logs list --app app_123 --instance prod --json
+clerk logs --follow
+clerk logs --follow --type 'sign_in.*' --json
 ```
 
-| Option               | Description                                     |
-| -------------------- | ----------------------------------------------- |
-| `--limit <number>`   | Maximum logs to return, 1-500 (default 50)      |
-| `--cursor <cursor>`  | Continue from the cursor a previous run printed |
-| `--since <duration>` | Only logs from the last duration                |
-| `--from <timestamp>` | Only logs at or after a time                    |
-| `--to <timestamp>`   | Only logs at or before a time                   |
-| Filter flags         | See [Filters](#filters)                         |
-| `--json`             | Output as JSON (implied in agent mode)          |
+| Option                  | Description                                                           |
+| ----------------------- | --------------------------------------------------------------------- |
+| `--limit <number>`      | Maximum logs to return, 1-500 (default 50)                            |
+| `--cursor <cursor>`     | Continue from the cursor a previous run printed                       |
+| `--since <duration>`    | Only logs from the last duration                                      |
+| `--from <timestamp>`    | Only logs at or after a time                                          |
+| `--to <timestamp>`      | Only logs at or before a time                                         |
+| Filter flags            | See [Filters](#filters)                                               |
+| `--follow`              | Keep running and print new logs as they arrive; see [Follow](#follow) |
+| `--interval <duration>` | How often `--follow` polls, at least `1s` (default `2s`)              |
+| `--json`                | Output as JSON (implied in agent mode); NDJSON with `--follow`        |
 
 #### Time range
 
@@ -122,6 +126,23 @@ JSON output:
 - `cursor.next`: pass to `--cursor` for older logs; `null` when there are none.
 - `cursor.retention_limit_reached`: the search reached the plan's log retention window (`retention_days`); nothing older can be listed.
 - `cursor.searched_from` / `cursor.searched_to`: the time range searched, in Unix milliseconds.
+
+#### Follow
+
+`--follow` prints the same backfill `list` would (the newest `--limit` logs, honoring `--since`/`--from` and every filter), then keeps running and polls for new logs every `--interval` (default `2s`, at least `1s`; same duration format as `--since`) until Ctrl-C.
+
+- Output is chronological, oldest first, including the backfill (unlike `list`, which is newest first).
+- Each poll sends `event_time_after = <event_time of the newest log printed>` with the same filters, at the API's maximum page size, and keeps paging while `next_page_status` is `"unknown"` (or `"true"`), up to 50 requests per poll. `event_time_after` is inclusive, so logs that share the boundary millisecond come back again; they're deduplicated by log ID. Only the IDs at that one millisecond are remembered, so memory doesn't grow over a long follow. When the backfill is empty, following starts from the end of the window it searched (`searched_to`, the API's clock).
+- `--limit` bounds only the backfill. `--follow` can't be combined with `--to` (new logs are always later) or `--cursor` (usage errors, exit 2); `--interval` without `--follow` is a usage error too.
+- Transient failures (network errors, `5xx`, `429`) are retried with a warning on stderr: the backoff starts at 1s and doubles per attempt up to 30s, or waits a `429`'s `Retry-After` (also capped at 30s). Retries don't give up; a follow is meant to outlast an outage. Any other API error, including `401` and `403`, exits with that error.
+- Ctrl-C stops the follow and exits 0, since that is how a follow ends and every fetched log has been printed. A second Ctrl-C while it winds down goes to the CLI's normal handler (exit 130).
+- With `--json` (or in agent mode) the output is NDJSON: one log object per line on stdout, written as each log arrives, exactly as the Backend API returns it. There's no `{ data, cursor }` envelope.
+- Human output is one line per log on stderr, under a header printed once. A stream can't size columns from rows it hasn't seen, so each column has a fixed minimum width: `TIME` 8, `TYPE` 28, `ACTOR` and `SUBJECT` 32 (a Clerk ID), `LOCATION` 20, then `LOG ID`. A longer value pushes the rest of its line right rather than being cut. With `--fields`, `PAYLOAD` comes last, after `LOG ID`, since it has no natural width.
+
+```text
+TIME      TYPE                          ACTOR                             SUBJECT                           LOCATION              LOG ID
+15:30:00  user.created                  user_2abc…                        user_2abc…                        Lima, PE              log_2xyz…
+```
 
 ### `clerk logs schema <event-type>`
 

@@ -3,11 +3,12 @@ import type { Program } from "../../cli-program.ts";
 import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
 import { collectOptionValues, parseIntegerOption } from "../../lib/option-parsers.ts";
 import { FILTER_MATCH_CHOICES } from "./filters.ts";
+import { follow } from "./follow.ts";
 import { list } from "./list.ts";
 import { schema } from "./schema.ts";
 import { parseDuration, parseTimestamp } from "./time.ts";
 
-const logs = { list, schema };
+const logs = { list, follow, schema };
 
 export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.env): void {
   // Experimental until `clerk logs` is ready to ship (Linear project
@@ -39,15 +40,24 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     .setExamples([
       { command: "clerk logs", description: "List the newest logs" },
       { command: "clerk logs --since 30m", description: "Logs from the last 30 minutes" },
+      { command: "clerk logs --follow", description: "Print new logs as they arrive" },
       { command: "clerk logs --instance prod --json", description: "Production logs as JSON" },
     ]);
 
   logsCommand
     .command("list", { isDefault: true })
-    .description("List logs, newest first")
-    .option("--json", "Output as JSON")
-    .option("--limit <number>", "Maximum logs to return (1-500, default 50)", (value) =>
-      parseIntegerOption(value, "--limit", { min: 1, max: 500 }),
+    .description("List logs, newest first, or follow new ones with --follow")
+    .option("--json", "Output as JSON (one log per line with --follow)")
+    .option("--follow", "Keep running and print new logs as they arrive, oldest first")
+    .option(
+      "--interval <duration>",
+      "How often --follow polls for new logs (at least 1s, default 2s)",
+      (value) => parseDuration(value, "--interval"),
+    )
+    .option(
+      "--limit <number>",
+      "Maximum logs to return (1-500, default 50; with --follow, the backfill)",
+      (value) => parseIntegerOption(value, "--limit", { min: 1, max: 500 }),
     )
     .option("--cursor <cursor>", "Continue from the cursor a previous run printed")
     .option(
@@ -111,6 +121,11 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
         command: "clerk logs list --type user.created --fields email_address,username",
         description: "New users with their email address and username",
       },
+      { command: "clerk logs list --follow", description: "Print new logs as they arrive" },
+      {
+        command: "clerk logs list --follow --type 'sign_in.*' --json",
+        description: "Stream sign-in logs as JSON, one per line",
+      },
       {
         command: "clerk logs list --cursor <cursor>",
         description: "Continue where a previous run stopped",
@@ -120,9 +135,10 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
         description: "Production logs of another application as JSON",
       },
     ])
-    .action(async (_opts, cmd) =>
-      logs.list(cmd.optsWithGlobals() as Parameters<typeof logs.list>[0]),
-    );
+    .action(async (_opts, cmd) => {
+      const options = cmd.optsWithGlobals() as NonNullable<Parameters<typeof logs.follow>[0]>;
+      return options.follow ? logs.follow(options) : logs.list(options);
+    });
 
   logsCommand
     .command("schema")
