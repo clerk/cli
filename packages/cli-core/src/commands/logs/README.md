@@ -41,22 +41,27 @@ clerk logs --from 2026-11-01 --to 2026-11-02T12:00
 clerk logs --type 'sign_in.*' --user user_123
 clerk logs --type user.created --fields email_address,username
 clerk logs list --cursor <cursor>
+clerk logs --grouped
+clerk logs --grouped --group-type sign_in --status failed
 clerk logs list --app app_123 --instance prod --json
 clerk logs --follow
 clerk logs --follow --type 'sign_in.*' --json
 ```
 
-| Option                  | Description                                                           |
-| ----------------------- | --------------------------------------------------------------------- |
-| `--limit <number>`      | Maximum logs to return, 1-500 (default 50)                            |
-| `--cursor <cursor>`     | Continue from the cursor a previous run printed                       |
-| `--since <duration>`    | Only logs from the last duration                                      |
-| `--from <timestamp>`    | Only logs at or after a time                                          |
-| `--to <timestamp>`      | Only logs at or before a time                                         |
-| Filter flags            | See [Filters](#filters)                                               |
-| `--follow`              | Keep running and print new logs as they arrive; see [Follow](#follow) |
-| `--interval <duration>` | How often `--follow` polls, at least `1s` (default `2s`)              |
-| `--json`                | Output as JSON (implied in agent mode); NDJSON with `--follow`        |
+| Option                  | Description                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------ |
+| `--limit <number>`      | Maximum logs to return, 1-500 (default 50; at most 100 with `--grouped`)             |
+| `--cursor <cursor>`     | Continue from the cursor a previous run printed                                      |
+| `--since <duration>`    | Only logs from the last duration                                                     |
+| `--from <timestamp>`    | Only logs at or after a time                                                         |
+| `--to <timestamp>`      | Only logs at or before a time                                                        |
+| Filter flags            | See [Filters](#filters)                                                              |
+| `--grouped`             | One row per sign-in or sign-up flow; see [Grouped](#grouped)                         |
+| `--group-type <type>`   | With `--grouped`, only flows of a type (`sign_in`, `sign_up`); repeatable            |
+| `--status <status>`     | With `--grouped`, only flows that ended this way (`completed`, `failed`); repeatable |
+| `--follow`              | Keep running and print new logs as they arrive; see [Follow](#follow)                |
+| `--interval <duration>` | How often `--follow` polls, at least `1s` (default `2s`)                             |
+| `--json`                | Output as JSON (implied in agent mode); NDJSON with `--follow`                       |
 
 #### Time range
 
@@ -127,6 +132,30 @@ JSON output:
 - `cursor.retention_limit_reached`: the search reached the plan's log retention window (`retention_days`); nothing older can be listed.
 - `cursor.searched_from` / `cursor.searched_to`: the time range searched, in Unix milliseconds.
 
+#### Grouped
+
+`--grouped` requests the grouped view (`view=grouped`) instead of the flat one (`view=flat`, the CLI's default even though the API defaults to grouped). Each sign-in and sign-up flow is one `log_group` item, with its first events, next to the logs that belong to no flow ([log groups](https://clerk.com/docs/guides/dashboard/logs/application-logs#log-groups)). Items are newest first: a group sorts by when it started, a log by its `event_time`.
+
+- `--group-type <sign_in|sign_up>` and `--status <completed|failed>` are sent as `group_type` and `status`, once per value (repeat the flag for several; a value given twice is sent once). Either one keeps only groups, so the logs outside any flow are left out. Both require `--grouped` (usage errors, exit 2, otherwise, since the API rejects them on the flat view). A flow that hasn't concluded has no status, so `--status` never matches it.
+- `--limit` is at most 100 with `--grouped`: every group brings up to 50 events along, and the API rejects more. It counts items (groups and ungrouped logs), not events.
+- The event filters and the time range still apply. An event filter keeps the groups with at least one matching event, and each group lists only its matching events. The time range selects groups by when they started, and each group's events run to the end of the flow.
+- Paging works as in the flat list (`next_page_status`, up to 50 requests a run), but the grouped view only pages forward. `--cursor` still maps to `starting_after`; a grouped cursor and a flat cursor aren't interchangeable, and the API rejects one passed to the other view.
+- `--grouped` can't be combined with `--follow` (usage error): a group summarizes a flow that may still be going, which has no meaning for a stream.
+
+Human output is one row per group, `STARTED`, `GROUP` (the flow's ID, `sia_…` or `sua_…`), `STATUS` (green `completed`, red `failed`, empty while the flow hasn't concluded), `SUBJECT` (who the flow is about) and `EVENTS` (`event_count`, or `<matched> of <total>` under event filters), with the group's events indented two spaces below it in the usual log columns (and `PAYLOAD` with `--fields`). A log outside any flow gets a row of its own, with `-` for `GROUP`, and itself below. When the API left some of a group's events out (`has_more_events`), a dim note below them says so: `N more matching events not shown` under event filters, where the count is exact, and `more events not shown` otherwise, since `event_count` can include event types the instance can't read. The summary counts groups and the logs outside a group.
+
+```text
+STARTED   GROUP     STATUS     SUBJECT    EVENTS
+15:30:00  sia_2ab…  completed  user_2ab…  3
+  15:30:00  sign_in.created    user_2ab…  user_2ab…  Lima, PE  log_2xa…
+  15:30:04  sign_in.completed  user_2ab…  user_2ab…  Lima, PE  log_2xb…
+  15:30:04  session.created    user_2ab…  user_2ab…  Lima, PE  log_2xc…
+15:29:10  -                    user_2ab…  1
+  15:29:10  user.updated       user_2ab…  user_2ab…  Lima, PE  log_2xd…
+```
+
+JSON output is the same `{ data, cursor }` envelope, with each item exactly as the API returns it: a `log_group` (`group_id`, `group_type`, `started_at`, `event_count`, `matched_event_count` under event filters, `status`, `status_label`, `subject`, `first_event`, `events`, `has_more_events`, `events_cursor`) or a `log`. Tell them apart by `object`.
+
 #### Follow
 
 `--follow` prints the same backfill `list` would (the newest `--limit` logs, honoring `--since`/`--from` and every filter), then keeps running and polls for new logs every `--interval` (default `2s`, at least `1s`; same duration format as `--since`) until Ctrl-C.
@@ -138,7 +167,7 @@ JSON output:
 - The lookback never reaches more than 5 minutes before the API's clock, read from the latest response's `Date` header (the local clock, read before the request, if the header is missing). After a quiet stretch, each poll scans at most those 5 minutes instead of everything since the last log printed, so a log that takes more than 5 minutes to become visible in the API may be missed. The bound may be tuned once the pipeline's arrival delay is measured.
 - Before any log is printed, the window ends at the API's clock when the backfill ran, read from the first response's `Date` header (the local clock, read before the request, if the header is missing). Not at the backfill's `searched_to`: a first page searches up to 5 minutes past the API's clock, so anchoring there would skip the logs of those minutes. It never reaches back past `--since`/`--from`, or, when `--limit` cut the backfill short, past the oldest log the backfill printed.
 - A poll keeps paging while `next_page_status` is `"unknown"` (or `"true"`), up to 50 requests. A poll that hits that cap (a backlog after an outage) prints what it fetched and the next poll picks up where it stopped, right away and before looking for newer logs, so nothing is skipped; those older logs print after the newer ones.
-- `--limit` bounds only the backfill. `--follow` can't be combined with `--to` (new logs are always later) or `--cursor` (usage errors, exit 2); `--interval` without `--follow` is a usage error too.
+- `--limit` bounds only the backfill. `--follow` can't be combined with `--to` (new logs are always later), `--cursor` or `--grouped` (usage errors, exit 2); `--interval` without `--follow` is a usage error too.
 - Transient failures (network errors, `5xx`, `429`) are retried with a warning on stderr: the backoff starts at 1s and doubles per attempt up to 30s, or waits a `429`'s `Retry-After` (also capped at 30s). After 5 minutes of failures with no successful request in between, the follow gives up and exits with the last error; any successful request restarts the 5 minutes. A request that gets no answer within 30 seconds is abandoned and retried the same way, so a connection that stops responding can't hang the follow. Any other API error, including `401` and `403`, exits with that error at once.
 - Ctrl-C stops the follow and exits 130 (by SIGINT), like `clerk webhooks listen` and any other interrupted operation, so `clerk logs --follow && next-step` doesn't run `next-step`. It cancels the poll wait or the request in flight; logs from pages already fetched are printed first.
 - With `--json` (or in agent mode) the output is NDJSON: one log object per line on stdout, written as each log arrives, exactly as the Backend API returns it. There's no `{ data, cursor }` envelope.
@@ -238,8 +267,8 @@ JSON output is the `log_schema` object exactly as the Backend API returns it:
 
 ## API endpoints
 
-| Method | Path                                | Description                                                                                                                                                                                                                                                                                                                     |
-| ------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/logs`                          | List logs (`view=flat`, `limit`, `starting_after`, `event_time_after`, `event_time_before`, `type`, `user_id`, `identifier`, `actor`, `subject`, `session_id`, `client_id`, `ip_address`, `trace_id`, `impersonator_user_id`, `payload_filter[<path>]`, `payload_fields`, `filter_match`, `end_user_facing_only`), newest first |
-| `GET`  | `/v1/logs/groups/{group_id}/events` | A log group's logs, oldest first (`limit`, `starting_after` and the list's event filters; no `started_at`)                                                                                                                                                                                                                      |
-| `GET`  | `/v1/logs/schemas`                  | Payload schema of an event type (`type`)                                                                                                                                                                                                                                                                                        |
+| Method | Path                                | Description                                                                                                                                                                                                                                                                                                                                                                       |
+| ------ | ----------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/logs`                          | List logs (`view=flat`, or `view=grouped` with `group_type` and `status`; `limit`, `starting_after`, `event_time_after`, `event_time_before`, `type`, `user_id`, `identifier`, `actor`, `subject`, `session_id`, `client_id`, `ip_address`, `trace_id`, `impersonator_user_id`, `payload_filter[<path>]`, `payload_fields`, `filter_match`, `end_user_facing_only`), newest first |
+| `GET`  | `/v1/logs/groups/{group_id}/events` | A log group's logs, oldest first (`limit`, `starting_after` and the list's event filters; no `started_at`)                                                                                                                                                                                                                                                                        |
+| `GET`  | `/v1/logs/schemas`                  | Payload schema of an event type (`type`)                                                                                                                                                                                                                                                                                                                                          |
