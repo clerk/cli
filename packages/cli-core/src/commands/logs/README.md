@@ -144,7 +144,7 @@ The event type is passed to the API as-is. It can be:
 - a trailing-`*` wildcard, like `sign_in.*` (quote it so the shell doesn't expand it);
 - a bare family name, like `sign_in`, which the API reads as `sign_in.*` when no concrete type has that name.
 
-For a wildcard or family, the fields are only the ones every matched type shares, and `matched_event_types` lists those types. Running the command without an event type, or with a bare `*`, is a usage error raised before any request. An unknown event type fails with the API's error.
+For a wildcard or family, the fields are only the ones every matched type shares, and `matched_event_types` lists those types. Running the command without an event type, or with a bare `*`, is a usage error raised before any request. An unknown event type, or one the instance can't read (such as SMS or email types behind a feature gate), fails with the API's 422 error.
 
 Human output is a header with the event type, its description and severity (or, for a wildcard, the matched event types), then a table (`PATH`, `TYPE`, `OPTIONAL`, `ENUM`), and a hint showing how to filter logs on the first field.
 

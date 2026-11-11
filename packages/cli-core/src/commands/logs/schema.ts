@@ -132,7 +132,7 @@ function printHuman(schema: LogSchema): void {
   const first = schema.fields[0]!.path;
   log.info(
     dim(
-      `\n→ Filter on a field: clerk logs --type ${shellArg(schema.event_type)} --payload-filter ${shellArg(`${first}=<value>`)}`,
+      `\n→ Filter on a field: clerk logs list --type ${shellArg(schema.event_type)} --payload-filter ${shellArg(`${first}=<value>`)}`,
     ),
   );
 }

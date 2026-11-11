@@ -267,7 +267,7 @@ describe("logs schema", () => {
     await schema("sign_in.completed");
 
     expect(plain(captured.err)).toContain(
-      "→ Filter on a field: clerk logs --type sign_in.completed --payload-filter 'sign_in_id=<value>'",
+      "→ Filter on a field: clerk logs list --type sign_in.completed --payload-filter 'sign_in_id=<value>'",
     );
   });
 
@@ -276,7 +276,7 @@ describe("logs schema", () => {
 
     await schema("sign_in.*");
 
-    expect(plain(captured.err)).toContain("clerk logs --type 'sign_in.*' --payload-filter");
+    expect(plain(captured.err)).toContain("clerk logs list --type 'sign_in.*' --payload-filter");
   });
 
   test.each([
