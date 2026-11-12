@@ -20,6 +20,7 @@ import {
   throwUsageError,
   withApiContext,
 } from "../../lib/errors.ts";
+import type { ApiResponse } from "../../lib/fetch.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { interruptSignal } from "../../lib/signals.ts";
 import { intro, outro } from "../../lib/spinner.ts";
@@ -50,6 +51,12 @@ export const BASE_RETRY_DELAY_MS = 1_000;
 export const MAX_RETRY_DELAY_MS = 30_000;
 /** How long transient failures may go on, with no successful request between them, before the follow gives up. */
 export const RETRY_GIVE_UP_MS = 5 * 60_000;
+/**
+ * How long one request may take before it is abandoned and retried like a
+ * network error. Without it, a connection that stops answering would hang the
+ * follow forever, with no error and no new logs.
+ */
+export const REQUEST_TIMEOUT_MS = 30_000;
 /**
  * How far before the newest log printed each poll looks, so a log the pipeline
  * delivers late still gets printed (out of order, after newer ones).
@@ -108,8 +115,8 @@ export class FollowWindow {
   private newest: number | undefined;
 
   /**
-   * @param anchor Where the window ends until a log is printed: the end of the
-   *   range the backfill searched.
+   * @param anchor Where the window ends until a log is printed: the API's
+   *   clock when the backfill ran.
    * @param floor The oldest `event_time` the follow may print. Older logs
    *   belong to the backfill, even when it left them out.
    */
@@ -153,6 +160,12 @@ export class FollowWindow {
   }
 }
 
+/** When the API sent `response`, from its `Date` header (whole seconds, rounded down). */
+function responseTime(response: ApiResponse): number | undefined {
+  const date = Date.parse(response.headers.get("date") ?? "");
+  return Number.isNaN(date) ? undefined : date;
+}
+
 /** API pages come newest first; a stream reads oldest first. */
 function chronological(logs: Log[]): Log[] {
   return logs.toReversed().sort((a, b) => a.event_time - b.event_time);
@@ -164,11 +177,10 @@ export function isTransientError(error: unknown): boolean {
   // The CLI's own checks (an unexpected body, a repeated cursor) won't change
   // on a retry, and an abort is a stop, not a failure.
   if (error instanceof CliError) return false;
-  if (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError")) {
-    return false;
-  }
+  if (error instanceof Error && error.name === "AbortError") return false;
   // What's left is the request never getting an answer: a refused or reset
-  // connection, DNS, a dropped network.
+  // connection, DNS, a dropped network, or a request that hit
+  // {@link REQUEST_TIMEOUT_MS} (a `TimeoutError`).
   return error instanceof Error;
 }
 
@@ -193,7 +205,8 @@ function describeFailure(error: unknown): string {
 
 /**
  * A page request that retries transient failures, warning before each wait,
- * until it succeeds, fails for good, or `signal` aborts. A follow is meant to
+ * until it succeeds, fails for good, or `signal` aborts. Each attempt is
+ * abandoned after {@link REQUEST_TIMEOUT_MS} and retried. A follow is meant to
  * outlast a short outage, so it gives up only after {@link RETRY_GIVE_UP_MS}
  * of failures with no successful request in between, with the last error.
  */
@@ -208,7 +221,11 @@ function retryingRequest(
   return async (path) => {
     for (let attempt = 1; ; attempt++) {
       try {
-        const response = await logsRequest(path, secretKey, signal);
+        const response = await logsRequest(
+          path,
+          secretKey,
+          AbortSignal.any([signal, AbortSignal.timeout(REQUEST_TIMEOUT_MS)]),
+        );
         failingSince = undefined;
         return response;
       } catch (error) {
@@ -386,6 +403,16 @@ export async function follow(
     const request = retryingRequest(secretKey, deps, signal);
     const query: ListQuery = { range, filters };
 
+    // The API's clock when the backfill started, from its first response's
+    // `Date` header (or the local clock, read before the request, without one).
+    let serverNow: number | undefined;
+    const startedAt = deps.now();
+    const backfillRequest: LogsPageRequest = async (path) => {
+      const response = await request(path);
+      serverNow ??= responseTime(response);
+      return response;
+    };
+
     let outcome: Awaited<ReturnType<typeof fetchLogs>>;
     try {
       outcome = await fetchLogs(
@@ -393,7 +420,7 @@ export async function follow(
         options.limit ?? DEFAULT_LIMIT,
         undefined,
         query,
-        request,
+        backfillRequest,
       );
     } catch (error) {
       if (signal.aborted) return;
@@ -406,14 +433,16 @@ export async function follow(
       throw outcome.error;
     }
 
-    // With nothing printed yet, the window ends where the backfill searched
-    // to: the API's own clock, so local clock skew can't open a gap or replay
-    // old logs. When `--limit` cut the backfill short, the logs older than the
-    // oldest one it printed were left out on purpose, so the follow doesn't
-    // print them either.
+    // With nothing printed yet, the window ends at the API's clock when the
+    // backfill ran, so local clock skew can't open a gap or replay old logs.
+    // Not at `searched_to`: a first page searches up to 5 minutes past the
+    // API's clock, and anchoring there would skip the logs of those minutes.
+    // When `--limit` cut the backfill short, the logs older than the oldest one
+    // it printed were left out on purpose, so the follow doesn't print them
+    // either.
     const truncated = outcome.result.cursor.next !== null;
     const printed = new FollowWindow(
-      outcome.result.cursor.searched_to ?? deps.now(),
+      Math.min(outcome.result.cursor.searched_to ?? Infinity, serverNow ?? startedAt),
       truncated && backfill.length > 0 ? backfill[0]!.event_time + 1 : range.after,
     );
     for (const entry of backfill) printed.mark(entry);

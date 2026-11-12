@@ -232,6 +232,34 @@ describe("logs --follow", () => {
     expect(printedIds(captured.out)).toEqual(["log_1"]);
   });
 
+  test("anchors an empty backfill at the API's Date, not at searched_to, which runs 5 minutes ahead", async () => {
+    // A first page searches up to 5 minutes past the API's clock.
+    const serverNow = NOW - 30_000;
+    mockBapiRequest
+      .mockResolvedValueOnce({
+        ...page([], { next_page_status: "false", searched_to: serverNow + 5 * 60_000 }),
+        headers: new Headers({ date: new Date(serverNow).toUTCString() }),
+      })
+      .mockResolvedValueOnce(page([makeLog("log_1", serverNow + 1_000)]));
+
+    await runFollow({ json: true }, 1);
+
+    expect(requestedUrl(1).searchParams.get("event_time_after")).toBe(
+      String(serverNow - LOOKBACK_MS),
+    );
+    expect(printedIds(captured.out)).toEqual(["log_1"]);
+  });
+
+  test("anchors an empty backfill at the local clock when the response has no Date", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([], { next_page_status: "false", searched_to: NOW + 5 * 60_000 }))
+      .mockResolvedValueOnce(page([]));
+
+    await runFollow({ json: true }, 1);
+
+    expect(requestedUrl(1).searchParams.get("event_time_after")).toBe(String(NOW - LOOKBACK_MS));
+  });
+
   test("sends the time range and filters on the backfill and the event filters on every poll", async () => {
     mockBapiRequest.mockResolvedValueOnce(page([makeLog("log_1", NOW - 1_000)]));
 
@@ -450,15 +478,19 @@ describe("logs --follow", () => {
       .mockResolvedValueOnce(page([makeLog("log_1", T + 1_000)]))
       .mockRejectedValueOnce(apiError(503))
       .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockRejectedValueOnce(new DOMException("The operation timed out.", "TimeoutError"))
       .mockResolvedValueOnce(page([makeLog("log_2", T + 2_000)]));
 
     // An interval the backoff can't be mistaken for.
     const { sleeps } = await runFollow({ json: true, interval: 5_000 }, 1);
 
-    expect(sleeps).toEqual([5_000, 1_000, 2_000, 5_000]);
+    expect(sleeps).toEqual([5_000, 1_000, 2_000, 4_000, 5_000]);
     expect(printedIds(captured.out)).toEqual(["log_1", "log_2"]);
     expect(captured.err).toContain("Fetching logs failed (503: status 503). Retrying in 1s");
     expect(captured.err).toContain("Fetching logs failed (fetch failed). Retrying in 2s");
+    expect(captured.err).toContain(
+      "Fetching logs failed (The operation timed out.). Retrying in 4s",
+    );
   });
 
   test("retries a failed backfill request too", async () => {
@@ -527,11 +559,14 @@ describe("logs --follow", () => {
     expect(captured.err).not.toContain("Retrying");
   });
 
-  test("passes its stop signal to every request", async () => {
+  test("passes its stop signal to every request, combined with the request timeout", async () => {
     const { controller } = await runFollow({ json: true }, 1);
 
     const request = mockBapiRequest.mock.calls[1]?.[0] as { signal?: AbortSignal };
-    expect(request.signal).toBe(controller.signal);
+    // Its own signal, which the stop aborted with the stop's reason.
+    expect(request.signal).not.toBe(controller.signal);
+    expect(request.signal?.aborted).toBe(true);
+    expect(request.signal?.reason).toBe(controller.signal.reason);
   });
 
   test("leaves Ctrl-C to the CLI's handler and stops when it aborts in-flight work", async () => {
@@ -553,7 +588,7 @@ describe("logs --follow", () => {
     expect(sleeps).toBe(2);
     expect(process.listeners("SIGINT")).toEqual(before);
     const request = mockBapiRequest.mock.calls[1]?.[0] as { signal?: AbortSignal };
-    expect(request.signal).toBe(interruptSignal());
+    expect(request.signal?.reason).toBe(interruptSignal().reason);
     expect(printedIds(captured.out)).toEqual(["log_1"]);
   });
 
@@ -670,6 +705,7 @@ describe("retry policy", () => {
     { error: apiError(422), transient: false },
     { error: new CliError("The Logs API returned an unexpected response."), transient: false },
     { error: new DOMException("aborted", "AbortError"), transient: false },
+    { error: new DOMException("The operation timed out.", "TimeoutError"), transient: true },
   ])("treats $error.message as transient: $transient", ({ error, transient }) => {
     expect(isTransientError(error)).toBe(transient);
   });
