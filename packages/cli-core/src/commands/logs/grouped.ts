@@ -82,7 +82,7 @@ export function isLogGroup(item: LogListItem): item is LogGroup {
   return item.object === "log_group";
 }
 
-export const GROUP_COLUMN_HEADERS = ["STARTED", "GROUP", "STATUS", "SUBJECT", "EVENTS"];
+export const GROUP_COLUMN_HEADERS = ["STARTED", "TYPE", "GROUP", "STATUS", "SUBJECT", "EVENTS"];
 
 function formatStatus(status: string | null): string {
   if (status === "completed") return green(status);
@@ -116,7 +116,7 @@ export function moreEventsNote(group: LogGroup): string {
 
 /**
  * One row per group (a log outside any group gets a row of its own with no
- * group ID), each followed by its events indented two spaces. The group rows
+ * group type or ID), each followed by its events indented two spaces. The group rows
  * align with each other, and so do all the event rows.
  */
 export function formatGroupedTable(
@@ -134,6 +134,7 @@ export function formatGroupedTable(
     if (isLogGroup(item)) {
       groupRows.push([
         formatLogTime(item.started_at, now),
+        item.group_type,
         item.group_id,
         formatStatus(item.status),
         item.subject || dim("-"),
@@ -142,6 +143,7 @@ export function formatGroupedTable(
     } else {
       groupRows.push([
         formatLogTime(item.event_time, now),
+        dim("-"),
         dim("-"),
         "",
         item.subject || dim("-"),

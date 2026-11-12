@@ -683,19 +683,19 @@ describe("logs list --grouped", () => {
     expect(captured.out).toBe("");
     const lines = captured.err.replace(ANSI_ESCAPE_PATTERN, "").split("\n");
     const header = lines.findIndex((line) =>
-      /STARTED\s+GROUP\s+STATUS\s+SUBJECT\s+EVENTS/.test(line),
+      /STARTED\s+TYPE\s+GROUP\s+STATUS\s+SUBJECT\s+EVENTS/.test(line),
     );
     expect(header).toBeGreaterThanOrEqual(0);
     const table = lines.slice(header + 1, header + 11);
-    expect(table[0]).toMatch(/^\S.*sia_1\s+completed\s+user_123\s+2$/);
+    expect(table[0]).toMatch(/^\S.*sign_in\s+sia_1\s+completed\s+user_123\s+2$/);
     expect(table[1]).toMatch(/^ {2}\S.*sign_in\.created .*log_g1$/);
     expect(table[2]).toMatch(/^ {2}\S.*sign_in\.completed .*log_g2$/);
-    expect(table[3]).toMatch(/^\S.*\s-\s+user_123\s+1$/);
+    expect(table[3]).toMatch(/^\S.*\s-\s+-\s+user_123\s+1$/);
     expect(table[4]).toMatch(/^ {2}\S.*user\.updated .*log_free$/);
-    expect(table[5]).toMatch(/sua_1\s+failed\s+user_123\s+1$/);
+    expect(table[5]).toMatch(/sign_up\s+sua_1\s+failed\s+user_123\s+1$/);
     expect(table[6]).toMatch(/^ {2}\S.*sign_up\.created .*log_s1$/);
     // A flow that hasn't concluded leaves STATUS empty.
-    expect(table[7]).toMatch(/sia_2\s+user_123\s+1$/);
+    expect(table[7]).toMatch(/sign_in\s+sia_2\s+user_123\s+1$/);
     expect(table[8]).toMatch(/^ {2}\S.*sign_in\.created .*log_p1$/);
     expect(captured.err).toContain("3 groups, 1 log outside a group");
     expect(captured.err).toContain("--cursor gcur_next");

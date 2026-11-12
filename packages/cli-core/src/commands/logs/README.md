@@ -142,15 +142,15 @@ JSON output:
 - Paging works as in the flat list (`next_page_status`, up to 50 requests a run), but the grouped view only pages forward. `--cursor` still maps to `starting_after`; a grouped cursor and a flat cursor aren't interchangeable, and the API rejects one passed to the other view.
 - `--grouped` can't be combined with `--follow` (usage error): a group summarizes a flow that may still be going, which has no meaning for a stream.
 
-Human output is one row per group, `STARTED`, `GROUP` (the flow's ID, `sia_…` or `sua_…`), `STATUS` (green `completed`, red `failed`, empty while the flow hasn't concluded), `SUBJECT` (who the flow is about) and `EVENTS` (`event_count`, or `<matched> of <total>` under event filters), with the group's events indented two spaces below it in the usual log columns (and `PAYLOAD` with `--fields`). A log outside any flow gets a row of its own, with `-` for `GROUP`, and itself below. When the API left some of a group's events out (`has_more_events`), a dim note below them says so: `N more matching events not shown` under event filters, where the count is exact, and `more events not shown` otherwise, since `event_count` can include event types the instance can't read. The summary counts groups and the logs outside a group.
+Human output is one row per group, `STARTED`, `TYPE` (the flow's `group_type`, `sign_in` or `sign_up` today, so a new kind of flow shows up here without a new column), `GROUP` (the flow's ID, `sia_…` or `sua_…`), `STATUS` (green `completed`, red `failed`, empty while the flow hasn't concluded), `SUBJECT` (who the flow is about) and `EVENTS` (`event_count`, or `<matched> of <total>` under event filters), with the group's events indented two spaces below it in the usual log columns (and `PAYLOAD` with `--fields`). A log outside any flow gets a row of its own, with `-` for `TYPE` and `GROUP`, and itself below. When the API left some of a group's events out (`has_more_events`), a dim note below them says so: `N more matching events not shown` under event filters, where the count is exact, and `more events not shown` otherwise, since `event_count` can include event types the instance can't read. The summary counts groups and the logs outside a group.
 
 ```text
-STARTED   GROUP     STATUS     SUBJECT    EVENTS
-15:30:00  sia_2ab…  completed  user_2ab…  3
+STARTED   TYPE     GROUP     STATUS     SUBJECT    EVENTS
+15:30:00  sign_in  sia_2ab…  completed  user_2ab…  3
   15:30:00  sign_in.created    user_2ab…  user_2ab…  Lima, PE  log_2xa…
   15:30:04  sign_in.completed  user_2ab…  user_2ab…  Lima, PE  log_2xb…
   15:30:04  session.created    user_2ab…  user_2ab…  Lima, PE  log_2xc…
-15:29:10  -                    user_2ab…  1
+15:29:10  -        -                    user_2ab…  1
   15:29:10  user.updated       user_2ab…  user_2ab…  Lima, PE  log_2xd…
 ```
 
