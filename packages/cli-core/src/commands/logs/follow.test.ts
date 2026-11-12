@@ -454,6 +454,19 @@ describe("logs --follow", () => {
     expect(printedIds(captured.out)).toEqual(["log_1", "log_2"]);
   });
 
+  test("prints the pages a poll fetched before a later page failed, then exits with the error", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([makeLog("log_1", T + 1_000)]))
+      .mockResolvedValueOnce(
+        page([makeLog("log_2", T + 2_000)], { next_page_status: "unknown", starting_after: "c" }),
+      )
+      .mockRejectedValueOnce(apiError(403));
+
+    await expect(runFollow({ json: true }, 1)).rejects.toMatchObject({ status: 403 });
+
+    expect(printedIds(captured.out)).toEqual(["log_1", "log_2"]);
+  });
+
   /** A follow whose clock moves forward by every sleep, at an interval no backoff matches. */
   function runWithClock(polls: number) {
     const interval = 5_000;

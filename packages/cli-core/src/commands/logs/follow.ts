@@ -294,14 +294,16 @@ type PollResult = {
   logs: Log[];
   /** Set when the poll stopped at the request cap with older pages left. */
   resume?: PollResume;
+  /** A later page's failure, raised once the logs of the earlier pages are printed. */
+  error?: unknown;
 };
 
 /**
  * Every log at or after `after`, newest first, paging while the API says
  * there may be more. Each poll's window is only as old as the lookback, so this
  * is normally one request. A poll that hits {@link MAX_REQUESTS} hands back
- * where it stopped instead of dropping the rest. A stop mid-poll keeps the
- * pages already fetched, so they still get printed.
+ * where it stopped instead of dropping the rest. A stop or a failure mid-poll
+ * keeps the pages already fetched, so they still get printed.
  */
 async function poll(
   request: LogsPageRequest,
@@ -324,6 +326,7 @@ async function poll(
       page = readLogsPage(response);
     } catch (error) {
       if (signal.aborted) return { logs };
+      if (logs.length > 0) return { logs, error };
       throw error;
     }
     logs.push(...page.data);
@@ -518,6 +521,7 @@ export async function follow(
         print(entry);
         printed.mark(entry);
       }
+      if (result.error !== undefined) throw result.error;
       resume = result.resume;
       if (latestApiNow !== undefined) printed.observe(latestApiNow);
       printed.evict(resume?.after);
