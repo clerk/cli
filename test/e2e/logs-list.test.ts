@@ -72,13 +72,16 @@ beforeAll(async () => {
   userId = user.id;
 
   // Logs reach ClickHouse through the event stream pipeline, so the new
-  // user's log can take a few seconds to show up. A failed run (a transient
+  // user's log can take a while to show up: usually seconds, but CI has seen
+  // it take over 30s. Poll every 3s for up to 60s. A failed run (a transient
   // API error or rate limit) is retried the same way. The poll is scoped to
   // the user: the test application is shared with concurrent CI runs, which
   // can push the new log out of the newest 100.
-  const attempts = 10;
+  const deadline = Date.now() + 60_000;
+  let attempts = 0;
   let lastAttempt = "";
-  for (let attempt = 1; attempt <= attempts; attempt++) {
+  while (true) {
+    attempts++;
     const result = await logsList(["--user", userId]);
     if (result.exitCode === 0) {
       const output = JSON.parse(result.stdout.toString()) as ListOutput;
@@ -90,12 +93,13 @@ beforeAll(async () => {
     } else {
       lastAttempt = `exit ${result.exitCode}: ${result.stderr.toString().trim().slice(0, 500)}`;
     }
-    if (attempt < attempts) await Bun.sleep(3_000);
+    if (Date.now() + 3_000 > deadline) break;
+    await Bun.sleep(3_000);
   }
   throw new Error(
-    `No user.created log for ${userId} after ${attempts} \`logs list\` attempts. Last attempt: ${lastAttempt}`,
+    `No user.created log for ${userId} after ${attempts} \`logs list\` attempts over 60s. Last attempt: ${lastAttempt}`,
   );
-}, 90_000);
+}, 120_000);
 
 afterAll(async () => {
   if (userId) await deleteTestUser(userId, configDir, { appId: APP_ID });

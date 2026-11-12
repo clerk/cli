@@ -10,8 +10,9 @@
  */
 
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
+import type { ApiResponse } from "../../lib/fetch.ts";
 import { bold, cyan, dim } from "../../lib/color.ts";
-import { CliError, withApiContext } from "../../lib/errors.ts";
+import { CliError, throwUsageError, withApiContext } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { closeStatusForError } from "../../lib/signals.ts";
 import { intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
@@ -34,10 +35,12 @@ export type LogsListOptions = LogsTargetingOptions &
   LogFilterOptions & {
     limit?: number;
     cursor?: string;
+    /** Only valid with `--follow`, which `follow.ts` handles; rejected here. */
+    interval?: number;
   };
 
 /** `event_time_after` / `event_time_before`, inclusive Unix milliseconds. */
-type TimeRange = { after?: number; before?: number };
+export type TimeRange = { after?: number; before?: number };
 
 /** What `--json` prints: the logs and where to continue from. */
 export type LogsListResult = {
@@ -54,7 +57,7 @@ export type LogsListResult = {
 
 export const DEFAULT_LIMIT = 50;
 /** The API's per-request maximum. */
-const MAX_PAGE_SIZE = 500;
+export const MAX_PAGE_SIZE = 500;
 /**
  * Requests one run makes before returning what it has. Each request scans up
  * to two days, so this covers the longest retention without letting a sparse
@@ -63,9 +66,9 @@ const MAX_PAGE_SIZE = 500;
 export const MAX_REQUESTS = 50;
 
 /** What every request of a run filters on: the time range and the event filters. */
-type ListQuery = { range: TimeRange; filters: LogFilters };
+export type ListQuery = { range: TimeRange; filters: LogFilters };
 
-function buildListPath(
+export function buildListPath(
   limit: number,
   startingAfter: string | undefined,
   { range, filters }: ListQuery,
@@ -83,14 +86,41 @@ function buildListPath(
  * some logs were already in hand: `result` keeps them, with `cursor.next`
  * pointing at the page that failed so `--cursor` retries it.
  */
-type FetchLogsOutcome = { result: LogsListResult; error?: unknown };
+export type FetchLogsOutcome = { result: LogsListResult; error?: unknown };
 
-/** Pages through `GET /v1/logs` until `limit` logs are in hand or the API runs out. */
-async function fetchLogs(
+/** Sends one `GET /v1/logs` request for a path built by {@link buildListPath}. */
+export type LogsPageRequest = (path: string) => Promise<ApiResponse>;
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * The page of a `GET /v1/logs` response, or a {@link CliError} when the body
+ * isn't a JSON object with a `data` array of objects. `bapiRequest` hands back
+ * the raw text when the body isn't JSON, and null for a literal `null`. A body
+ * without `data` would otherwise read as an empty page: the end of a list, or a
+ * quiet poll that moves `--follow` past logs it never printed. An item that
+ * isn't an object would fail later with a `TypeError` instead.
+ */
+export function readLogsPage(response: ApiResponse): LogListPage {
+  const body = response.body;
+  if (!isObject(body) || !Array.isArray(body.data) || !body.data.every(isObject)) {
+    throw new CliError("The Logs API returned an unexpected response.");
+  }
+  return body as LogListPage;
+}
+
+/**
+ * Pages through `GET /v1/logs` until `limit` logs are in hand or the API runs
+ * out. `sendRequest` sends each page; `clerk logs --follow` passes one that retries.
+ */
+export async function fetchLogs(
   secretKey: string,
   limit: number,
   cursor: string | undefined,
   query: ListQuery,
+  sendRequest: LogsPageRequest = async (path) => logsRequest(path, secretKey),
 ): Promise<FetchLogsOutcome> {
   const data: Log[] = [];
   let startingAfter = cursor;
@@ -102,23 +132,18 @@ async function fetchLogs(
     let page: LogListPage;
     try {
       const response = await withApiContext(
-        logsRequest(buildListPath(pageSize, startingAfter, query), secretKey),
+        sendRequest(buildListPath(pageSize, startingAfter, query)),
         "Failed to list logs",
       );
-      // `bapiRequest` hands back the raw text when the body isn't JSON, and
-      // null for a literal `null`. Treat either as a failed request so the
+      // A body that isn't a JSON object counts as a failed request, so the
       // logs already in hand are kept instead of crashing or reading as "no
       // more logs".
-      const body = response.body;
-      if (typeof body !== "object" || body === null || Array.isArray(body)) {
-        throw new CliError("The Logs API returned an unexpected response.");
-      }
-      page = body as LogListPage;
+      page = readLogsPage(response);
     } catch (error) {
       if (data.length === 0) throw error;
       return { result: toResult(data, first, last, startingAfter ?? null), error };
     }
-    data.push(...(page.data ?? []));
+    data.push(...page.data);
     last = page.cursor ?? {};
     first ??= last;
 
@@ -178,11 +203,17 @@ export function formatPayload(payload: Record<string, unknown> | undefined): str
   return pairs.join(" ");
 }
 
-function printTable(logs: Log[], showPayload: boolean): void {
-  const now = new Date();
+/** The table's column headers, `PAYLOAD` only with `--fields`. */
+export function logColumnHeaders(showPayload: boolean): string[] {
   const headers = ["TIME", "TYPE", "ACTOR", "SUBJECT", "LOCATION"];
   if (showPayload) headers.push("PAYLOAD");
   headers.push("LOG ID");
+  return headers;
+}
+
+function printTable(logs: Log[], showPayload: boolean): void {
+  const now = new Date();
+  const headers = logColumnHeaders(showPayload);
   const rows = [
     headers.map((header) => bold(header)),
     ...logs.map((entry) => [
@@ -229,6 +260,7 @@ function printHuman(result: LogsListResult, showPayload: boolean): void {
 }
 
 export async function list(options: LogsListOptions = {}): Promise<void> {
+  if (options.interval !== undefined) throwUsageError("--interval requires --follow.");
   const json = Boolean(options.json) || isAgent();
   const shouldWrap = !isInsideGutter() && !json;
   if (shouldWrap) intro("Listing logs");

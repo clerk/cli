@@ -16,6 +16,8 @@ export async function bapiRequest(options: {
   baseUrl?: string;
   /** Pins the response shape with a `Clerk-API-Version` header. Omitted, BAPI uses its default. */
   apiVersion?: string;
+  /** Aborts the request. Ctrl-C aborts it regardless; this is for a caller's own stop. */
+  signal?: AbortSignal;
 }): Promise<ApiResponse> {
   const base = options.baseUrl ?? getBapiBaseUrl();
   const path = normalizeBapiPath(options.path);
@@ -40,6 +42,7 @@ export async function bapiRequest(options: {
     method: options.method,
     headers,
     body: options.body,
+    signal: options.signal,
   });
 
   if (!response.ok) {

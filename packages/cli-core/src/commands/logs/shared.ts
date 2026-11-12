@@ -46,8 +46,18 @@ export type LogListCursor = {
 
 export type LogListPage = { data: Log[]; cursor?: LogListCursor };
 
-export async function logsRequest(path: string, secretKey: string): Promise<ApiResponse> {
-  return bapiRequest({ method: "GET", path, secretKey, apiVersion: LOGS_API_VERSION });
+export async function logsRequest(
+  path: string,
+  secretKey: string,
+  signal?: AbortSignal,
+): Promise<ApiResponse> {
+  return bapiRequest({
+    method: "GET",
+    path,
+    secretKey,
+    apiVersion: LOGS_API_VERSION,
+    ...(signal ? { signal } : {}),
+  });
 }
 
 /** Pads every column but the last to its widest cell, two spaces apart. */
