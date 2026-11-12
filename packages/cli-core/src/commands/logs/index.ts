@@ -48,7 +48,12 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     .command("list", { isDefault: true })
     .description("List logs, newest first, or follow new ones with --follow")
     .option("--json", "Output as JSON (one log per line with --follow)")
-    .option("--follow", "Keep running and print new logs as they arrive, oldest first")
+    .option(
+      "--follow",
+      "Keep running and print new logs as they arrive, oldest first, for live debugging " +
+        "(a log more than 5m late may be missed). To export or sync logs, use log drains: " +
+        "https://clerk.com/docs/guides/dashboard/logs/application-logs#export-logs",
+    )
     .option(
       "--interval <duration>",
       "How often --follow polls for new logs (at least 1s, default 2s)",

@@ -34,6 +34,7 @@ const {
   FollowWindow,
   DEFAULT_FOLLOW_INTERVAL_MS,
   LOOKBACK_MS,
+  MAX_DELAY_MS,
   MAX_RETRY_DELAY_MS,
   RETRY_GIVE_UP_MS,
   isTransientError,
@@ -61,7 +62,10 @@ function makeLog(id: string, eventTime: number, overrides: Record<string, unknow
   };
 }
 
-function page(data: unknown[], cursor: Record<string, unknown> = { next_page_status: "false" }) {
+function page(
+  data: readonly unknown[],
+  cursor: Record<string, unknown> = { next_page_status: "false" },
+) {
   return { status: 200, headers: new Headers(), body: { data, cursor }, rawBody: "" };
 }
 
@@ -300,6 +304,80 @@ describe("logs --follow", () => {
 
     expect(requestedUrl(1).searchParams.get("event_time_after")).toBe(String(T + 20_000));
     expect(printedIds(captured.out)).toEqual(["log_1", "log_2"]);
+  });
+
+  /** A page whose `Date` header says the API's clock reads `apiNow`. */
+  function pageAt(apiNow: number, data: unknown[]) {
+    return { ...page(data), headers: new Headers({ date: new Date(apiNow).toUTCString() }) };
+  }
+
+  test("looks back no more than 5 minutes before the API's Date after a quiet stretch", async () => {
+    const lastLog = NOW - 60 * 60_000;
+    mockBapiRequest
+      .mockResolvedValueOnce(pageAt(NOW, [makeLog("log_old", lastLog)]))
+      .mockResolvedValueOnce(pageAt(NOW + 2_000, []))
+      .mockResolvedValueOnce(pageAt(NOW + 4_000, []));
+
+    await runFollow({ json: true, since: 2 * 60 * 60_000 }, 2);
+
+    // Not lastLog - 10s: that would rescan the whole hour on every poll.
+    expect(requestedUrl(1).searchParams.get("event_time_after")).toBe(String(NOW - MAX_DELAY_MS));
+    expect(requestedUrl(2).searchParams.get("event_time_after")).toBe(
+      String(NOW + 2_000 - MAX_DELAY_MS),
+    );
+    expect(printedIds(captured.out)).toEqual(["log_old"]);
+  });
+
+  test("keeps the 5-minute floor moving with the local clock when responses have no Date", async () => {
+    const interval = 60_000;
+    const controller = new AbortController();
+    let now = NOW;
+    let polls = 0;
+    const sleep = mock(async (ms: number) => {
+      now += ms;
+      if (++polls > 10) controller.abort();
+    });
+    mockBapiRequest.mockResolvedValueOnce(page([makeLog("log_1", NOW - 1_000)]));
+
+    await follow({ json: true, interval }, { now: () => now, sleep, signal: controller.signal });
+
+    // Each poll's floor is the previous request's local send time minus 5
+    // minutes, so the window never grows past 5 minutes plus one interval.
+    for (let call = 1; call < mockBapiRequest.mock.calls.length; call++) {
+      const after = Number(requestedUrl(call).searchParams.get("event_time_after"));
+      const sentAt = NOW + call * interval;
+      expect(sentAt - after).toBeLessThanOrEqual(MAX_DELAY_MS + interval);
+    }
+    expect(Number(requestedUrl(10).searchParams.get("event_time_after"))).toBe(
+      NOW + 9 * interval - MAX_DELAY_MS,
+    );
+  });
+
+  test("still prints a log that arrives late after a quiet stretch, once", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(pageAt(NOW, [makeLog("log_old", NOW - 60 * 60_000)]))
+      // log_late happened 2 minutes ago but only reached the API now.
+      .mockResolvedValueOnce(pageAt(NOW, [makeLog("log_late", NOW - 2 * 60_000)]))
+      .mockResolvedValueOnce(pageAt(NOW, [makeLog("log_late", NOW - 2 * 60_000)]));
+
+    await runFollow({ json: true, since: 2 * 60 * 60_000 }, 2);
+
+    expect(printedIds(captured.out)).toEqual(["log_old", "log_late"]);
+    expect(requestedUrl(2).searchParams.get("event_time_after")).toBe(
+      String(NOW - 2 * 60_000 - LOOKBACK_MS),
+    );
+  });
+
+  test("looks back from the newest log while it is within 5 minutes of the API's Date", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(pageAt(NOW, [makeLog("log_1", NOW - 4 * 60_000)]))
+      .mockResolvedValueOnce(pageAt(NOW, []));
+
+    await runFollow({ json: true }, 1);
+
+    expect(requestedUrl(1).searchParams.get("event_time_after")).toBe(
+      String(NOW - 4 * 60_000 - LOOKBACK_MS),
+    );
   });
 
   test("doesn't look back past the oldest log of a backfill --limit cut short", async () => {
@@ -592,6 +670,22 @@ describe("logs --follow", () => {
     expect(printedIds(captured.out)).toEqual(["log_1"]);
   });
 
+  test.each([
+    { label: "a null item", data: [null] },
+    { label: "a string item", data: ["log_1"] },
+    { label: "an array item", data: [[]] },
+  ])("stops with a clean error when a poll's data holds $label", async ({ data }) => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([makeLog("log_1", T + 1_000)]))
+      .mockResolvedValueOnce(page(data));
+
+    await expect(runFollow({ json: true }, 5)).rejects.toThrow(
+      "The Logs API returned an unexpected response.",
+    );
+    expect(mockBapiRequest).toHaveBeenCalledTimes(2);
+    expect(printedIds(captured.out)).toEqual(["log_1"]);
+  });
+
   test("stops with an error when a poll repeats its cursor", async () => {
     mockBapiRequest
       .mockResolvedValueOnce(page([]))
@@ -680,6 +774,23 @@ describe("FollowWindow", () => {
 
     expect(window.size).toBe(1);
     expect(window.isNew(makeLog("log_1", T) as never)).toBe(false);
+  });
+
+  test("looks back no more than 5 minutes before the API's clock, and forgets older IDs", () => {
+    const window = new FollowWindow(T);
+    window.mark(makeLog("log_1", T) as never);
+    window.observe(T + 10 * 60_000);
+    window.evict();
+
+    expect(window.after).toBe(T + 10 * 60_000 - MAX_DELAY_MS);
+    expect(window.size).toBe(0);
+    expect(window.isNew(makeLog("log_1", T) as never)).toBe(false);
+  });
+
+  test("keeps the --limit or --since floor above the 5-minute bound", () => {
+    const window = new FollowWindow(T, T + 9 * 60_000);
+    window.observe(T + 10 * 60_000);
+    expect(window.after).toBe(T + 9 * 60_000);
   });
 
   test("keeps the IDs a poll still being finished can return", () => {

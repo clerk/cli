@@ -7,6 +7,13 @@
  * before the newest `event_time` printed, and skips the logs it already
  * printed by ID. Only the IDs inside that window are kept, so memory is bounded
  * by how many logs the window holds, however long the command runs.
+ *
+ * The lookback never reaches more than {@link MAX_DELAY_MS} behind the API's
+ * clock, so a quiet stretch doesn't make every poll rescan everything since
+ * the last log. A log that takes longer than that to reach the API is missed.
+ *
+ * `--follow` is for live debugging. Exporting or syncing logs through the
+ * Backend API isn't allowed; log drains do that.
  */
 
 import { setTimeout as delay } from "node:timers/promises";
@@ -62,6 +69,14 @@ export const REQUEST_TIMEOUT_MS = 30_000;
  * delivers late still gets printed (out of order, after newer ones).
  */
 export const LOOKBACK_MS = 10_000;
+/**
+ * The longest a log is assumed to take to reach the API after its
+ * `event_time`. No poll looks further back than this before the API's clock,
+ * so a follow that has printed nothing for a while scans at most this window
+ * instead of everything since its last log. A log that takes longer is missed.
+ * A guess for now: tune it once the pipeline's arrival delay is measured.
+ */
+export const MAX_DELAY_MS = 5 * 60_000;
 
 /** The clock, the timer and the stop signal, injectable so tests don't wait in real time. */
 export type FollowDeps = {
@@ -108,11 +123,12 @@ export function resolveFollowOptions(options: LogsFollowOptions): number {
 /**
  * Which logs have been printed, as far as the next poll can return them: the
  * newest `event_time` printed, and the ID and `event_time` of every log printed
- * within {@link LOOKBACK_MS} of it.
+ * since the window's start.
  */
 export class FollowWindow {
   private readonly seen = new Map<string, number>();
   private newest: number | undefined;
+  private apiNow: number;
 
   /**
    * @param anchor Where the window ends until a log is printed: the API's
@@ -123,11 +139,22 @@ export class FollowWindow {
   constructor(
     private readonly anchor: number,
     private readonly floor?: number,
-  ) {}
+  ) {
+    this.apiNow = anchor;
+  }
 
-  /** The `event_time_after` for the next poll. */
+  /** Record the API's clock as of the latest response. */
+  observe(apiNow: number): void {
+    this.apiNow = apiNow;
+  }
+
+  /**
+   * The `event_time_after` for the next poll: {@link LOOKBACK_MS} before the
+   * newest log printed, but no more than {@link MAX_DELAY_MS} before the API's
+   * clock, and never before the floor.
+   */
   get after(): number {
-    const after = (this.newest ?? this.anchor) - LOOKBACK_MS;
+    const after = Math.max((this.newest ?? this.anchor) - LOOKBACK_MS, this.apiNow - MAX_DELAY_MS);
     return this.floor === undefined ? after : Math.max(after, this.floor);
   }
 
@@ -400,8 +427,18 @@ export async function follow(
       log.info(formatFollowHeader(showPayload));
     }
 
-    const request = retryingRequest(secretKey, deps, signal);
+    const retrying = retryingRequest(secretKey, deps, signal);
     const query: ListQuery = { range, filters };
+
+    // The API's clock as of the latest response, from its `Date` header, or
+    // the local clock read before the request without one.
+    let latestApiNow: number | undefined;
+    const request: LogsPageRequest = async (path) => {
+      const sentAt = deps.now();
+      const response = await retrying(path);
+      latestApiNow = responseTime(response) ?? sentAt;
+      return response;
+    };
 
     // The API's clock when the backfill started, from its first response's
     // `Date` header (or the local clock, read before the request, without one).
@@ -453,6 +490,7 @@ export async function follow(
       if (!resume) await deps.sleep(interval, signal);
       if (signal.aborted) break;
 
+      if (latestApiNow !== undefined) printed.observe(latestApiNow);
       const from = resume?.after ?? printed.after;
       let result: PollResult;
       try {
@@ -468,6 +506,7 @@ export async function follow(
         printed.mark(entry);
       }
       resume = result.resume;
+      if (latestApiNow !== undefined) printed.observe(latestApiNow);
       printed.evict(resume?.after);
     }
   } catch (error) {
