@@ -48,7 +48,7 @@ function makeLog(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function page(data: unknown[], cursor: Record<string, unknown> = {}) {
+function page(data: readonly unknown[], cursor: Record<string, unknown> = {}) {
   return { status: 200, headers: new Headers(), body: { data, cursor }, rawBody: "" };
 }
 
@@ -580,6 +580,19 @@ describe("logs list --grouped", () => {
     expect(later.get("starting_after")).toBe("gcur_1");
     expect(later.get("group_type")).toBe("sign_in");
     expect(JSON.parse(captured.out).cursor.next).toBe("gcur_2");
+  });
+
+  test.each([
+    { label: "null", data: [null] },
+    { label: "a string", data: [makeGroup("sia_1"), "sia_2"] },
+    { label: "an array", data: [[]] },
+  ])("fails cleanly when a grouped page's data holds $label", async ({ data }) => {
+    mockBapiRequest.mockResolvedValueOnce(page(data, { next_page_status: "false" }));
+
+    await expect(list({ json: true, grouped: true })).rejects.toThrow(
+      "The Logs API returned an unexpected response.",
+    );
+    expect(captured.out).toBe("");
   });
 
   test("never sends group parameters without --grouped", async () => {
