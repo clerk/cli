@@ -1,5 +1,16 @@
 import { test, expect, describe } from "bun:test";
+import { EXIT_CODE } from "../../lib/errors.ts";
 import { parseDuration, parseTimestamp, resolveTimeRange } from "./time.ts";
+
+function captureError(fn: () => unknown): Error {
+  try {
+    fn();
+  } catch (error) {
+    if (error instanceof Error) return error;
+    throw error;
+  }
+  throw new Error("Expected the call to throw");
+}
 
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
@@ -33,6 +44,9 @@ describe("parseDuration", () => {
 describe("parseTimestamp", () => {
   test.each([
     ["Unix milliseconds", "1762702200000", 1_762_702_200_000],
+    ["the smallest accepted Unix milliseconds (2020-01-01)", "1577836800000", 1_577_836_800_000],
+    ["Unix milliseconds with leading zeros", "0001762702200000", 1_762_702_200_000],
+    ["Unix milliseconds with surrounding spaces", " 1762702200000 ", 1_762_702_200_000],
     ["a date, as midnight UTC", "2026-11-09", Date.UTC(2026, 10, 9)],
     ["a UTC date-time", "2026-11-09T15:30:00Z", Date.UTC(2026, 10, 9, 15, 30)],
     ["a date-time without an offset, as UTC", "2026-11-09T15:30:00", Date.UTC(2026, 10, 9, 15, 30)],
@@ -58,8 +72,34 @@ describe("parseTimestamp", () => {
     "2027-02-29",
     "2026-02-31T10:00",
     "2026-02-30T10:00:00-05:00",
+    "-1762702200000",
+    "-1",
   ])("rejects %p naming the flag", (value) => {
     expect(() => parseTimestamp(value, "--to")).toThrow(`Invalid --to value "${value}"`);
+  });
+
+  test.each([
+    ["current Unix seconds", "1762702200", "--from"],
+    ["Unix seconds with leading zeros", "01762702200", "--from"],
+    ["Unix seconds as --to", "1762702200", "--to"],
+    ["the last millisecond of 2019", "1577836799999", "--from"],
+    ["a millisecond value in 1975", "157766400000", "--from"],
+    ["zero", "0", "--to"],
+    ["zero with leading zeros", "000", "--to"],
+    ["a small number", "1000", "--to"],
+  ])("rejects %s as earlier than 2020", (_name, value, flag) => {
+    const error = captureError(() => parseTimestamp(value, flag));
+    expect(error.message).toBe(
+      `Invalid ${flag} value "${value}". ${flag} takes Unix milliseconds or an ISO 8601 date-time, like 1762702200000 or 2026-11-09T15:30:00Z.`,
+    );
+    expect(error).toMatchObject({ exitCode: EXIT_CODE.USAGE });
+  });
+
+  test.each([
+    ["a date", "2019-12-31", Date.UTC(2019, 11, 31)],
+    ["a date-time", "1975-01-01T00:00:00Z", Date.UTC(1975, 0, 1)],
+  ])("still accepts %s before 2020", (_name, value, expected) => {
+    expect(parseTimestamp(value, "--from")).toBe(expected);
   });
 });
 
