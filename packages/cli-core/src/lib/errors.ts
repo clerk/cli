@@ -136,6 +136,8 @@ export const ERROR_CODE = {
   DEPLOY_INSTANCE_UNRESOLVED: "deploy_instance_unresolved",
   /** Local publishable key and secret key address different applications. */
   KEY_PAIR_MISMATCH: "key_pair_mismatch",
+  /** `clerk logs get` found no log group with that ID in the targeted instance. */
+  LOG_GROUP_NOT_FOUND: "log_group_not_found",
   /** BAPI returned a response the CLI could not use. */
   BAPI_UNEXPECTED_RESPONSE: "bapi_unexpected_response",
   /** The command needs a TTY that isn't available. */

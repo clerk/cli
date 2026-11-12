@@ -4,11 +4,12 @@ import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.t
 import { collectOptionValues, parseIntegerOption } from "../../lib/option-parsers.ts";
 import { FILTER_MATCH_CHOICES } from "./filters.ts";
 import { follow } from "./follow.ts";
+import { get, MAX_LIMIT as GET_MAX_LIMIT } from "./get.ts";
 import { list } from "./list.ts";
 import { schema } from "./schema.ts";
 import { parseDuration, parseTimestamp } from "./time.ts";
 
-const logs = { list, follow, schema };
+const logs = { list, follow, get, schema };
 
 export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.env): void {
   // Experimental until `clerk logs` is ready to ship (Linear project
@@ -41,6 +42,7 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       { command: "clerk logs", description: "List the newest logs" },
       { command: "clerk logs --since 30m", description: "Logs from the last 30 minutes" },
       { command: "clerk logs --follow", description: "Print new logs as they arrive" },
+      { command: "clerk logs get sia_123", description: "The logs of one sign-in" },
       { command: "clerk logs --instance prod --json", description: "Production logs as JSON" },
     ]);
 
@@ -144,6 +146,67 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       const options = cmd.optsWithGlobals() as NonNullable<Parameters<typeof logs.follow>[0]>;
       return options.follow ? logs.follow(options) : logs.list(options);
     });
+
+  // The event filters of `list`; get has no time range, `--follow` or group
+  // filters, since the group is already chosen.
+  logsCommand
+    .command("get")
+    .description("Show the logs of a log group (a sign-in or sign-up), oldest first")
+    .argument("[id]", "A log group ID: a sign-in ID (sia_...) or a sign-up ID (sua_...)")
+    .option("--json", "Output as JSON")
+    .option(
+      "--limit <number>",
+      `Maximum logs to return (1-${GET_MAX_LIMIT}, default 50)`,
+      (value) => parseIntegerOption(value, "--limit", { min: 1, max: GET_MAX_LIMIT }),
+    )
+    .option("--cursor <cursor>", "Continue from the cursor a previous run printed")
+    .option("--type <type>", "Only logs of a type; a trailing * matches a prefix (sign_in.*)")
+    .option("--user <user-id>", "Only logs where the user is the actor or subject")
+    .option(
+      "--identifier <value>",
+      "Only logs for an email, phone number, username or web3 wallet (exact)",
+    )
+    .option("--actor <id>", "Only logs with this actor")
+    .option("--subject <id>", "Only logs with this subject")
+    .option("--session <id>", "Only logs from requests made with this session")
+    .option("--client <id>", "Only logs of a client")
+    .option("--ip <address>", "Only logs from an IP address")
+    .option("--trace <id>", "Only logs of a trace")
+    .option("--impersonator <user-id>", "Only logs made while this user impersonated someone")
+    .option(
+      "--payload-filter <path=value>",
+      "Only logs whose payload field equals a value (repeatable; needs --type)",
+      collectOptionValues,
+    )
+    .option("--fields <paths>", "Payload fields to include, comma-separated (needs --type)")
+    .addOption(
+      createOption("--match <mode>", "Match all filters (default) or any of them").choices(
+        FILTER_MATCH_CHOICES,
+      ),
+    )
+    .option("--end-user-only", "Only event types shown to end users")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .setExamples([
+      { command: "clerk logs get sia_123", description: "The logs of a sign-in" },
+      { command: "clerk logs get sua_123 --json", description: "The logs of a sign-up as JSON" },
+      {
+        command: "clerk logs get sia_123 --type 'sign_in.*'",
+        description: "Only the sign_in logs of a sign-in",
+      },
+      {
+        command: "clerk logs get sia_123 --cursor <cursor>",
+        description: "Continue where a previous run stopped",
+      },
+      {
+        command: "clerk logs get sia_123 --app app_123 --instance prod",
+        description: "A sign-in of another application's production instance",
+      },
+    ])
+    .action(async (id: string | undefined, _opts, cmd) =>
+      logs.get(id, cmd.optsWithGlobals() as Parameters<typeof logs.get>[1]),
+    );
 
   logsCommand
     .command("schema")
