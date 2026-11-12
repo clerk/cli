@@ -91,21 +91,21 @@ export type FetchLogsOutcome = { result: LogsListResult; error?: unknown };
 /** Sends one `GET /v1/logs` request for a path built by {@link buildListPath}. */
 export type LogsPageRequest = (path: string) => Promise<ApiResponse>;
 
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 /**
  * The page of a `GET /v1/logs` response, or a {@link CliError} when the body
- * isn't a JSON object with a `data` array. `bapiRequest` hands back the raw
- * text when the body isn't JSON, and null for a literal `null`. A body without
- * `data` would otherwise read as an empty page: the end of a list, or a quiet
- * poll that moves `--follow` past logs it never printed.
+ * isn't a JSON object with a `data` array of objects. `bapiRequest` hands back
+ * the raw text when the body isn't JSON, and null for a literal `null`. A body
+ * without `data` would otherwise read as an empty page: the end of a list, or a
+ * quiet poll that moves `--follow` past logs it never printed. An item that
+ * isn't an object would fail later with a `TypeError` instead.
  */
 export function readLogsPage(response: ApiResponse): LogListPage {
   const body = response.body;
-  if (
-    typeof body !== "object" ||
-    body === null ||
-    Array.isArray(body) ||
-    !Array.isArray((body as { data?: unknown }).data)
-  ) {
+  if (!isObject(body) || !Array.isArray(body.data) || !body.data.every(isObject)) {
     throw new CliError("The Logs API returned an unexpected response.");
   }
   return body as LogListPage;
