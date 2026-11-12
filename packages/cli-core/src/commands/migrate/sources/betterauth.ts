@@ -55,11 +55,11 @@ const betterAuthSource = {
   key: "betterauth",
   label: "Better Auth",
   description:
-    "Works with the Better Auth export. Detects scrypt, bcrypt and argon2 passwords per user, and carries the admin plugin's banned flag while its ban has not expired.",
+    "Works with the Better Auth export. Detects scrypt, bcrypt, and argon2 passwords per user, and carries the admin plugin's banned flag while its ban has not expired.",
   carries: {
     passwords: {
       level: "yes",
-      note: "Better Auth's scrypt, bcrypt and argon2 hashes come across, detected per user. Any other hash is dropped, and that user resets their password.",
+      note: "Better Auth's scrypt, bcrypt, and argon2 hashes come across, detected per user. Any other hash is dropped, and that user resets their password.",
     },
     mfa: {
       level: "no",
@@ -109,7 +109,7 @@ const betterAuthSource = {
 
     // Only carry `banned` when it is actually true — Better Auth writes false
     // for every user that was never banned, and sending that to Clerk is noise.
-    // SQLite, libSQL and MySQL hand back 1/0 and CSV hands back "true", so this
+    // SQLite, libSQL, and MySQL hand back 1/0 and CSV hands back "true", so this
     // runs before normalizeUserData and must accept those too.
     // A ban whose `banExpires` has passed is over: Better Auth lifts it only
     // at the user's next sign-in, so the column still says banned. An expiry

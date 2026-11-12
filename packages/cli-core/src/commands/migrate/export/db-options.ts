@@ -107,7 +107,7 @@ function parsesAsUrl(value: string): boolean {
  * Percent-encodes the credentials when the raw string will not parse as a URL.
  *
  * Dashboards hand out `postgres://user:[YOUR-PASSWORD]@host/db` and people
- * paste their real password in verbatim. A `#`, `@`, `/` or `^` in it makes the
+ * paste their real password in verbatim. A `#`, `@`, `/`, or `^` in it makes the
  * whole string unparseable — here and later inside `Bun.SQL` — so encode it for
  * them rather than bouncing a paste they cannot even see (the prompt is
  * masked). Strings that already parse are returned untouched, so a password

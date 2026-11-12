@@ -5,7 +5,7 @@
  * the source when the file does not name its own, and Firebase's hash
  * parameters when neither the flags nor the export carry them.
  *
- * Nothing here runs for an agent, a non-TTY run or `--json`: `run` raises a
+ * Nothing here runs for an agent, a non-TTY run, or `--json`: `run` raises a
  * usage error naming what to pass instead.
  */
 

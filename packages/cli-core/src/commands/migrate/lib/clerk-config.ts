@@ -22,7 +22,7 @@ import { retryOn429 } from "./retry.ts";
  * Supabase provider keys whose Clerk strategy is not simply `oauth_<key>`.
  *
  * Everything not listed here maps by prefix, which covers google, github,
- * discord, spotify, twitch, notion, figma, gitlab, bitbucket and the rest.
+ * discord, spotify, twitch, notion, figma, gitlab, bitbucket, and the rest.
  */
 const CLERK_STRATEGY_ALIASES: Record<string, string> = {
   azure: "oauth_microsoft",

@@ -1,6 +1,6 @@
 /**
  * How a failed request reads in a run's lines and summaries, shared by import,
- * undo and `runs`.
+ * undo, and `runs`.
  */
 
 import type { BapiError } from "../../../lib/errors.ts";

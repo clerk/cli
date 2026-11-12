@@ -127,7 +127,7 @@ export function formatSection(section: ExportSection): string[] {
  *
  * One command rather than a development and a production variant, because
  * there is no flag whose absence means "development": the key decides, through
- * `--secret-key`, `--app`, `CLERK_SECRET_KEY`, the keyless project and the
+ * `--secret-key`, `--app`, `CLERK_SECRET_KEY`, the keyless project, and the
  * linked profile in that order. A line labelled "development" would be wrong
  * for anyone holding `CLERK_SECRET_KEY=sk_live_…`, which is the reader who can
  * least afford it. So the note names what picks the instance instead.
@@ -194,7 +194,7 @@ export function finishExport(input: FinishExportInput): FinishedExport {
     ...(input.truncated ? { truncated: true } : {}),
   });
   const record = run.finish();
-  // Only the runs folder: the export's --secret-key, --app and --instance name
+  // Only the runs folder: the export's --secret-key, --app, and --instance name
   // the source, and would aim the import at it.
   const carry = carryFlags({ runsDir: options.runsDir });
   const next = withFlags(`clerk migrate import ${record.id}`, carry);
