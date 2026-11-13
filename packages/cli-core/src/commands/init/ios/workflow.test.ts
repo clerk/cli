@@ -1,5 +1,5 @@
 import { createServer, type AddressInfo } from "node:net";
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, spyOn, test } from "bun:test";
 import {
   chmod,
   copyFile,
@@ -22,6 +22,7 @@ import { applySetup, describePreview, prepareSetup, type SetupOptions } from "./
 import { doctor } from "./doctor.ts";
 import { PlapiError } from "../../../lib/errors.ts";
 import { type NativeAPI, type RemoteInput } from "./remote.ts";
+import * as xcode from "./xcode.ts";
 import { resolvePackages, runCommand, XcodeCommandError, type CommandRunner } from "./xcode.ts";
 
 const roots: string[] = [];
@@ -664,7 +665,37 @@ test("package resolution says Xcode is still resolving when it never finishes", 
   ).catch((e: unknown) => e);
   expect(attempts).toBe(3);
   expect(String(error)).toContain("Xcode is resolving this project's packages itself");
+  expect(String(error)).toContain("then run clerk init again");
   expect(String(error)).not.toContain("Check network access");
+});
+
+test("setup's handoff says Xcode is still resolving instead of blaming the network", async () => {
+  const f = await discoveredFixture();
+  const run: CommandRunner = async (command, root, signal) => {
+    if (command.includes("-resolvePackageDependencies"))
+      throw new XcodeCommandError("xcodebuild exited with code 74.", XCODE_RESOLVING_STDERR);
+    return f.dependencies.run(command, root, signal);
+  };
+  const realResolve = xcode.resolvePackages;
+  const resolve = spyOn(xcode, "resolvePackages").mockImplementation(
+    (root, project, runner, signal, progress) =>
+      realResolve(root, project, runner, signal, progress, []),
+  );
+  try {
+    const preview = await prepareSetup(
+      { ...f.options, resolvePackages: true },
+      { ...f.dependencies, run },
+    );
+    const result = await applySetup(preview, { ...f.dependencies, run });
+    expect(result.packages).toBe("incomplete");
+    expect(result.message).toContain("Xcode is resolving this project's packages itself");
+    const step = result.handoff.remaining.find((item) => item.id === "swift-packages");
+    expect(step?.detail).toContain("Xcode is still resolving this project's Swift packages");
+    expect(step?.detail).toContain("then run clerk init again");
+    expect(JSON.stringify(result.handoff)).not.toContain("network");
+  } finally {
+    resolve.mockRestore();
+  }
 });
 
 test("package resolution doesn't retry other failures", async () => {

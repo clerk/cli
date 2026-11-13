@@ -1,4 +1,5 @@
 import { readdir, realpath } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { selectApplication, type ChooseApp } from "./discovery.ts";
 import { configurationNames } from "./project.ts";
@@ -261,20 +262,9 @@ export async function inspectSelectedProject(
 const XCODE_RESOLVING = /SourcePackages\/checkouts\/[^']*Package\.swift' cannot be accessed/;
 const XCODE_RESOLVING_RETRY_DELAYS = [5_000, 10_000, 15_000];
 
-async function wait(ms: number, signal?: AbortSignal): Promise<void> {
-  signal?.throwIfAborted();
-  await new Promise<void>((done) => {
-    const timer = setTimeout(done, ms);
-    signal?.addEventListener(
-      "abort",
-      () => {
-        clearTimeout(timer);
-        done();
-      },
-      { once: true },
-    );
-  });
-  signal?.throwIfAborted();
+/** Whether package resolution failed because an open Xcode was resolving the same packages. */
+export function xcodeWasResolving(error: unknown): boolean {
+  return error instanceof XcodeCommandError && XCODE_RESOLVING.test(error.stderr);
 }
 
 export async function resolvePackages(
@@ -297,7 +287,7 @@ export async function resolvePackages(
         const stderr = error instanceof XcodeCommandError ? error.stderr : "";
         if (!XCODE_RESOLVING.test(stderr) || attempt >= retryDelays.length) throw error;
         progress?.("Xcode is resolving this project's packages too; waiting for it to finish...");
-        await wait(retryDelays[attempt]!, signal);
+        await delay(retryDelays[attempt]!, undefined, { signal });
       }
     }
     progress?.("Swift packages resolved.");
@@ -306,7 +296,7 @@ export async function resolvePackages(
     const stderr = error instanceof XcodeCommandError ? error.stderr : errorMessage(error);
     throw new XcodeCommandError(
       XCODE_RESOLVING.test(stderr)
-        ? "Swift package resolution didn't finish because Xcode is resolving this project's packages itself. Let Xcode finish (its activity bar shows package resolution), then run clerk doctor to check the result."
+        ? "Swift package resolution didn't finish because Xcode is resolving this project's packages itself. Let Xcode finish (its activity bar shows package resolution), then run clerk init again."
         : "Swift package resolution failed. Check network access and private-package credentials in Xcode, then retry. Project edits and downloaded packages may remain.",
       stderr,
     );
