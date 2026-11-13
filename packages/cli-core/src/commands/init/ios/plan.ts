@@ -1,7 +1,7 @@
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { ScaffoldPlan } from "../frameworks/types.ts";
 import { scaffoldSDK, type SDKInput } from "./sdk.ts";
-import { setupError } from "./types.ts";
+import { platformLabel, setupError } from "./types.ts";
 
 export interface Selection {
   root: string;
@@ -116,7 +116,7 @@ export function planAppleSetup(input: SetupInput): ScaffoldPlan {
     throw setupError("Select a root-relative project path without parent traversal.");
   }
   const settings = selectedSettings(selection, input.settingsJSON);
-  const platform = selection.sdk === "macosx" ? "macOS" : "iOS";
+  const platform = platformLabel(selection.sdk);
   const deployment =
     settings[platform === "macOS" ? "MACOSX_DEPLOYMENT_TARGET" : "IPHONEOS_DEPLOYMENT_TARGET"];
   const minimum = platform === "macOS" ? 14 : 17;

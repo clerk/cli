@@ -16,7 +16,8 @@ import { stopNativeProgress, withNativeSpinner } from "./progress.ts";
 import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
-import { inspectSelectedProject, nativePlatform, platformsLabel } from "./xcode.ts";
+import { inspectSelectedProject, nativePlatform, unsupportedPlatformsLabel } from "./xcode.ts";
+import { platformLabel } from "./types.ts";
 import { signedByPersonalTeam } from "./teams.ts";
 import { nonDefaultXcodeNote } from "./xcode-tools.ts";
 import { SelectionNeeded } from "./discovery.ts";
@@ -90,7 +91,7 @@ export function printSetupPreview(preview: SetupPreview): void {
   const { selection } = inspection.input;
   const configurations = [...new Set(inspection.contexts.map((c) => c.selection.configuration))];
   log.info(
-    `\nSet up ${selection.targetName}${nativePlatform(inspection) === "multiplatform" ? ` for ${platformsLabel(inspection)}` : ""} (${configurations.join(", ")})`,
+    `\nSet up ${selection.targetName}${nativePlatform(inspection) === "multiplatform" ? ` for ${platformLabel(nativePlatform(inspection))}` : ""} (${configurations.join(", ")})`,
   );
   const xcodeNote = nonDefaultXcodeNote();
   if (xcodeNote) log.info(`  ${xcodeNote}`);
@@ -119,7 +120,7 @@ export function printSetupPreview(preview: SetupPreview): void {
     log.warn(`Other configurations need review: ${inspection.uncheckedConfigurations.join(", ")}`);
   if (inspection.unsupportedPlatforms.length)
     log.warn(
-      `Clerk sets up only iOS and macOS, so this target's ${inspection.unsupportedPlatforms.join(", ")} build is left unchanged.`,
+      `Clerk sets up only iOS and macOS, so this target's ${unsupportedPlatformsLabel(inspection)} build is left unchanged.`,
     );
   if (!preview.starter?.tasks.length)
     log.info("  Swift integration remains: initialize Clerk and connect your sign-in flow.");
@@ -331,7 +332,7 @@ export async function runAppleInit(
       setup.signInUI = true;
     if (interactive) {
       log.success(
-        `Found ${platformsLabel(inspection)} app: ${inspection.input.selection.targetName}`,
+        `Found ${platformLabel(nativePlatform(inspection))} app: ${inspection.input.selection.targetName}`,
       );
       if (!options.appleSdk && !options.prebuiltAuthUi && !installedProducts && !starter)
         setup.products = await select({

@@ -10,7 +10,7 @@ import { planAllCapabilities } from "./capabilities.ts";
 import * as coordinator from "./coordinator.ts";
 import { runAppleInit } from "./coordinator.ts";
 import { doctor } from "./doctor.ts";
-import { describePreview, prepareSetup } from "./workflow.ts";
+import { applySetup, describePreview, prepareSetup } from "./workflow.ts";
 import { inspectSelectedProject, type CommandRunner } from "./xcode.ts";
 import { runIOSDoctorChecks } from "../../doctor/ios.ts";
 import type { DoctorContext } from "../../doctor/types.ts";
@@ -95,7 +95,7 @@ test("inspects each configuration for iOS and macOS, and names the platforms it 
   expect(
     inspection.contexts.map(({ selection }) => `${selection.configuration}/${selection.sdk}`),
   ).toEqual(["Debug/iphoneos", "Debug/macosx", "Release/iphoneos", "Release/macosx"]);
-  expect(inspection.unsupportedPlatforms).toEqual(["visionOS"]);
+  expect(inspection.unsupportedPlatforms).toEqual(["xros"]);
   expect(inspection.platformNeutralSettingsJSON).toHaveLength(2);
   expect(
     commands.map((command) =>
@@ -140,7 +140,7 @@ test("a paid team keeps one shared entitlements file for both platforms", async 
   // One registration covers both platforms.
   expect(f.state.apps.map((app) => app.bundle_id)).toEqual(["com.example.MyApp"]);
   expect(result.handoff.context.platforms).toEqual(["iphoneos", "macosx"]);
-  expect(result.handoff.context.unsupportedPlatforms).toEqual(["visionOS"]);
+  expect(result.handoff.context.unsupportedPlatforms).toEqual(["xros"]);
   expect(result.handoff.configurations).toEqual(["Debug", "Release"]);
   expect(
     result.handoff.remaining.some((item: { id: string }) => item.id === "associated-domains"),
@@ -217,7 +217,10 @@ test("the setup preview tells a person at the terminal the Mac side has no passk
   expect(captured.err).toContain("visionOS build is left unchanged");
   const described = describePreview(preview);
   expect(described.context).toMatchObject({ platforms: ["iphoneos", "macosx"] });
-  expect(described.coverage).toMatchObject({ unsupportedPlatforms: ["visionOS"] });
+  expect(described.coverage).toMatchObject({ unsupportedPlatforms: ["xros"] });
+  expect(preview.local.postInstructions[0]).toContain(
+    "Platforms Clerk doesn't set up, left unchanged: visionOS.",
+  );
 });
 
 test("the human setup result says the Mac side has no passkeys and iOS keeps them", async () => {
@@ -307,10 +310,12 @@ test("different Bundle IDs per platform stop setup before any write, and doctor 
 test("doctor checks each configuration on both platforms", async () => {
   const f = await fixture({ appleInClerk: true });
   const checks = await doctorChecks(f);
-  expect(checks.find((check) => check.name === "Xcode configuration coverage")).toMatchObject({
-    status: "warn",
-    message: expect.stringContaining("Inspected Debug, Release for iOS and macOS"),
-  });
+  const coverage = checks.find((check) => check.name === "Xcode configuration coverage");
+  expect(coverage?.status).toBe("warn");
+  expect(coverage?.message).toContain("Inspected Debug, Release for iOS and macOS");
+  expect(coverage?.message).toContain(
+    "Clerk doesn't set up this target's other platforms: visionOS.",
+  );
   expect(
     checks
       .filter((check) => check.name.startsWith("Apple entitlement:"))
@@ -383,13 +388,12 @@ test("a Personal Team's shared file that already has Associated Domains is split
 
   // Doctor writes nothing, so before setup it warns and says setup can split the file.
   const before = await doctorChecks(f);
-  const macWarnings = before.filter(
-    (check) =>
-      check.name.startsWith("Personal Team entitlements:") && check.name.endsWith("(macOS)"),
+  const macWarnings = before.filter((check) =>
+    check.name.startsWith("Personal Team entitlements:"),
   );
   expect(macWarnings.map((check) => check.name)).toEqual([
-    "Personal Team entitlements: Debug (macOS)",
-    "Personal Team entitlements: Release (macOS)",
+    "Personal Team entitlements: Debug (iOS and macOS)",
+    "Personal Team entitlements: Release (iOS and macOS)",
   ]);
   expect(macWarnings[0]!.message).toContain(
     "MyApp/MyApp.entitlements gives the Mac build Associated Domains, which a Personal Team can't sign for a Mac app. Run clerk init to give macOS its own copy without them",
@@ -468,4 +472,304 @@ test("a single-platform Mac app's Associated Domains are still reported, not cha
   ).toContain(
     "still has Sign in with Apple and Associated Domains, which a Personal Team can't sign",
   );
+});
+
+function personalTeam(f: Awaited<ReturnType<typeof fixture>>, personal: boolean) {
+  f.dependencies.xcodeTeams = [{ id: "TEAMID1234", name: "Sean Perez", personal }];
+}
+
+async function expectRerunChangesNothing(f: Awaited<ReturnType<typeof fixture>>) {
+  const project = await readFile(f.path, "utf8");
+  const rerun = await init(f);
+  expect(rerun.changedFiles).toEqual([]);
+  expect(await readFile(f.path, "utf8")).toBe(project);
+}
+
+test("a Mac copy setup can't create leaves the shared file without Associated Domains", async () => {
+  const f = await fixture({ personal: true });
+  const sharedPath = join(f.root, "MyApp/MyApp.entitlements");
+  const shared = await readFile(sharedPath, "utf8");
+  await writeFile(join(f.root, "MyApp/MyApp-macOS.entitlements"), "<plist/>");
+  const result = await init(f);
+  expect(await readFile(sharedPath, "utf8")).toBe(shared);
+  expect(await readFile(join(f.root, "MyApp/MyApp-macOS.entitlements"), "utf8")).toBe("<plist/>");
+  const source = await readFile(f.path, "utf8");
+  for (const id of [ids.targetDebug, ids.targetRelease])
+    expect(targetSettings(source, id)["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"]).toBeUndefined();
+  const remaining: { id: string; detail: string }[] = result.handoff.remaining;
+  expect(remaining.some((item) => item.detail.includes("left out of the macOS app"))).toBe(false);
+  const capabilities = remaining.filter((item) => item.id.startsWith("capabilities:"));
+  expect(capabilities.map((item) => /MyApp, (\w+, \w+);/.exec(item.id)?.[1])).toEqual([
+    "Debug, iphoneos",
+    "Debug, macosx",
+    "Release, iphoneos",
+    "Release, macosx",
+  ]);
+  for (const item of capabilities)
+    expect(item.detail).toContain(
+      "Give macOS its own entitlements file without Associated Domains in Xcode, or choose a paid Apple Developer Program team",
+    );
+  expect(capabilities[0]!.detail).toContain(
+    "MyApp/MyApp.entitlements can't get the Associated Domain",
+  );
+  expect(capabilities[1]!.detail).toContain("The proposed new entitlement file already exists");
+});
+
+test("a Mac build setup can't finish keeps the domain iOS wants out of the file they share", async () => {
+  const f = await fixture({ personal: true });
+  await editTargetSettings(f.path, {
+    CODE_SIGN_ENTITLEMENTS: "MyApp/MyApp.entitlements",
+    "ENABLE_OUTGOING_NETWORK_CONNECTIONS[arch=arm64]": "NO",
+  });
+  const sharedPath = join(f.root, "MyApp/MyApp.entitlements");
+  const shared = await readFile(sharedPath, "utf8");
+  const result = await init(f);
+  expect(await readFile(sharedPath, "utf8")).toBe(shared);
+  const remaining: { id: string; detail: string }[] = result.handoff.remaining;
+  expect(remaining.some((item) => item.detail.includes("left out of the macOS app"))).toBe(false);
+  const iOS = remaining.find((item) => /Debug, iphoneos/.test(item.id));
+  expect(iOS?.detail).toContain("MyApp/MyApp.entitlements can't get the Associated Domain");
+  expect(remaining.find((item) => /Debug, macosx/.test(item.id))?.detail).toContain(
+    "Review conditional network-access settings in Xcode.",
+  );
+});
+
+test("a Mac build signing a file of its own keeps its warning when the shared file isn't split", async () => {
+  const f = await fixture({ personal: true });
+  const graph = parse(await readFile(f.path, "utf8"));
+  (graph.objects![ids.targetDebug] as any).buildSettings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"] =
+    "MyApp/Mac.entitlements";
+  await writeFile(f.path, build(graph));
+  await writeFile(
+    join(f.root, "MyApp/Mac.entitlements"),
+    '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0">\n<dict>\n\t<key>com.apple.developer.associated-domains</key>\n\t<array>\n\t\t<string>webcredentials:example.com</string>\n\t</array>\n</dict>\n</plist>\n',
+  );
+  await writeFile(join(f.root, "MyApp/MyApp-macOS.entitlements"), "<plist/>");
+  const result = await init(f);
+  const remaining: { id: string; detail: string }[] = result.handoff.remaining;
+  expect(
+    remaining.some((item) =>
+      item.detail.includes("MyApp/Mac.entitlements still has Associated Domains"),
+    ),
+  ).toBe(true);
+});
+
+test("switching a Personal Team to a paid team gives the Mac build its own Associated Domains", async () => {
+  const f = await fixture({ personal: true, entitlements: false });
+  await init(f);
+  personalTeam(f, false);
+  const result = await init(f);
+  expect(result.changedFiles).toEqual([
+    "MyApp-macOS.entitlements",
+    "MyApp.xcodeproj/project.pbxproj",
+  ]);
+  expect(await readFile(join(f.root, "MyApp.entitlements"), "utf8")).toContain(DOMAIN);
+  expect(await readFile(join(f.root, "MyApp-macOS.entitlements"), "utf8")).toContain(DOMAIN);
+  const source = await readFile(f.path, "utf8");
+  for (const id of [ids.targetDebug, ids.targetRelease])
+    expect(targetSettings(source, id)).toMatchObject({
+      "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]": "MyApp.entitlements",
+      "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": "MyApp-macOS.entitlements",
+    });
+  expect(
+    result.handoff.remaining.some((item: { id: string }) => item.id.startsWith("capabilities:")),
+  ).toBe(false);
+  await expectRerunChangesNothing(f);
+});
+
+test("switching a paid team to a Personal Team splits the file both platforms shared", async () => {
+  const f = await fixture({ entitlements: false });
+  await init(f);
+  const shared = await readFile(join(f.root, "MyApp.entitlements"), "utf8");
+  expect(shared).toContain(DOMAIN);
+  personalTeam(f, true);
+  const result = await init(f);
+  expect(result.changedFiles).toEqual([
+    "MyApp-macOS.entitlements",
+    "MyApp.xcodeproj/project.pbxproj",
+  ]);
+  expect(await readFile(join(f.root, "MyApp.entitlements"), "utf8")).toBe(shared);
+  expect(await readFile(join(f.root, "MyApp-macOS.entitlements"), "utf8")).not.toContain(
+    "com.apple.developer.associated-domains",
+  );
+  const source = await readFile(f.path, "utf8");
+  for (const id of [ids.targetDebug, ids.targetRelease])
+    expect(targetSettings(source, id)).toMatchObject({
+      "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]": "MyApp.entitlements",
+      "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]": "MyApp-macOS.entitlements",
+    });
+  expect(
+    result.handoff.remaining.find((item: { id: string }) => item.id === "associated-domains")
+      ?.detail,
+  ).toContain("left out of the macOS app");
+  await expectRerunChangesNothing(f);
+});
+
+test("doctor names Sign in with Apple in a file both platforms share once per configuration", async () => {
+  const f = await fixture({ personal: true });
+  await writeFile(
+    join(f.root, "MyApp/MyApp.entitlements"),
+    SHARED_WITH_DOMAIN.replace(
+      /\t<key>com.apple.developer.associated-domains<\/key>[\s\S]*?<\/array>\n/,
+      "",
+    ),
+  );
+  const checks = (await doctorChecks(f)).filter((check) =>
+    check.name.startsWith("Personal Team entitlements:"),
+  );
+  expect(checks.map((check) => check.name)).toEqual([
+    "Personal Team entitlements: Debug (iOS and macOS)",
+    "Personal Team entitlements: Release (iOS and macOS)",
+  ]);
+  expect(checks[0]!.message.match(/still has/g)).toHaveLength(1);
+  expect(checks[0]!.message).toContain("MyApp/MyApp.entitlements still has Sign in with Apple,");
+});
+
+/** Release iOS signs a file of its own; every other context signs the shared file. */
+async function releaseIOSOwnFile(f: Awaited<ReturnType<typeof fixture>>, macDebug?: string) {
+  const original = await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8");
+  await writeFile(join(f.root, "MyApp/Release.entitlements"), original);
+  const graph = parse(await readFile(f.path, "utf8"));
+  (graph.objects![ids.targetRelease] as any).buildSettings["CODE_SIGN_ENTITLEMENTS[sdk=iphone*]"] =
+    "MyApp/Release.entitlements";
+  if (macDebug) {
+    (graph.objects![ids.targetDebug] as any).buildSettings["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"] =
+      macDebug;
+    await writeFile(join(f.root, macDebug), original);
+  }
+  await writeFile(f.path, build(graph));
+}
+
+test("a Personal Team gives a Mac build its own copy when iOS writes the domain to its file in another configuration", async () => {
+  const f = await fixture({ personal: true });
+  await releaseIOSOwnFile(f);
+  const result = await init(f);
+  expect(await readFile(join(f.root, "MyApp/MyApp.entitlements"), "utf8")).toContain(DOMAIN);
+  expect(await readFile(join(f.root, "MyApp/Release.entitlements"), "utf8")).toContain(DOMAIN);
+  expect(await readFile(join(f.root, "MyApp/MyApp-macOS.entitlements"), "utf8")).not.toContain(
+    "com.apple.developer.associated-domains",
+  );
+  const source = await readFile(f.path, "utf8");
+  for (const id of [ids.targetDebug, ids.targetRelease])
+    expect(targetSettings(source, id)["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"]).toBe(
+      "MyApp/MyApp-macOS.entitlements",
+    );
+  expect(targetSettings(source, ids.targetRelease)["CODE_SIGN_ENTITLEMENTS[sdk=iphone*]"]).toBe(
+    "MyApp/Release.entitlements",
+  );
+  const remaining: { id: string; detail: string }[] = result.handoff.remaining;
+  expect(remaining.some((item) => item.id.startsWith("capabilities:"))).toBe(false);
+  expect(remaining.find((item) => item.id === "associated-domains")?.detail).toContain(
+    "left out of the macOS app",
+  );
+  await expectRerunChangesNothing(f);
+  const checks = await doctorChecks(f);
+  expect(
+    checks.filter((check) => check.name.startsWith("Capabilities:")).map((check) => check.status),
+  ).toEqual(["pass", "pass", "pass", "pass"]);
+  expect(
+    checks.some(
+      (check) =>
+        check.name.startsWith("Personal Team entitlements:") &&
+        check.message.includes("Associated Domains"),
+    ),
+  ).toBe(false);
+});
+
+test("a Mac copy setup can't create in another configuration keeps the domain out of the file iOS shares", async () => {
+  const f = await fixture({ personal: true });
+  await releaseIOSOwnFile(f, "MyApp/Mac.entitlements");
+  const sharedPath = join(f.root, "MyApp/MyApp.entitlements");
+  const shared = await readFile(sharedPath, "utf8");
+  await writeFile(join(f.root, "MyApp/MyApp-macOS.entitlements"), "<plist/>");
+  const result = await init(f);
+  expect(await readFile(sharedPath, "utf8")).toBe(shared);
+  expect(await readFile(join(f.root, "MyApp/MyApp-macOS.entitlements"), "utf8")).toBe("<plist/>");
+  expect(await readFile(join(f.root, "MyApp/Release.entitlements"), "utf8")).toContain(DOMAIN);
+  expect(
+    targetSettings(await readFile(f.path, "utf8"), ids.targetRelease)[
+      "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"
+    ],
+  ).toBeUndefined();
+  const remaining: { id: string; detail: string }[] = result.handoff.remaining;
+  expect(remaining.some((item) => item.detail.includes("left out of the macOS app"))).toBe(false);
+  const detail = (context: string) =>
+    remaining.find((item) => item.id.startsWith("capabilities:") && item.id.includes(context))
+      ?.detail;
+  expect(detail("Debug, iphoneos")).toContain(
+    "MyApp/MyApp.entitlements can't get the Associated Domain",
+  );
+  expect(detail("Release, macosx")).toContain("The proposed new entitlement file already exists");
+  expect(detail("Release, macosx")).toContain(
+    "Give macOS its own entitlements file without Associated Domains in Xcode",
+  );
+  const checks = await doctorChecks(f);
+  expect(
+    checks.find((check) => check.name.startsWith("Capabilities: MyApp, Debug, iphoneos"))?.message,
+  ).toContain("MyApp/MyApp.entitlements can't get the Associated Domain");
+});
+
+test("a shared file that already has Associated Domains is split for a Mac build iOS shares it with in another configuration", async () => {
+  const f = await fixture({ personal: true });
+  await releaseIOSOwnFile(f);
+  await writeFile(join(f.root, "MyApp/MyApp.entitlements"), SHARED_WITH_DOMAIN);
+  const release = (await doctorChecks(f)).find(
+    (check) =>
+      check.name.startsWith("Personal Team entitlements:") && check.name.includes("Release"),
+  );
+  expect(release?.message).toContain(
+    "MyApp/MyApp.entitlements gives the Mac build Associated Domains, which a Personal Team can't sign for a Mac app. Run clerk init to give macOS its own copy without them",
+  );
+  const result = await init(f);
+  const source = await readFile(f.path, "utf8");
+  for (const id of [ids.targetDebug, ids.targetRelease])
+    expect(targetSettings(source, id)["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"]).toBe(
+      "MyApp/MyApp-macOS.entitlements",
+    );
+  const remaining: { id: string; detail: string }[] = result.handoff.remaining;
+  expect(
+    remaining
+      .filter((item) => item.id === "personal-team-entitlements")
+      .some((item) => item.detail.includes("Associated Domains")),
+  ).toBe(false);
+  await expectRerunChangesNothing(f);
+  const after = await doctorChecks(f);
+  expect(
+    after.some(
+      (check) =>
+        check.name.startsWith("Personal Team entitlements:") &&
+        check.message.includes("Associated Domains"),
+    ),
+  ).toBe(false);
+});
+
+test("an edit to the shared file after the preview stops setup before the Mac copy is written", async () => {
+  const f = await fixture({ personal: true });
+  const sharedPath = join(f.root, "MyApp/MyApp.entitlements");
+  await writeFile(sharedPath, SHARED_WITH_DOMAIN);
+  const preview = await prepareSetup(
+    { ...f.options, signInWithApple: false, personalTeam: true },
+    f.dependencies,
+  );
+  expect(preview.local.actions.map((action) => [action.type, action.path])).toContainEqual([
+    "create",
+    "MyApp/MyApp-macOS.entitlements",
+  ]);
+  expect(preview.local.actions.some((action) => action.path === "MyApp/MyApp.entitlements")).toBe(
+    false,
+  );
+  const project = await readFile(f.path, "utf8");
+  await writeFile(
+    sharedPath,
+    SHARED_WITH_DOMAIN.replace(
+      "</dict>",
+      "\t<key>com.apple.security.device.camera</key>\n\t<true/>\n</dict>",
+    ),
+  );
+  await expect(applySetup(preview, f.dependencies)).rejects.toThrow(
+    "The project changed after its preview",
+  );
+  expect(await Bun.file(join(f.root, "MyApp/MyApp-macOS.entitlements")).exists()).toBe(false);
+  expect(await readFile(f.path, "utf8")).toBe(project);
+  expect(f.state.events).toEqual([]);
 });

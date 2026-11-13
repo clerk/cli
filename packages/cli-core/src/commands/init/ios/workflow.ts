@@ -18,6 +18,7 @@ import {
 } from "./files.ts";
 import { planStarter } from "./starter.ts";
 import {
+  entitlementsPath,
   personalTeamConflictNote,
   personalTeamConflicts,
   planAllCapabilities,
@@ -60,6 +61,7 @@ import {
   type CommandRunner,
   type Inspection,
   type InspectOptions,
+  unsupportedPlatformsLabel,
 } from "./xcode.ts";
 
 const PERSONAL_TEAM_APPLE =
@@ -141,7 +143,7 @@ export async function prepareSetup(
       path: inspection.document.path,
       skipReason: sdkCheck.message,
     };
-  local.postInstructions[0] = `Xcode inspected ${inspection.contexts.map((context) => `${context.selection.configuration}/${context.selection.sdk}`).join(", ")} for ${inspection.input.selection.targetName}. Unchecked configurations: ${inspection.uncheckedConfigurations.join(", ") || "none"}. ${inspection.unsupportedPlatforms.length ? `Platforms Clerk doesn't set up, left unchanged: ${inspection.unsupportedPlatforms.join(", ")}. ` : ""}Other platforms, signing, and source integration remain unverified.`;
+  local.postInstructions[0] = `Xcode inspected ${inspection.contexts.map((context) => `${context.selection.configuration}/${context.selection.sdk}`).join(", ")} for ${inspection.input.selection.targetName}. Unchecked configurations: ${inspection.uncheckedConfigurations.join(", ") || "none"}. ${inspection.unsupportedPlatforms.length ? `Platforms Clerk doesn't set up, left unchanged: ${unsupportedPlatformsLabel(inspection)}. ` : ""}Other platforms, signing, and source integration remain unverified.`;
   const api = dependencies.api ?? nativeAPI;
   if (options.remote) {
     const conflict = await platformBundleConflict(inspection);
@@ -209,11 +211,15 @@ export async function prepareSetup(
   const conflicting = new Set<string>();
   if (options.personalTeam && capabilities) {
     // One note per file, naming what any platform that signs with it can't sign. A Mac build
-    // that gets its own copy without Associated Domains no longer signs them.
+    // that gets its own copy without Associated Domains no longer signs them; one that couldn't
+    // get it is explained by its capability reason instead.
+    // Keyed by configuration and the shared file, so a Mac build signing some other file keeps
+    // its warning.
     const macCopies = new Set(
-      capabilities.contexts
-        .filter((context) => context.macCopyOf)
-        .map((context) => context.configuration),
+      capabilities.contexts.flatMap((context) => {
+        const file = context.macCopyOf ?? context.unsplit;
+        return file ? [`${context.configuration}\n${file}`] : [];
+      }),
     );
     const files = new Map<string, Set<string>>();
     for (const context of inspection.contexts) {
@@ -227,7 +233,10 @@ export async function prepareSetup(
       } catch {
         continue;
       }
-      if (macBuild && macCopies.has(context.selection.configuration))
+      if (
+        macBuild &&
+        macCopies.has(`${context.selection.configuration}\n${entitlementsPath(context)}`)
+      )
         conflicts = conflicts.filter((conflict) => conflict !== "Associated Domains");
       if (!files.has(file)) files.set(file, new Set());
       for (const conflict of conflicts) {
@@ -332,7 +341,11 @@ export async function prepareSetup(
     appleRequested: options.signInWithApple === true,
     appleWarning,
     personalTeamNote:
-      options.personalTeam && capabilities && mac && !conflicting.has("Associated Domains")
+      options.personalTeam &&
+      capabilities &&
+      mac &&
+      !conflicting.has("Associated Domains") &&
+      !capabilities.contexts.some((context) => context.unsplit)
         ? multiplatform
           ? PERSONAL_TEAM_MAC_DOMAINS
           : PERSONAL_TEAM_DOMAINS
@@ -494,12 +507,11 @@ export async function applySetup(
   const actions = preview.local.actions.filter((action) => action.type !== "skip");
   for (const action of actions) {
     if (action.type === "create") await assertAbsent(root, action.path);
-    else {
-      const snapshot = snapshots.find((item) => item.path === action.path);
-      if (!snapshot) throw setupError("Review a fresh setup plan.", true);
-      await assertUnchanged(root, snapshot);
-    }
+    else if (!snapshots.some((item) => item.path === action.path))
+      throw setupError("Review a fresh setup plan.", true);
   }
+  // Every file the plan read, not only those it writes: a Mac copy is made from the shared file.
+  for (const snapshot of snapshots) await assertUnchanged(root, snapshot);
   const result: ApplyResult = {
     status: "incomplete",
     appIntegrationComplete: false,

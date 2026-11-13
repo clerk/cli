@@ -4,7 +4,7 @@ import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "n
 import { lstat, realpath } from "node:fs/promises";
 import type { FileAction } from "../frameworks/types.ts";
 import { containedPath, snapshotFile, type FileSnapshot } from "./files.ts";
-import type { Inspection } from "./xcode.ts";
+import { nativePlatform, type Inspection } from "./xcode.ts";
 import { otherTargetSettings, type Selection } from "./plan.ts";
 
 const DOMAIN = "com.apple.developer.associated-domains";
@@ -150,6 +150,17 @@ function withoutAssociatedDomains(source: string): string {
   );
 }
 
+/** The project-relative path of the entitlements file a context signs with, or undefined when it has none. */
+export function entitlementsPath(context: Inspection["contexts"][number]): string | undefined {
+  const value = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+  if (!value) return undefined;
+  const { root, project } = context.selection;
+  return relative(
+    root,
+    resolve(context.settings.SRCROOT ?? resolve(root, dirname(project)), value),
+  );
+}
+
 /** The entitlements file one configuration signs with, or undefined when it has none. Throws when it can't be read. */
 export async function readEntitlements(
   context: Inspection["contexts"][number],
@@ -218,7 +229,9 @@ async function entitlementsFolder(
 ): Promise<string> {
   const usable: string[] = [];
   for (const folder of folders) {
-    if (!folder || !folder.split("/").every((part) => /^[\w .-]+$/.test(part) && part !== ".."))
+    // Xcode reads "$" as a build variable; containedPath below keeps the folder inside the project.
+    const parts = folder.split("/");
+    if (parts.some((part) => !part || part === "." || part === ".." || /[$\p{Cc}]/u.test(part)))
       continue;
     const location = await containedPath(
       selection.root,
@@ -229,10 +242,17 @@ async function entitlementsFolder(
   return usable.find((folder) => basename(folder) === selection.targetName) ?? usable[0] ?? "";
 }
 
+const OWN_MAC_FILE =
+  "Give macOS its own entitlements file without Associated Domains in Xcode, or choose a paid Apple Developer Program team, then run clerk init again.";
+
 interface CapabilityPlan {
   status: "planned" | "satisfied" | "manual";
   /** The file a Multiplatform target's iOS and macOS builds share, when macOS gets its own copy. */
   macCopyOf?: string;
+  /** The file a Multiplatform target's iOS and macOS builds share, when macOS needed its own copy without Associated Domains and didn't get one. */
+  unsplit?: string;
+  /** The entitlements file whose planned content this context relies on. */
+  writes?: string;
   scope: string;
   reason?: string;
   projectSource: string;
@@ -265,13 +285,19 @@ async function planCapabilities(
   try {
     const adapter = capabilitySettings(projectSource, projectFormat, selection);
     const { settings } = adapter;
-    // A route this run added for the other platform of a Multiplatform target isn't the project's own.
+    const mac = selection.sdk === "macosx";
+    // Read from the project before this run, so a route this run adds doesn't count. A
+    // Multiplatform target's per-platform routes, which an earlier run may have written, are
+    // updated in place; any other condition needs Xcode.
+    const platformRoutes =
+      nativePlatform(inspection) === "multiplatform"
+        ? ["CODE_SIGN_ENTITLEMENTS[sdk=iphone*]", "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"]
+        : [];
     const ownRoutes = Object.keys(
       capabilitySettings(inspection.input.projectSource, projectFormat, selection).settings,
-    ).some((key) => key.startsWith("CODE_SIGN_ENTITLEMENTS["));
+    ).some((key) => key.startsWith("CODE_SIGN_ENTITLEMENTS[") && !platformRoutes.includes(key));
     const sourceRoot =
       inspection.settings.SRCROOT ?? resolve(selection.root, dirname(selection.project));
-    const mac = selection.sdk === "macosx";
     // Passkeys and credential AutoFill need the web-credentials domain on macOS too.
     const domainFor = (context: Selection) =>
       frontendHost && associatedDomain(context) ? `webcredentials:${frontendHost}` : undefined;
@@ -356,32 +382,36 @@ async function planCapabilities(
         }
         snapshot = await snapshotFile(selection.root, path);
         snapshots.push(snapshot);
-        // A Multiplatform target usually signs both platforms with one file. When the Mac can't
-        // sign Associated Domains (a Personal Team) that the file has or iOS needs, the Mac gets
-        // its own copy without them.
-        const iOS = mac
-          ? inspection.contexts.find(
-              (context) =>
-                context.selection.configuration === selection.configuration &&
-                context.selection.sdk !== "macosx",
+        // A Multiplatform target usually signs both platforms with one file, in any
+        // configuration. When the Mac can't sign Associated Domains (a Personal Team) that the
+        // file has or some iOS build adds, the Mac gets its own copy without them.
+        const onDisk = snapshot.source;
+        const signedOnIOS = mac
+          ? inspection.contexts.filter(
+              (context) => context.selection.sdk !== "macosx" && entitlementsPath(context) === path,
             )
-          : undefined;
-        const iOSPath = iOS?.settings.CODE_SIGN_ENTITLEMENTS?.trim();
-        const iOSDomain = iOS && domainFor(iOS.selection);
+          : [];
         if (
-          iOS &&
-          iOSPath &&
+          signedOnIOS.length &&
           !associatedDomain(selection) &&
-          relative(selection.root, resolve(iOS.settings.SRCROOT ?? sourceRoot, iOSPath)) === path &&
-          (personalTeamConflicts(snapshot.source, true).includes("Associated Domains") ||
-            (iOSDomain && !hasCapabilities(snapshot.source, iOSDomain)))
+          (personalTeamConflicts(onDisk, true).includes("Associated Domains") ||
+            signedOnIOS.some((context) => {
+              const iOSDomain = domainFor(context.selection);
+              return iOSDomain && !hasCapabilities(onDisk, iOSDomain);
+            }))
         ) {
           copiedFrom = snapshot;
           snapshot = undefined;
           path = join(dirname(path), `${basename(path, ".entitlements")}-macOS.entitlements`);
           const value = relative(sourceRoot, resolve(selection.root, path));
           const blocker = await newFileBlocker(path, value);
-          if (blocker) return manual(blocker);
+          if (blocker)
+            return {
+              ...manual(
+                `${blocker} The macOS build still signs with ${copiedFrom.path}, which iOS shares, and a Personal Team can't sign Associated Domains for a Mac app. ${OWN_MAC_FILE}`,
+              ),
+              unsplit: copiedFrom.path,
+            };
           adapter.set("CODE_SIGN_ENTITLEMENTS[sdk=macosx*]", value);
           changedProject = true;
         }
@@ -430,6 +460,7 @@ async function planCapabilities(
     return {
       status: actions.length || changedProject || pendingOnDisk ? "planned" : "satisfied",
       ...(copiedFrom ? { macCopyOf: copiedFrom.path } : {}),
+      ...(path && (actions.length || pendingOnDisk) ? { writes: path } : {}),
       scope,
       projectSource: changedProject ? adapter.serialize() : projectSource,
       actions,
@@ -456,9 +487,7 @@ export async function planAllCapabilities(
     typeof associatedDomain === "function" ? associatedDomain : () => associatedDomain;
   const actions = new Map<string, FileAction>();
   const snapshots = new Map<string, FileSnapshot>();
-  const contexts: (Pick<CapabilityPlan, "status" | "scope" | "reason" | "macCopyOf"> & {
-    configuration: string;
-  })[] = [];
+  const plans: CapabilityPlan[] = [];
   let source = projectSource;
   for (const context of inspection.contexts) {
     const plan = await planCapabilities(
@@ -480,14 +509,43 @@ export async function planAllCapabilities(
     source = plan.projectSource;
     for (const action of plan.actions) actions.set(action.path, action);
     for (const snapshot of plan.snapshots) snapshots.set(snapshot.path, snapshot);
-    contexts.push({
-      status: plan.status,
-      scope: plan.scope,
-      reason: plan.reason,
-      ...(plan.macCopyOf ? { macCopyOf: plan.macCopyOf } : {}),
-      configuration: context.selection.configuration,
-    });
+    plans.push(plan);
   }
+  // A Multiplatform target's Mac build that can't sign Associated Domains (a Personal Team) and
+  // isn't set up still signs with its file, so iOS can't add the domain there.
+  for (const [index, context] of inspection.contexts.entries()) {
+    const file = entitlementsPath(context);
+    if (
+      context.selection.sdk !== "macosx" ||
+      domainFor(context.selection) ||
+      plans[index]!.status !== "manual" ||
+      !file
+    )
+      continue;
+    if (
+      !plans.some(
+        (plan, other) =>
+          plan.writes === file && inspection.contexts[other]!.selection.sdk !== "macosx",
+      )
+    )
+      continue;
+    actions.delete(file);
+    for (const plan of plans)
+      if (plan.writes === file && plan.status !== "manual")
+        Object.assign(plan, {
+          status: "manual",
+          reason: `${file} can't get the Associated Domain: the macOS build signs with it too, and a Personal Team can't sign Associated Domains for a Mac app. ${OWN_MAC_FILE}`,
+          unsplit: file,
+        });
+  }
+  const contexts = plans.map((plan, index) => ({
+    status: plan.status,
+    scope: plan.scope,
+    reason: plan.reason,
+    ...(plan.macCopyOf ? { macCopyOf: plan.macCopyOf } : {}),
+    ...(plan.unsplit ? { unsplit: plan.unsplit } : {}),
+    configuration: inspection.contexts[index]!.selection.configuration,
+  }));
   const manual = contexts.filter((context) => context.status === "manual");
   return {
     status: manual.length

@@ -6,7 +6,12 @@ import { type FileSnapshot } from "./files.ts";
 import { selectedSettings, settingsCommand, type Selection, type SetupInput } from "./plan.ts";
 import { compatibleXcode } from "./xcode-tools.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
-import { setupError, type IOSNativePlatform, type IOSNativeTargetPlatform } from "./types.ts";
+import {
+  platformLabel,
+  setupError,
+  type IOSNativePlatform,
+  type IOSNativeTargetPlatform,
+} from "./types.ts";
 
 export type CommandRunner = (
   command: string[],
@@ -129,24 +134,31 @@ export interface Inspection {
   uncheckedConfigurations: string[];
   /** Every target's resolved settings in the unchecked configurations, for ownership checks; undefined when Xcode couldn't report them. */
   uncheckedSettingsJSON: string[] | undefined;
-  /** Platforms the target also builds for that Clerk doesn't set up, such as visionOS. */
+  /** Device SDK ids of the platforms the target also builds for that Clerk doesn't set up, such as `xros` for visionOS. */
   unsupportedPlatforms: string[];
   /** A Multiplatform target's settings without `-sdk`, so ownership checks also see each other target's own platform. */
   platformNeutralSettingsJSON: string[];
 }
 
-const PLATFORM_NAMES: Record<string, string> = {
-  iphoneos: "iOS",
-  iphonesimulator: "iOS",
-  macosx: "macOS",
+const DEVICE_SDKS: Record<string, string> = {
+  xrsimulator: "xros",
+  appletvsimulator: "appletvos",
+  watchsimulator: "watchos",
+};
+
+const OTHER_PLATFORM_NAMES: Record<string, string> = {
   xros: "visionOS",
-  xrsimulator: "visionOS",
   appletvos: "tvOS",
-  appletvsimulator: "tvOS",
   watchos: "watchOS",
-  watchsimulator: "watchOS",
   driverkit: "DriverKit",
 };
+
+/** How messages name the platforms in `unsupportedPlatforms`, such as "visionOS, tvOS". */
+export function unsupportedPlatformsLabel(
+  inspection: Pick<Inspection, "unsupportedPlatforms">,
+): string {
+  return inspection.unsupportedPlatforms.map((sdk) => OTHER_PLATFORM_NAMES[sdk] ?? sdk).join(", ");
+}
 
 /** The Apple platforms the inspected contexts cover, iOS first. */
 export function inspectedPlatforms(inspection: Pick<Inspection, "contexts">): IOSNativePlatform[] {
@@ -160,15 +172,6 @@ export function inspectedPlatforms(inspection: Pick<Inspection, "contexts">): IO
 export function nativePlatform(inspection: Pick<Inspection, "contexts">): IOSNativeTargetPlatform {
   const platforms = inspectedPlatforms(inspection);
   return platforms.length > 1 ? "multiplatform" : platforms[0]!;
-}
-
-export function platformLabel(platform: IOSNativePlatform | Selection["sdk"]): "iOS" | "macOS" {
-  return platform === "macos" || platform === "macosx" ? "macOS" : "iOS";
-}
-
-/** "iOS", "macOS", or "iOS and macOS" for a Multiplatform target. */
-export function platformsLabel(inspection: Pick<Inspection, "contexts">): string {
-  return inspectedPlatforms(inspection).map(platformLabel).join(" and ");
 }
 
 /** How checks name a context: the configuration, plus the platform when the target builds for both. */
@@ -292,7 +295,7 @@ export async function inspectSelectedProject(
       throw setupError("Select an iOS or macOS build context; this platform needs manual setup.");
     for (const name of listed)
       if (!["iphoneos", "iphonesimulator", "macosx"].includes(name))
-        unsupportedPlatforms.add(PLATFORM_NAMES[name] ?? name);
+        unsupportedPlatforms.add(DEVICE_SDKS[name] ?? name);
     platformNeutralSettingsJSON.push(settingsJSON);
     for (const platform of platforms) {
       const context = { ...selection, sdk: platform };

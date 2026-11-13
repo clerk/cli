@@ -4,7 +4,9 @@
  *
  * Without options it covers, in disposable fixtures: a shared entitlements file and none,
  * each for a paid team and a Personal Team, checked with Xcode before and after the
- * capability edits, plus a Personal Team's shared file that already has Associated Domains;
+ * capability edits, plus a Personal Team's shared file that already has Associated Domains,
+ * one that iOS signs only in Debug while both Mac builds sign it, and, without a file, a rerun
+ * after switching between a paid team and a Personal Team;
  * then full setup with package resolution and an unsigned Debug build
  * for iOS Simulator and macOS. With `--project`, it runs full setup and both builds on a
  * copy of that project instead; the original is never modified.
@@ -38,6 +40,7 @@ import {
   inspectSelectedProject,
   type Inspection,
 } from "../../packages/cli-core/src/commands/init/ios/xcode.ts";
+import { compatibleXcode } from "../../packages/cli-core/src/commands/init/ios/xcode-tools.ts";
 import type { NativeAPI } from "../../packages/cli-core/src/commands/init/ios/remote.ts";
 import type { IOSNativeAppleAPI } from "../../packages/cli-core/src/commands/init/ios/native-apple.ts";
 import type { IOSApplication } from "../../packages/cli-core/src/lib/plapi.ts";
@@ -51,15 +54,19 @@ const { values } = parseArgs({
   },
   strict: true,
 });
-if (
+const flagError =
   (values["personal-team"] || values["shared-entitlements"] || values["existing-domain"]) &&
   !values.project
-)
-  throw new Error(
-    "--personal-team, --shared-entitlements, and --existing-domain apply to --project.",
-  );
-if (values["existing-domain"] && !values["shared-entitlements"])
-  throw new Error("--existing-domain needs --shared-entitlements.");
+    ? "--personal-team, --shared-entitlements, and --existing-domain apply to --project."
+    : values["existing-domain"] && !values["shared-entitlements"]
+      ? "--existing-domain needs --shared-entitlements."
+      : undefined;
+if (flagError) {
+  console.error(flagError);
+  // The lint override that lets scripts exit covers only scripts/*, not this folder.
+  // oxlint-disable-next-line unicorn/no-process-exit
+  process.exit(1);
+}
 
 const HOST = "fixture.clerk.accounts.dev";
 const DOMAIN = `webcredentials:${HOST}`;
@@ -178,7 +185,14 @@ async function checkResolved(inspection: Inspection, personal: boolean) {
   return files;
 }
 
-async function buildPlatforms(projectRoot: string, project: string, scheme: string, root: string) {
+async function buildPlatforms(
+  projectRoot: string,
+  project: string,
+  scheme: string,
+  root: string,
+  format: Inspection["input"]["projectFormat"],
+) {
+  const developerDir = await compatibleXcode(format === "xcproj" ? 27 : 1);
   const builds: Record<string, string> = {};
   for (const [platform, destination] of [
     ["iOS Simulator", "generic/platform=iOS Simulator"],
@@ -202,6 +216,7 @@ async function buildPlatforms(projectRoot: string, project: string, scheme: stri
         "build",
       ],
       {
+        env: developerDir ? { ...process.env, DEVELOPER_DIR: developerDir } : process.env,
         stdout: Bun.file(buildLog),
         stderr: Bun.file(`${buildLog}.stderr`),
         timeout: 900_000,
@@ -297,7 +312,7 @@ async function fullSetup(projectRoot: string, personal: boolean, root: string) {
     registration: `${clerk.applications[0]!.app_id_prefix}.${clerk.applications[0]!.bundle_id}`,
     rerun: "no changes",
     doctor: "capabilities pass on every configuration and platform",
-    builds: await buildPlatforms(projectRoot, project, targetName, root),
+    builds: await buildPlatforms(projectRoot, project, targetName, root, after.input.projectFormat),
   };
 }
 
@@ -331,6 +346,39 @@ async function verifyProject(path: string) {
   }
 }
 
+/** Plans and writes the capability edits alone, then returns Xcode's view of the result once a rerun plans nothing. */
+async function applyCapabilities(root: string, personal: boolean) {
+  const options = { root, products: "ui" as const, minimumVersion: "1.0.0" };
+  const inspection = await inspectSelectedProject(options);
+  if (inspection.unsupportedPlatforms.join() !== "xros")
+    throw new Error("visionOS was not reported as left alone.");
+  const domainFor = (selection: { sdk: string }) => !(personal && selection.sdk === "macosx");
+  const plan = await planAllCapabilities(
+    inspection,
+    inspection.document.source,
+    HOST,
+    !personal,
+    domainFor,
+  );
+  if (plan.status !== "planned") throw new Error(`Capability plan unavailable: ${plan.reason}`);
+  for (const action of plan.actions) {
+    if (action.type === "create") await createFile(root, action.path, action.content);
+    else if (action.type === "modify")
+      await replaceProject(
+        root,
+        plan.snapshots.find((snapshot) => snapshot.path === action.path)!,
+        action.content,
+      );
+  }
+  await replaceProject(root, inspection.document, plan.projectSource);
+  const after = await inspectSelectedProject(options);
+  const files = await checkResolved(after, personal);
+  const next = await planAllCapabilities(after, after.document.source, HOST, !personal, domainFor);
+  if (next.status !== "satisfied" || next.actions.length)
+    throw new Error("Capability setup was not idempotent.");
+  return files;
+}
+
 async function verifyFixtures() {
   // Capability edits only (no SDK, so Xcode reports settings without package resolution).
   for (const [shared, personal, existingDomain] of [
@@ -356,31 +404,7 @@ async function verifyFixtures() {
           delete (graph.objects![id] as any).buildSettings.CODE_SIGN_ENTITLEMENTS;
         await writeFile(path, build(graph));
       }
-      const options = { root, products: "ui" as const, minimumVersion: "1.0.0" };
-      const inspection = await inspectSelectedProject(options);
-      if (inspection.unsupportedPlatforms.join() !== "visionOS")
-        throw new Error("visionOS was not reported as left alone.");
-      const domainFor = (selection: { sdk: string }) => !(personal && selection.sdk === "macosx");
-      const plan = await planAllCapabilities(
-        inspection,
-        inspection.document.source,
-        HOST,
-        !personal,
-        domainFor,
-      );
-      if (plan.status !== "planned") throw new Error(`Capability plan unavailable: ${plan.reason}`);
-      for (const action of plan.actions) {
-        if (action.type === "create") await createFile(root, action.path, action.content);
-        else if (action.type === "modify")
-          await replaceProject(
-            root,
-            plan.snapshots.find((snapshot) => snapshot.path === action.path)!,
-            action.content,
-          );
-      }
-      await replaceProject(root, inspection.document, plan.projectSource);
-      const after = await inspectSelectedProject(options);
-      const files = await checkResolved(after, personal);
+      const files = await applyCapabilities(root, personal);
       const expected = {
         iOS: shared ? "MyApp/MyApp.entitlements" : "MyApp.entitlements",
         macOS: !personal
@@ -406,15 +430,16 @@ async function verifyFixtures() {
         (await readFile(sharedPath, "utf8")) !== SANDBOX_ENTITLEMENTS_WITH_DOMAINS
       )
         throw new Error("The shared file iOS keeps changed.");
-      const next = await planAllCapabilities(
-        after,
-        after.document.source,
-        HOST,
-        !personal,
-        domainFor,
-      );
-      if (next.status !== "satisfied" || next.actions.length)
-        throw new Error("Capability setup was not idempotent.");
+      // The routes the first run wrote are its own, so the other team's rerun gives macOS its own file.
+      const switched = shared ? undefined : await applyCapabilities(root, !personal);
+      if (
+        switched &&
+        JSON.stringify(switched) !==
+          JSON.stringify({ iOS: "MyApp.entitlements", macOS: "MyApp-macOS.entitlements" })
+      )
+        throw new Error(
+          `Unexpected entitlement layout after switching teams: ${JSON.stringify(switched)}`,
+        );
       console.log(
         JSON.stringify({
           entitlements: existingDomain
@@ -424,6 +449,9 @@ async function verifyFixtures() {
               : "none",
           team: personal ? "personal" : "paid",
           resolvedByXcode: files,
+          ...(switched
+            ? { afterSwitchingTo: personal ? "paid" : "personal", resolvedAfterSwitch: switched }
+            : {}),
           xcodeBeforeAndAfter: "passed",
           plistValidation: "passed",
           rerun: "no changes",
@@ -432,6 +460,38 @@ async function verifyFixtures() {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  }
+
+  // A Personal Team where Release iOS signs a file of its own, so only Debug iOS shares the file
+  // both Mac builds sign: each Mac build still gets the copy without Associated Domains.
+  const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-multiplatform-xcode-")));
+  try {
+    await createIOSFixture(root, { platform: "multiplatform", clerkSDK: false, includeKey: false });
+    await cp(join(root, "MyApp/MyApp.entitlements"), join(root, "MyApp/Release.entitlements"));
+    const path = join(root, "MyApp.xcodeproj/project.pbxproj");
+    const graph = parse(await readFile(path, "utf8"));
+    (graph.objects![ids.targetRelease] as any).buildSettings[
+      "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]"
+    ] = "MyApp/Release.entitlements";
+    await writeFile(path, build(graph));
+    const files = await applyCapabilities(root, true);
+    if (
+      JSON.stringify(files) !==
+      JSON.stringify({ iOS: "MyApp/Release.entitlements", macOS: "MyApp/MyApp-macOS.entitlements" })
+    )
+      throw new Error(`Unexpected entitlement layout: ${JSON.stringify(files)}`);
+    console.log(
+      JSON.stringify({
+        entitlements: "shared file iOS signs only in Debug",
+        team: "personal",
+        resolvedByXcode: files,
+        xcodeBeforeAndAfter: "passed",
+        plistValidation: "passed",
+        rerun: "no changes",
+      }),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 
   // Full setup and both builds on the fixture: both splits, and the template without a file.

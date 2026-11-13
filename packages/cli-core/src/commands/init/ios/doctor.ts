@@ -1,5 +1,6 @@
 import { auditIOSNativeAppleHealth } from "./native-apple.ts";
 import {
+  entitlementsPath,
   hasCapabilities,
   personalTeamConflictNote,
   personalTeamConflicts,
@@ -15,7 +16,8 @@ import { auditRemote, nativeAPI } from "./remote.ts";
 import { resolvedSDKHealth, type Check } from "./sdk-health.ts";
 import { signedByPersonalTeam } from "./teams.ts";
 import { describePreview, prepareSetup, type SetupOptions, type Dependencies } from "./workflow.ts";
-import { contextLabel, nativePlatform, platformsLabel } from "./xcode.ts";
+import { contextLabel, nativePlatform, unsupportedPlatformsLabel } from "./xcode.ts";
+import { platformLabel } from "./types.ts";
 
 export async function doctor(options: SetupOptions, dependencies: Dependencies = {}) {
   // Diagnosis is GET-only and does not require opting into provider activation.
@@ -48,7 +50,7 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
         inspection.uncheckedConfigurations.length || inspection.unsupportedPlatforms.length
           ? "warn"
           : "pass",
-      message: `Inspected ${[...new Set(inspection.contexts.map((context) => context.selection.configuration))].join(", ")}${multiplatform ? ` for ${platformsLabel(inspection)}` : ""}; unchecked configurations: ${inspection.uncheckedConfigurations.join(", ") || "none"}.${inspection.unsupportedPlatforms.length ? ` Clerk doesn't set up this target's other platforms: ${inspection.unsupportedPlatforms.join(", ")}.` : ""} Other platforms and app builds remain unverified.`,
+      message: `Inspected ${[...new Set(inspection.contexts.map((context) => context.selection.configuration))].join(", ")}${multiplatform ? ` for ${platformLabel(nativePlatform(inspection))}` : ""}; unchecked configurations: ${inspection.uncheckedConfigurations.join(", ") || "none"}.${inspection.unsupportedPlatforms.length ? ` Clerk doesn't set up this target's other platforms: ${unsupportedPlatformsLabel(inspection)}.` : ""} Other platforms and app builds remain unverified.`,
     },
     {
       name: "SDK project linkage",
@@ -109,47 +111,82 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
   );
   // Setup never removes entitlements, so one the team can't sign can still be there. A file a
   // Multiplatform target's iOS and macOS builds share is the exception: setup gives macOS a copy.
-  if (personalTeam)
+  // One check per file in each configuration, naming what any platform that signs with it can't sign.
+  if (personalTeam) {
+    const files = new Map<
+      string,
+      {
+        file: string;
+        configuration: string;
+        contexts: typeof inspection.contexts;
+        conflicts: Set<string>;
+        sharedMacDomains: boolean;
+      }
+    >();
     for (const context of inspection.contexts) {
       const file = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
-      const mac = context.selection.sdk === "macosx";
+      if (!file) continue;
+      const { configuration, sdk } = context.selection;
       let conflicts: string[];
       try {
         const source = await readEntitlements(context);
-        conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
+        conflicts = source === undefined ? [] : personalTeamConflicts(source, sdk === "macosx");
       } catch {
         continue;
       }
+      const key = JSON.stringify([configuration, file]);
+      const group = files.get(key) ?? {
+        file,
+        configuration,
+        contexts: [],
+        conflicts: new Set(),
+        sharedMacDomains: false,
+      };
+      files.set(key, group);
+      group.contexts.push(context);
       const sharedWithIOS =
-        mac &&
+        sdk === "macosx" &&
         inspection.contexts.some(
           (other) =>
-            other.selection.configuration === context.selection.configuration &&
             other.selection.sdk !== "macosx" &&
-            other.settings.CODE_SIGN_ENTITLEMENTS?.trim() === file,
+            entitlementsPath(other) === entitlementsPath(context),
         );
-      const notes = [];
       if (sharedWithIOS && conflicts.includes("Associated Domains")) {
         conflicts = conflicts.filter((conflict) => conflict !== "Associated Domains");
+        group.sharedMacDomains = true;
+      }
+      for (const conflict of conflicts) group.conflicts.add(conflict);
+    }
+    for (const { file, configuration, contexts, conflicts, sharedMacDomains } of files.values()) {
+      const notes = [];
+      if (conflicts.size)
+        notes.push(
+          personalTeamConflictNote(
+            file,
+            ["Sign in with Apple", "Associated Domains"].filter((name) => conflicts.has(name)),
+            multiplatform,
+          ),
+        );
+      if (sharedMacDomains)
         notes.push(
           sharedMacDomainsNote(
-            file!,
+            file,
             capabilities.contexts.some(
               (planned) =>
-                planned.macCopyOf && planned.configuration === context.selection.configuration,
+                planned.macCopyOf === entitlementsPath(contexts[0]!) &&
+                planned.configuration === configuration,
             ),
           ),
         );
-      }
-      if (conflicts.length)
-        notes.unshift(personalTeamConflictNote(file!, conflicts, multiplatform));
+      const platforms = new Set(contexts.map((context) => platformLabel(context.selection.sdk)));
       if (notes.length)
         checks.push({
-          name: `Personal Team entitlements: ${label(context)}`,
+          name: `Personal Team entitlements: ${contexts.length === 1 ? label(contexts[0]!) : `${configuration} (${[...platforms].join(" and ")})`}`,
           status: "warn",
           message: notes.join(" "),
         });
     }
+  }
   for (const context of capabilities.contexts)
     checks.push({
       name: `Capabilities: ${context.scope}`,
