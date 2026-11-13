@@ -6,7 +6,7 @@ import { type FileSnapshot } from "./files.ts";
 import { selectedSettings, settingsCommand, type Selection, type SetupInput } from "./plan.ts";
 import { compatibleXcode } from "./xcode-tools.ts";
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
-import { setupError } from "./types.ts";
+import { setupError, type IOSNativePlatform, type IOSNativeTargetPlatform } from "./types.ts";
 
 export type CommandRunner = (
   command: string[],
@@ -124,10 +124,62 @@ export interface Inspection {
   input: SetupInput;
   document: FileSnapshot;
   settings: Record<string, string>;
+  /** Configuration-major, iOS before macOS: a Multiplatform target has one context per configuration and platform. */
   contexts: { selection: Selection; settingsJSON: string; settings: Record<string, string> }[];
   uncheckedConfigurations: string[];
   /** Every target's resolved settings in the unchecked configurations, for ownership checks; undefined when Xcode couldn't report them. */
   uncheckedSettingsJSON: string[] | undefined;
+  /** Platforms the target also builds for that Clerk doesn't set up, such as visionOS. */
+  unsupportedPlatforms: string[];
+  /** A Multiplatform target's settings without `-sdk`, so ownership checks also see each other target's own platform. */
+  platformNeutralSettingsJSON: string[];
+}
+
+const PLATFORM_NAMES: Record<string, string> = {
+  iphoneos: "iOS",
+  iphonesimulator: "iOS",
+  macosx: "macOS",
+  xros: "visionOS",
+  xrsimulator: "visionOS",
+  appletvos: "tvOS",
+  appletvsimulator: "tvOS",
+  watchos: "watchOS",
+  watchsimulator: "watchOS",
+  driverkit: "DriverKit",
+};
+
+/** The Apple platforms the inspected contexts cover, iOS first. */
+export function inspectedPlatforms(inspection: Pick<Inspection, "contexts">): IOSNativePlatform[] {
+  const sdks = new Set(inspection.contexts.map((context) => context.selection.sdk));
+  return [
+    ...(sdks.has("iphoneos") || sdks.has("iphonesimulator") ? (["ios"] as const) : []),
+    ...(sdks.has("macosx") ? (["macos"] as const) : []),
+  ];
+}
+
+export function nativePlatform(inspection: Pick<Inspection, "contexts">): IOSNativeTargetPlatform {
+  const platforms = inspectedPlatforms(inspection);
+  return platforms.length > 1 ? "multiplatform" : platforms[0]!;
+}
+
+export function platformLabel(platform: IOSNativePlatform | Selection["sdk"]): "iOS" | "macOS" {
+  return platform === "macos" || platform === "macosx" ? "macOS" : "iOS";
+}
+
+/** "iOS", "macOS", or "iOS and macOS" for a Multiplatform target. */
+export function platformsLabel(inspection: Pick<Inspection, "contexts">): string {
+  return inspectedPlatforms(inspection).map(platformLabel).join(" and ");
+}
+
+/** How checks name a context: the configuration, plus the platform when the target builds for both. */
+export function contextLabel(
+  inspection: Pick<Inspection, "contexts">,
+  context: Pick<Inspection["contexts"][number], "selection">,
+): string {
+  const { configuration, sdk } = context.selection;
+  return inspectedPlatforms(inspection).length > 1
+    ? `${configuration} (${platformLabel(sdk)})`
+    : configuration;
 }
 
 async function generator(root: string, project: string): Promise<SetupInput["managedBy"]> {
@@ -164,18 +216,12 @@ export async function inspectSelectedProject(
   if (!configurations.length || configurations.some((name) => !declared.includes(name)))
     throw setupError("Choose a declared --xcode-configuration explicitly.");
   const contexts: Inspection["contexts"] = [];
+  const unsupportedPlatforms = new Set<string>();
+  const platformNeutralSettingsJSON: string[] = [];
   let resolved = false;
-  for (const configuration of configurations) {
-    const selection: Selection = {
-      root,
-      project,
-      targetId: target.id,
-      targetName: target.name,
-      configuration,
-      sdk: options.sdk ?? "iphoneos",
-    };
+  const readSettings = async (selection: Selection, sdk: boolean) => {
     const command = settingsCommand(selection);
-    if (!options.sdk) command.splice(command.indexOf("-sdk"), 2);
+    if (!sdk) command.splice(command.indexOf("-sdk"), 2);
     let output: string;
     try {
       output = await run(command, root, options.signal);
@@ -205,18 +251,60 @@ export async function inspectSelectedProject(
     const row = Array.isArray(rows)
       ? rows.find((item) => object(item) && item.target === target.name)
       : undefined;
-    const reported = object(row) && object(row.buildSettings) ? row.buildSettings : undefined;
-    const settingsJSON = JSON.stringify(rows);
-    if (!options.sdk) {
-      const sdk = reported?.PLATFORM_NAME;
-      if (sdk !== "iphoneos" && sdk !== "iphonesimulator" && sdk !== "macosx")
-        throw setupError("Select an iOS or macOS build context; this platform needs manual setup.");
-      selection.sdk = sdk;
+    return {
+      settingsJSON: JSON.stringify(rows),
+      reported: object(row) && object(row.buildSettings) ? row.buildSettings : undefined,
+    };
+  };
+  const addContext = (selection: Selection, settingsJSON: string) =>
+    contexts.push({ selection, settingsJSON, settings: selectedSettings(selection, settingsJSON) });
+  for (const configuration of configurations) {
+    const selection: Selection = {
+      root,
+      project,
+      targetId: target.id,
+      targetName: target.name,
+      configuration,
+      sdk: options.sdk ?? "iphoneos",
+    };
+    const { settingsJSON, reported } = await readSettings(selection, options.sdk !== undefined);
+    const sdk = reported?.PLATFORM_NAME;
+    if (options.sdk || sdk === "iphoneos" || sdk === "iphonesimulator" || sdk === "macosx") {
+      if (!options.sdk) selection.sdk = sdk as Selection["sdk"];
+      addContext(selection, settingsJSON);
+      continue;
     }
-    const settings = selectedSettings(selection, settingsJSON);
-    contexts.push({ selection, settingsJSON, settings });
+    // A Multiplatform target (SDKROOT = auto) resolves to no platform until one is chosen,
+    // so inspect each Apple platform it lists that Clerk sets up.
+    const listed =
+      sdk === undefined && typeof reported?.SUPPORTED_PLATFORMS === "string"
+        ? reported.SUPPORTED_PLATFORMS.split(/\s+/).filter(Boolean)
+        : [];
+    const platforms = [
+      ...(listed.includes("iphoneos")
+        ? (["iphoneos"] as const)
+        : listed.includes("iphonesimulator")
+          ? (["iphonesimulator"] as const)
+          : []),
+      ...(listed.includes("macosx") ? (["macosx"] as const) : []),
+    ];
+    if (!platforms.length)
+      throw setupError("Select an iOS or macOS build context; this platform needs manual setup.");
+    for (const name of listed)
+      if (!["iphoneos", "iphonesimulator", "macosx"].includes(name))
+        unsupportedPlatforms.add(PLATFORM_NAMES[name] ?? name);
+    platformNeutralSettingsJSON.push(settingsJSON);
+    for (const platform of platforms) {
+      const context = { ...selection, sdk: platform };
+      addContext(context, (await readSettings(context, true)).settingsJSON);
+    }
   }
-  if (new Set(contexts.map((context) => context.selection.sdk)).size !== 1)
+  const platformsOf = (configuration: string) =>
+    contexts
+      .filter((context) => context.selection.configuration === configuration)
+      .map((context) => context.selection.sdk)
+      .join(" ");
+  if (new Set(configurations.map(platformsOf)).size !== 1)
     throw setupError(
       "Configurations resolve to different platforms; inspect them separately with --xcode-configuration.",
     );
@@ -244,6 +332,8 @@ export async function inspectSelectedProject(
     contexts,
     uncheckedConfigurations,
     uncheckedSettingsJSON,
+    unsupportedPlatforms: [...unsupportedPlatforms],
+    platformNeutralSettingsJSON,
     input: {
       selection,
       settingsJSON,

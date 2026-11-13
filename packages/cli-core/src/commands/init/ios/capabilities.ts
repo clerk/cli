@@ -1,6 +1,6 @@
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import { capabilitySettings } from "./project.ts";
-import { basename, dirname, isAbsolute, posix, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, posix, relative, resolve } from "node:path";
 import { lstat, realpath } from "node:fs/promises";
 import type { FileAction } from "../frameworks/types.ts";
 import { containedPath, snapshotFile, type FileSnapshot } from "./files.ts";
@@ -129,6 +129,27 @@ export function capabilityXML(source: string, domain?: string, apple = false, ma
   );
 }
 
+/** The entries without Associated Domains, for a Mac build a Personal Team signs. Throws on XML it can't read. */
+function withoutAssociatedDomains(source: string): string {
+  capabilityXML(source);
+  const document = new DOMParser().parseFromString(source, "text/xml");
+  const [dictionary] = elements(document.documentElement);
+  const children = elements(dictionary!);
+  const index = children.findIndex(
+    (node, position) => position % 2 === 0 && node.textContent === DOMAIN,
+  );
+  if (index < 0) return source;
+  for (const node of [children[index]!, children[index + 1]!]) {
+    const indent = node.previousSibling;
+    if (indent?.nodeType === 3 && !indent.textContent?.trim()) dictionary!.removeChild(indent);
+    dictionary!.removeChild(node);
+  }
+  return (
+    new XMLSerializer().serializeToString(document).trimEnd() +
+    source.slice(source.trimEnd().length)
+  );
+}
+
 /** The entitlements file one configuration signs with, or undefined when it has none. Throws when it can't be read. */
 export async function readEntitlements(
   context: Inspection["contexts"][number],
@@ -168,8 +189,21 @@ export function personalTeamConflicts(source: string, mac: boolean): string[] {
   ];
 }
 
-export function personalTeamConflictNote(file: string, conflicts: string[]): string {
-  return `${file} still has ${conflicts.join(" and ")}, which a Personal Team can't sign, so the app won't sign. Remove ${conflicts.length > 1 ? "them" : "it"} in Xcode's Signing & Capabilities, or choose a paid Apple Developer Program team.`;
+export function personalTeamConflictNote(
+  file: string,
+  conflicts: string[],
+  /** The target builds for iOS and macOS, where only the Mac build can't sign Associated Domains. */
+  multiplatform = false,
+): string {
+  const named = conflicts.map((conflict) =>
+    multiplatform && conflict === "Associated Domains" ? "Associated Domains (on macOS)" : conflict,
+  );
+  return `${file} still has ${named.join(" and ")}, which a Personal Team can't sign, so the app won't sign. Remove ${conflicts.length > 1 ? "them" : "it"} in Xcode's Signing & Capabilities, or choose a paid Apple Developer Program team.`;
+}
+
+/** Associated Domains in a file a Multiplatform target's iOS and macOS builds share, on a Personal Team. */
+export function sharedMacDomainsNote(file: string, setupCanSplit: boolean): string {
+  return `${file} gives the Mac build Associated Domains, which a Personal Team can't sign for a Mac app. ${setupCanSplit ? "Run clerk init to give macOS its own copy without them" : "Give macOS its own entitlements file without them in Xcode"}, or choose a paid Apple Developer Program team.`;
 }
 
 /**
@@ -197,6 +231,8 @@ async function entitlementsFolder(
 
 interface CapabilityPlan {
   status: "planned" | "satisfied" | "manual";
+  /** The file a Multiplatform target's iOS and macOS builds share, when macOS gets its own copy. */
+  macCopyOf?: string;
   scope: string;
   reason?: string;
   projectSource: string;
@@ -208,10 +244,10 @@ interface CapabilityPlan {
 async function planCapabilities(
   inspection: Inspection,
   projectSource: string,
-  frontendHost?: string,
-  apple = false,
-  overlay: Map<string, FileAction> = new Map(),
-  associatedDomain = true,
+  frontendHost: string | undefined,
+  apple: boolean,
+  overlay: Map<string, FileAction>,
+  associatedDomain: (selection: Selection) => boolean,
 ): Promise<CapabilityPlan> {
   const { selection, managedBy, projectFormat } = inspection.input;
   const scope = `${selection.targetName}, ${selection.configuration}, ${selection.sdk}; an existing entitlement file also affects every context that uses that file`;
@@ -229,12 +265,18 @@ async function planCapabilities(
   try {
     const adapter = capabilitySettings(projectSource, projectFormat, selection);
     const { settings } = adapter;
+    // A route this run added for the other platform of a Multiplatform target isn't the project's own.
+    const ownRoutes = Object.keys(
+      capabilitySettings(inspection.input.projectSource, projectFormat, selection).settings,
+    ).some((key) => key.startsWith("CODE_SIGN_ENTITLEMENTS["));
     const sourceRoot =
       inspection.settings.SRCROOT ?? resolve(selection.root, dirname(selection.project));
     const mac = selection.sdk === "macosx";
     // Passkeys and credential AutoFill need the web-credentials domain on macOS too.
-    const domain = frontendHost && associatedDomain ? `webcredentials:${frontendHost}` : undefined;
-    if (!frontendHost && associatedDomain)
+    const domainFor = (context: Selection) =>
+      frontendHost && associatedDomain(context) ? `webcredentials:${frontendHost}` : undefined;
+    const domain = domainFor(selection);
+    if (!frontendHost && associatedDomain(selection))
       return manual("Link the intended Clerk instance before adding its Associated Domain.");
     let changedProject = false;
     // Xcode's native setting adds the outgoing-network entitlement during signing.
@@ -255,10 +297,37 @@ async function planCapabilities(
         changedProject = true;
       }
     }
+    // Why a new file can't be attached, or undefined when it can. A file an earlier context
+    // of this run plans to create is this run's own.
+    const newFileBlocker = async (path: string, value: string) => {
+      if (!/^[a-zA-Z0-9_-]+$/.test(selection.targetId))
+        return "Choose an ordinary project target identifier before creating entitlements.";
+      if (ownRoutes) return "Conditional entitlement routes require setup in Xcode.";
+      if (
+        adapter.otherSettings.some((other) =>
+          Object.entries(other).some(
+            ([key, setting]) =>
+              key.startsWith("CODE_SIGN_ENTITLEMENTS") &&
+              typeof setting === "string" &&
+              resolve(sourceRoot, setting) === resolve(sourceRoot, value),
+          ),
+        )
+      )
+        return "The proposed entitlement file is already referenced by another target.";
+      if (overlay.get(path)?.type === "create") return undefined;
+      try {
+        await lstat(resolve(selection.root, path));
+        return "The proposed new entitlement file already exists; attach or review it in Xcode.";
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      }
+      return undefined;
+    };
     const actions: FileAction[] = [];
     const snapshots: FileSnapshot[] = [];
     let pendingOnDisk = false;
     let path = inspection.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+    let copiedFrom: FileSnapshot | undefined;
     if (domain || apple || (mac && path)) {
       let snapshot: FileSnapshot | undefined;
       if (path) {
@@ -276,6 +345,7 @@ async function planCapabilities(
           );
         for (const other of [
           ...inspection.contexts.map((context) => context.settingsJSON),
+          ...inspection.platformNeutralSettingsJSON,
           ...inspection.uncheckedSettingsJSON,
         ].flatMap((json) => otherTargetSettings(selection, json))) {
           const value = other.CODE_SIGN_ENTITLEMENTS?.trim();
@@ -286,42 +356,62 @@ async function planCapabilities(
         }
         snapshot = await snapshotFile(selection.root, path);
         snapshots.push(snapshot);
+        // A Multiplatform target usually signs both platforms with one file. When the Mac can't
+        // sign Associated Domains (a Personal Team) that the file has or iOS needs, the Mac gets
+        // its own copy without them.
+        const iOS = mac
+          ? inspection.contexts.find(
+              (context) =>
+                context.selection.configuration === selection.configuration &&
+                context.selection.sdk !== "macosx",
+            )
+          : undefined;
+        const iOSPath = iOS?.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+        const iOSDomain = iOS && domainFor(iOS.selection);
+        if (
+          iOS &&
+          iOSPath &&
+          !associatedDomain(selection) &&
+          relative(selection.root, resolve(iOS.settings.SRCROOT ?? sourceRoot, iOSPath)) === path &&
+          (personalTeamConflicts(snapshot.source, true).includes("Associated Domains") ||
+            (iOSDomain && !hasCapabilities(snapshot.source, iOSDomain)))
+        ) {
+          copiedFrom = snapshot;
+          snapshot = undefined;
+          path = join(dirname(path), `${basename(path, ".entitlements")}-macOS.entitlements`);
+          const value = relative(sourceRoot, resolve(selection.root, path));
+          const blocker = await newFileBlocker(path, value);
+          if (blocker) return manual(blocker);
+          adapter.set("CODE_SIGN_ENTITLEMENTS[sdk=macosx*]", value);
+          changedProject = true;
+        }
       } else {
-        if (!/^[a-zA-Z0-9_-]+$/.test(selection.targetId))
-          return manual(
-            "Choose an ordinary project target identifier before creating entitlements.",
-          );
-        if (Object.keys(settings).some((key) => key.startsWith("CODE_SIGN_ENTITLEMENTS[")))
-          return manual("Conditional entitlement routes require setup in Xcode.");
         const name = selection.targetName.replace(/[^a-zA-Z0-9_-]/g, "_") || selection.targetId;
         const folder = await entitlementsFolder(adapter.synchronizedFolders, selection, sourceRoot);
-        const filename = posix.join(folder, `${name}${mac ? "-macOS" : ""}.entitlements`);
-        path = relative(selection.root, resolve(sourceRoot, filename));
+        const shareable = posix.join(folder, `${name}.entitlements`);
+        let filename = posix.join(folder, `${name}${mac ? "-macOS" : ""}.entitlements`);
+        // A Multiplatform target's Mac side shares the file this run creates for iOS when it
+        // needs the same entries.
+        const shared = overlay.get(relative(selection.root, resolve(sourceRoot, shareable)));
         if (
-          adapter.otherSettings.some((other) =>
-            Object.entries(other).some(
-              ([key, value]) =>
-                key.startsWith("CODE_SIGN_ENTITLEMENTS") &&
-                typeof value === "string" &&
-                resolve(sourceRoot, value) === resolve(sourceRoot, filename),
-            ),
-          )
+          mac &&
+          shared?.type === "create" &&
+          shared.content === capabilityXML(EMPTY, domain, apple, mac)
         )
-          return manual("The proposed entitlement file is already referenced by another target.");
-        try {
-          await lstat(resolve(selection.root, path));
-          return manual(
-            "The proposed new entitlement file already exists; attach or review it in Xcode.",
-          );
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        }
+          filename = shareable;
+        path = relative(selection.root, resolve(sourceRoot, filename));
+        const blocker = await newFileBlocker(path, filename);
+        if (blocker) return manual(blocker);
         adapter.set(`CODE_SIGN_ENTITLEMENTS[sdk=${mac ? "macosx*" : "iphone*"}]`, filename);
         changedProject = true;
       }
       const previous = overlay.get(path);
       const source =
-        previous && previous.type !== "skip" ? previous.content : (snapshot?.source ?? EMPTY);
+        previous && previous.type !== "skip"
+          ? previous.content
+          : copiedFrom
+            ? withoutAssociatedDomains(copiedFrom.source)
+            : (snapshot?.source ?? EMPTY);
       const content = capabilityXML(source, domain, apple, mac);
       // A file shared with an earlier configuration may already be planned, but it's unchanged on disk.
       pendingOnDisk = snapshot !== undefined && content !== snapshot.source;
@@ -330,13 +420,16 @@ async function planCapabilities(
           type: snapshot ? "modify" : "create",
           path,
           content,
-          description: mac
-            ? "Update macOS entitlements"
-            : `Add ${[domain && "Clerk Associated Domain", apple && "Sign in with Apple"].filter(Boolean).join(" and ")}`,
+          description: copiedFrom
+            ? `Give macOS its own copy of ${copiedFrom.path}, without Associated Domains`
+            : mac
+              ? "Update macOS entitlements"
+              : `Add ${[domain && "Clerk Associated Domain", apple && "Sign in with Apple"].filter(Boolean).join(" and ")}`,
         });
     }
     return {
       status: actions.length || changedProject || pendingOnDisk ? "planned" : "satisfied",
+      ...(copiedFrom ? { macCopyOf: copiedFrom.path } : {}),
       scope,
       projectSource: changedProject ? adapter.serialize() : projectSource,
       actions,
@@ -356,12 +449,14 @@ export async function planAllCapabilities(
   projectSource: string,
   frontendHost?: string,
   apple = false,
-  /** False to leave the web-credentials domain out, for a signing team that can't provision it. */
-  associatedDomain = true,
+  /** False to leave the web-credentials domain out, for a signing team that can't provision it; a function decides per platform. */
+  associatedDomain: boolean | ((selection: Selection) => boolean) = true,
 ) {
+  const domainFor =
+    typeof associatedDomain === "function" ? associatedDomain : () => associatedDomain;
   const actions = new Map<string, FileAction>();
   const snapshots = new Map<string, FileSnapshot>();
-  const contexts: (Pick<CapabilityPlan, "status" | "scope" | "reason"> & {
+  const contexts: (Pick<CapabilityPlan, "status" | "scope" | "reason" | "macCopyOf"> & {
     configuration: string;
   })[] = [];
   let source = projectSource;
@@ -380,7 +475,7 @@ export async function planAllCapabilities(
       frontendHost,
       apple,
       actions,
-      associatedDomain,
+      domainFor,
     );
     source = plan.projectSource;
     for (const action of plan.actions) actions.set(action.path, action);
@@ -389,6 +484,7 @@ export async function planAllCapabilities(
       status: plan.status,
       scope: plan.scope,
       reason: plan.reason,
+      ...(plan.macCopyOf ? { macCopyOf: plan.macCopyOf } : {}),
       configuration: context.selection.configuration,
     });
   }

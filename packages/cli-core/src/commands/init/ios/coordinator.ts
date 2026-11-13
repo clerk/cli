@@ -16,7 +16,7 @@ import { stopNativeProgress, withNativeSpinner } from "./progress.ts";
 import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
-import { inspectSelectedProject } from "./xcode.ts";
+import { inspectSelectedProject, nativePlatform, platformsLabel } from "./xcode.ts";
 import { signedByPersonalTeam } from "./teams.ts";
 import { nonDefaultXcodeNote } from "./xcode-tools.ts";
 import { SelectionNeeded } from "./discovery.ts";
@@ -86,9 +86,11 @@ export function setupNextSteps(
 }
 
 export function printSetupPreview(preview: SetupPreview): void {
-  const { selection } = preview.inspection.input;
+  const { inspection } = preview;
+  const { selection } = inspection.input;
+  const configurations = [...new Set(inspection.contexts.map((c) => c.selection.configuration))];
   log.info(
-    `\nSet up ${selection.targetName} (${preview.inspection.contexts.map((c) => c.selection.configuration).join(", ")})`,
+    `\nSet up ${selection.targetName}${nativePlatform(inspection) === "multiplatform" ? ` for ${platformsLabel(inspection)}` : ""} (${configurations.join(", ")})`,
   );
   const xcodeNote = nonDefaultXcodeNote();
   if (xcodeNote) log.info(`  ${xcodeNote}`);
@@ -113,9 +115,11 @@ export function printSetupPreview(preview: SetupPreview): void {
   if (preview.dirtyFiles.length) log.info("  Existing edits will be preserved in backups.");
   if (preview.capabilities?.status === "manual")
     log.warn(preview.capabilities.reason ?? "Some capabilities need manual setup.");
-  if (preview.inspection.uncheckedConfigurations.length)
+  if (inspection.uncheckedConfigurations.length)
+    log.warn(`Other configurations need review: ${inspection.uncheckedConfigurations.join(", ")}`);
+  if (inspection.unsupportedPlatforms.length)
     log.warn(
-      `Other configurations need review: ${preview.inspection.uncheckedConfigurations.join(", ")}`,
+      `Clerk sets up only iOS and macOS, so this target's ${inspection.unsupportedPlatforms.join(", ")} build is left unchanged.`,
     );
   if (!preview.starter?.tasks.length)
     log.info("  Swift integration remains: initialize Clerk and connect your sign-in flow.");
@@ -327,7 +331,7 @@ export async function runAppleInit(
       setup.signInUI = true;
     if (interactive) {
       log.success(
-        `Found ${inspection.input.selection.sdk === "macosx" ? "macOS" : "iOS"} app: ${inspection.input.selection.targetName}`,
+        `Found ${platformsLabel(inspection)} app: ${inspection.input.selection.targetName}`,
       );
       if (!options.appleSdk && !options.prebuiltAuthUi && !installedProducts && !starter)
         setup.products = await select({
