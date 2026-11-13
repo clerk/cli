@@ -1,7 +1,8 @@
 /**
  * Live-BAPI roundtrip test for `clerk logs schema`. Pins the `log_schema`
  * object the CLI prints from `GET /v1/logs/schemas` against the real Clerk
- * Backend API, for both a wildcard and a concrete event type.
+ * Backend API, for both a wildcard and a concrete event type, and the catalog
+ * it prints from `GET /v1/logs/types` when no event type is passed.
  *
  * Requires `CLERK_PLATFORM_API_KEY` and `CLERK_CLI_TEST_APP_ID`. Locally,
  * run via `bun run test:e2e:op` so 1Password resolves both in-memory.
@@ -25,8 +26,9 @@ type SchemaOutput = {
   fields: Array<{ path: unknown; type: unknown; optional: unknown; enum?: unknown }>;
 };
 
-function logsSchema(eventType: string) {
-  return Bun.$`bun ${CLI_PATH} logs schema ${eventType} --json --app ${APP_ID}`
+function logsSchema(eventType?: string) {
+  const args = eventType === undefined ? [] : [eventType];
+  return Bun.$`bun ${CLI_PATH} logs schema ${args} --json --app ${APP_ID}`
     .env({
       ...process.env,
       CLERK_CONFIG_DIR: configDir,
@@ -101,4 +103,27 @@ test("logs schema user.created --json returns the fields of one event type", asy
   expect(output.matched_event_types).toBeUndefined();
   expect(output.fields.length).toBeGreaterThan(0);
   expectWellFormedFields(output.fields);
+}, 60_000);
+
+test("logs schema --json lists every event type with its fields", async () => {
+  const result = await logsSchema();
+  if (result.exitCode !== 0) {
+    throw new Error(
+      `\`logs schema\` exited ${result.exitCode}: ${result.stderr.toString().trim().slice(0, 500)}`,
+    );
+  }
+  const output = JSON.parse(result.stdout.toString()) as {
+    object: unknown;
+    data: SchemaOutput[];
+    total_count: unknown;
+  };
+
+  expect(output.object).toBe("list");
+  expect(Array.isArray(output.data)).toBe(true);
+  expect(output.total_count).toBe(output.data.length);
+  expect(output.data.every((entry) => entry.object === "log_schema")).toBe(true);
+  const userCreated = output.data.find((entry) => entry.event_type === "user.created");
+  expect(userCreated).toBeDefined();
+  expect(userCreated!.fields.length).toBeGreaterThan(0);
+  expectWellFormedFields(userCreated!.fields);
 }, 60_000);
