@@ -198,11 +198,13 @@ JSON output has the same `{ data, cursor }` shape as `list`. `cursor` carries on
 }
 ```
 
-### `clerk logs schema <event-type>`
+### `clerk logs schema [event-type]`
 
-Show the payload fields of a log event type: the dot-paths, their types, whether each is optional, and the accepted values of enum fields.
+Without an argument, list every event type the instance can read. With one, show the payload fields of an event type: the dot-paths, their types, whether each is optional, and the accepted values of enum fields.
 
 ```sh
+clerk logs schema
+clerk logs schema --json
 clerk logs schema sign_in.completed
 clerk logs schema 'sign_in.*'
 clerk logs schema sign_in
@@ -213,13 +215,53 @@ clerk logs schema user.created --json
 | -------- | -------------------------------------- |
 | `--json` | Output as JSON (implied in agent mode) |
 
-The event type is passed to the API as-is. It can be:
+#### Every event type
+
+`clerk logs schema` with no argument reads `GET /v1/logs/types`: one entry per event type the instance can read, each with its payload schema. Event types whose logs are enabled per instance (such as `sms.*` and `email.*`) are listed only once enabled. The list isn't paginated.
+
+Human output has one section per docs group, sorted by the group's title and headed by it (the title is a phrase such as "Billing events", so it doesn't fit as a column), with each type and its description under it, sorted by type. Types without a group go last, under "Other events". Each section aligns on its own, so one long type name only widens its own group. After the sections come the count and a hint to run `clerk logs schema <event-type>` for a type's fields. The human output leaves the fields out.
+
+```text
+Billing events
+  organization.subscription_item.price_transition.created  Price transition was created for organization subscription
+
+Enterprise and SSO connection events
+  enterprise_connection.created  Enterprise connection was created
+
+2 event types
+→ See a type's fields: clerk logs schema <event-type>
+```
+
+JSON output is the list exactly as the Backend API returns it, sorted by `event_type`, with every type's `fields`: the one call that shows everything `clerk logs list --type`, `--payload-filter` and `--fields` can query. Each entry has the same shape as the single-type output below.
+
+```json
+{
+  "object": "list",
+  "data": [
+    {
+      "object": "log_schema",
+      "event_type": "sign_in.completed",
+      "description": "A user completed a sign-in.",
+      "severity": "success",
+      "docs_group": "sign_in",
+      "fields": [{ "path": "sign_in_id", "type": "string", "optional": false }]
+    }
+  ],
+  "total_count": 1
+}
+```
+
+A response without a `data` array, or with an entry that isn't an object, fails with "The Logs API returned an unexpected response." in both modes. A `404` means the Backend API the CLI reached doesn't have `GET /v1/logs/types` yet (an older deployment, or a `CLERK_BACKEND_API_URL` override pointing at one), since the route has nothing else to not find; it fails with an error saying the API can't list event types yet and to pass an event type instead.
+
+#### One event type
+
+The event type is passed to `GET /v1/logs/schemas` as-is. It can be:
 
 - a concrete type, like `sign_in.completed`;
 - a trailing-`*` wildcard, like `sign_in.*` (quote it so the shell doesn't expand it);
 - a bare family name, like `sign_in`, which the API reads as `sign_in.*` when no concrete type has that name.
 
-For a wildcard or family, the fields are only the ones every matched type shares, and `matched_event_types` lists those types. Running the command without an event type, or with a bare `*`, is a usage error raised before any request. An unknown event type, or one the instance can't read (such as SMS or email types behind a feature gate), fails with the API's 422 error.
+For a wildcard or family, the fields are only the ones every matched type shares, and `matched_event_types` lists those types. An empty event type (`clerk logs schema ""`, as from an unset shell variable) or a bare `*` is a usage error raised before any request, rather than a listing of every type. An unknown event type, or one the instance can't read (such as SMS or email types behind a feature gate), fails with the API's 422 error.
 
 Human output is a header with the event type, its description and severity (or, for a wildcard, the matched event types), then a table (`PATH`, `TYPE`, `OPTIONAL`, `ENUM`), and a hint showing how to filter logs on the first field.
 
@@ -242,4 +284,5 @@ JSON output is the `log_schema` object exactly as the Backend API returns it:
 | ------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET`  | `/v1/logs`                          | List logs (`view=flat`, `limit`, `starting_after`, `event_time_after`, `event_time_before`, `type`, `user_id`, `identifier`, `actor`, `subject`, `session_id`, `client_id`, `ip_address`, `trace_id`, `impersonator_user_id`, `payload_filter[<path>]`, `payload_fields`, `filter_match`, `end_user_facing_only`), newest first |
 | `GET`  | `/v1/logs/groups/{group_id}/events` | A log group's logs, oldest first (`limit`, `starting_after` and the list's event filters; no `started_at`)                                                                                                                                                                                                                      |
+| `GET`  | `/v1/logs/types`                    | Every event type the instance can read, each with its payload schema (not paginated)                                                                                                                                                                                                                                            |
 | `GET`  | `/v1/logs/schemas`                  | Payload schema of an event type (`type`)                                                                                                                                                                                                                                                                                        |
