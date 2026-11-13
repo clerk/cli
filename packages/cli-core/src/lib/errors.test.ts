@@ -1,4 +1,4 @@
-import { test, expect, describe } from "bun:test";
+import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import {
   PlapiError,
   FapiError,
@@ -7,6 +7,7 @@ import {
   BILLING_ERROR_REASON,
   CliError,
   ERROR_CODE,
+  platformPermissionProblem,
 } from "./errors.ts";
 
 describe("ApiError envelope parsing (via PlapiError.fromBody)", () => {
@@ -180,5 +181,92 @@ describe("BillingError", () => {
     });
     expect(err.reason).toBe(BILLING_ERROR_REASON.QUOTA_EXCEEDED);
     expect(err.docsUrl).toBe("https://dashboard.clerk.com/settings/billing");
+  });
+});
+
+describe("platformPermissionProblem", () => {
+  const originalKey = process.env.CLERK_PLATFORM_API_KEY;
+  beforeEach(() => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
+  });
+  afterEach(() => {
+    if (originalKey === undefined) {
+      delete process.env.CLERK_PLATFORM_API_KEY;
+    } else {
+      process.env.CLERK_PLATFORM_API_KEY = originalKey;
+    }
+  });
+
+  const body = (code: string, meta?: Record<string, unknown>) =>
+    JSON.stringify({ errors: [{ code, message: "API message", ...(meta ? { meta } : {}) }] });
+  const roleCode = "platform_oauth_access_token_role_has_no_access";
+
+  test("names the role and the roles that have access", () => {
+    const problem = platformPermissionProblem(
+      new PlapiError(
+        403,
+        body(roleCode, { role: "org:viewer", roles_with_access: ["org:owner", "org:admin"] }),
+      ),
+    );
+    expect(problem?.message).toContain(
+      "Your role in this Clerk workspace (org:viewer) has no Platform API access",
+    );
+    expect(problem?.message).toContain("change your role to one of: org:owner, org:admin.");
+    expect(problem?.message).toContain("`clerk auth logout` and `clerk auth login`");
+    expect(problem?.docsUrl).toBe("https://clerk.com/docs/guides/dashboard/manage-team-access");
+  });
+
+  test("points a managed workspace at an API key, since its roles can't change", () => {
+    const problem = platformPermissionProblem(
+      new PlapiError(403, body(roleCode, { role: "org:managed_member", roles_with_access: [] })),
+    );
+    expect(problem?.message).toContain("managed by a partner integration");
+    expect(problem?.message).toContain("Set CLERK_PLATFORM_API_KEY");
+    expect(problem?.message).not.toContain("change your role");
+  });
+
+  test("still explains a role error whose meta is missing", () => {
+    const problem = platformPermissionProblem(new PlapiError(403, body(roleCode)));
+    expect(problem?.message).toStartWith(
+      "Your role in this Clerk workspace has no Platform API access",
+    );
+  });
+
+  test("blames the workspace role for missing scopes on an OAuth session", () => {
+    const problem = platformPermissionProblem(
+      new PlapiError(
+        403,
+        body("authorization_missing_scopes", {
+          scopes: ["applications:manage", "applications:delete"],
+        }),
+      ),
+    );
+    expect(problem?.message).toStartWith(
+      "Your role in this Clerk workspace isn't allowed to do this. It needs the applications:manage, applications:delete scopes.",
+    );
+  });
+
+  test("blames the Platform API key for missing scopes when one is set", () => {
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test";
+    const problem = platformPermissionProblem(
+      new PlapiError(
+        403,
+        body("authorization_missing_scopes", { scopes: ["applications:manage"] }),
+      ),
+    );
+    expect(problem?.message).toStartWith(
+      "The Platform API key in CLERK_PLATFORM_API_KEY isn't allowed to do this. It needs the applications:manage scope.",
+    );
+    expect(problem?.message).not.toContain("workspace");
+    expect(problem?.docsUrl).toBeUndefined();
+  });
+
+  test.each([
+    ["another 403 code", new PlapiError(403, body("authorization_invalid"))],
+    ["a role code on another status", new PlapiError(401, body(roleCode))],
+    ["a role code from the Backend API", new BapiError(403, body(roleCode), new Headers())],
+    ["a non-API error", new Error("boom")],
+  ])("ignores %s", (_name, error) => {
+    expect(platformPermissionProblem(error)).toBeUndefined();
   });
 });

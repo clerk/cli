@@ -43,6 +43,8 @@ import {
   PlapiError,
   FapiError,
   EXIT_CODE,
+  agentDocsUrl,
+  platformPermissionProblem,
   throwUsageError,
 } from "./lib/errors.ts";
 import { clerkHelpConfig, formatExamplesBlock, type Example } from "./lib/help.ts";
@@ -375,7 +377,10 @@ export function reportError(error: unknown, verbose: boolean): number {
   }
 
   if (error instanceof ApiError) {
-    const detail = formatApiBody(error.body, verbose);
+    // The response body stays in the `--verbose` request log and the JSON `errors` array.
+    const permission = platformPermissionProblem(error);
+    const detail = permission?.message ?? formatApiBody(error.body, verbose);
+    const docsUrl = permission?.docsUrl && agentDocsUrl(permission.docsUrl);
     const prefix = error.context ?? "Request failed";
     if (isAgent()) {
       const apiErrors: ApiErrorEntry[] | undefined =
@@ -391,7 +396,7 @@ export function reportError(error: unknown, verbose: boolean): number {
       outputJsonError(
         error.code ?? "api_error",
         `${prefix} (${error.status}): ${detail}`,
-        undefined,
+        docsUrl,
         apiErrors,
       );
     } else {
@@ -401,6 +406,9 @@ export function reportError(error: unknown, verbose: boolean): number {
       }
       if (verbose && error.clerkTraceId) {
         log.error(`       Trace: ${error.clerkTraceId}`);
+      }
+      if (docsUrl) {
+        log.info(`\nFor more information, see: ${docsUrl}`);
       }
     }
     return EXIT_CODE.GENERAL;

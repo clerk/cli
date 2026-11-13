@@ -603,6 +603,87 @@ describe("reportError", () => {
     });
   });
 
+  describe("Platform API permission errors", () => {
+    const roleBody = JSON.stringify({
+      errors: [
+        {
+          code: "platform_oauth_access_token_role_has_no_access",
+          message: "Workspace role has no Platform API access",
+          long_message:
+            "Your role in the active workspace (org:support) cannot use the Platform API. Roles with access: org:owner, org:admin, org:developer. Ask a workspace owner to change your role, or use an API key with the scopes you need.",
+          meta: {
+            role: "org:support",
+            roles_with_access: ["org:owner", "org:admin", "org:developer"],
+          },
+        },
+      ],
+    });
+    const roleError = () => {
+      const error = new PlapiError(403, roleBody, "https://api.clerk.com/v1/platform/applications");
+      error.context = "Failed to fetch application";
+      return error;
+    };
+    const roleMessage =
+      "Failed to fetch application (403): Your role in this Clerk workspace (org:support) has no Platform API access, so the CLI can't read or change its applications.\n" +
+      "Ask an owner or admin of the workspace to change your role to one of: org:owner, org:admin, org:developer.\n" +
+      "To use another workspace, switch to it in the Clerk Dashboard, then run `clerk auth logout` and `clerk auth login`.";
+
+    test("human mode explains the workspace role and what to do", () => {
+      expect(reportError(roleError(), false)).toBe(EXIT_CODE.GENERAL);
+      expect(captured.err).toContain(roleMessage);
+      expect(captured.err).toContain(
+        "For more information, see: https://clerk.com/docs/guides/dashboard/manage-team-access",
+      );
+    });
+
+    test("agent mode keeps the API's code and errors and adds the explanation", () => {
+      asAgent();
+      reportError(roleError(), false);
+      expect(json().error).toEqual({
+        code: "platform_oauth_access_token_role_has_no_access",
+        message: roleMessage,
+        docsUrl: "https://clerk.com/docs/guides/dashboard/manage-team-access.md",
+        errors: [
+          {
+            code: "platform_oauth_access_token_role_has_no_access",
+            message: "Workspace role has no Platform API access",
+            meta: {
+              role: "org:support",
+              roles_with_access: ["org:owner", "org:admin", "org:developer"],
+            },
+          },
+        ],
+      });
+    });
+
+    test("a missing-scopes 403 names the scope the role lacks", () => {
+      const body = JSON.stringify({
+        errors: [
+          {
+            code: "authorization_missing_scopes",
+            message: "Missing authorization scopes",
+            meta: { scopes: ["applications:manage"] },
+          },
+        ],
+      });
+      const error = new PlapiError(403, body);
+      error.context = "Failed to create application";
+      reportError(error, false);
+      expect(captured.err).toContain(
+        "Failed to create application (403): Your role in this Clerk workspace isn't allowed to do this. It needs the applications:manage scope.",
+      );
+    });
+
+    test("other 403s keep the API's message", () => {
+      const body = JSON.stringify({
+        errors: [{ code: "authorization_invalid", message: "Request not allowed" }],
+      });
+      reportError(new PlapiError(403, body), false);
+      expect(captured.err).toContain("Request failed (403): Request not allowed");
+      expect(captured.err).not.toContain("For more information");
+    });
+  });
+
   describe("unexpected failures", () => {
     test("a plain Error prints its message in human mode", () => {
       expect(reportError(new Error("socket hang up"), false)).toBe(EXIT_CODE.GENERAL);

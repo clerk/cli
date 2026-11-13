@@ -48,7 +48,7 @@ if (!confirmed) throwUserAbort();
 
 ## API errors — `withApiContext`
 
-Wrap API calls with `withApiContext` to attach a human-readable context string. The global handler extracts the first error message from the response body and prints it with the context prefix:
+Wrap API calls with `withApiContext` to attach a human-readable context string. The global handler extracts the first error message from the response body and prints it with the context prefix. A Platform API 403 caused by the workspace role or a missing scope is explained by `platformPermissionProblem` instead, in the global handler and anywhere else that reports a swallowed error:
 
 ```ts
 import { withApiContext } from "../../lib/errors.ts";

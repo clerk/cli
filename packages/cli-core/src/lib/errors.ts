@@ -512,6 +512,80 @@ export class BapiError extends ApiError {
   }
 }
 
+const WORKSPACE_ROLE_HAS_NO_ACCESS_CODE = "platform_oauth_access_token_role_has_no_access";
+const MISSING_SCOPES_CODE = "authorization_missing_scopes";
+const TEAM_ACCESS_DOCS_URL = "https://clerk.com/docs/guides/dashboard/manage-team-access";
+const SWITCH_WORKSPACE_HINT =
+  "To use another workspace, switch to it in the Clerk Dashboard, then run `clerk auth logout` and `clerk auth login`.";
+
+interface PlatformPermissionProblem {
+  message: string;
+  docsUrl?: string;
+}
+
+function metaString(value: unknown): string | undefined {
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function metaStrings(value: unknown): string[] {
+  return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
+}
+
+function workspaceRoleHasNoAccess(meta: Record<string, unknown> | null): PlatformPermissionProblem {
+  const role = metaString(meta?.role);
+  const rolesWithAccess = metaStrings(meta?.roles_with_access);
+  const roleLabel = role
+    ? `Your role in this Clerk workspace (${role})`
+    : "Your role in this Clerk workspace";
+  const remedy =
+    rolesWithAccess.length > 0
+      ? `Ask an owner or admin of the workspace to change your role to one of: ${rolesWithAccess.join(", ")}.`
+      : "This workspace is managed by a partner integration, so its roles can't be changed. Set CLERK_PLATFORM_API_KEY to a Platform API key with the scopes you need.";
+  return {
+    message: [
+      `${roleLabel} has no Platform API access, so the CLI can't read or change its applications.`,
+      remedy,
+      SWITCH_WORKSPACE_HINT,
+    ].join("\n"),
+    docsUrl: TEAM_ACCESS_DOCS_URL,
+  };
+}
+
+function missingScopes(meta: Record<string, unknown> | null): PlatformPermissionProblem {
+  const scopes = metaStrings(meta?.scopes);
+  const needs =
+    scopes.length > 0
+      ? ` It needs the ${scopes.join(", ")} scope${scopes.length > 1 ? "s" : ""}.`
+      : "";
+  if (process.env.CLERK_PLATFORM_API_KEY) {
+    return {
+      message: [
+        `The Platform API key in CLERK_PLATFORM_API_KEY isn't allowed to do this.${needs}`,
+        `Set CLERK_PLATFORM_API_KEY to a key that has ${scopes.length > 0 ? "them" : "the scopes this command needs"}: https://dashboard.clerk.com/last-active?path=api-keys`,
+      ].join("\n"),
+    };
+  }
+  return {
+    message: [
+      `Your role in this Clerk workspace isn't allowed to do this.${needs}`,
+      "Ask an owner or admin of the workspace for a role that allows it.",
+      SWITCH_WORKSPACE_HINT,
+    ].join("\n"),
+    docsUrl: TEAM_ACCESS_DOCS_URL,
+  };
+}
+
+/**
+ * Explain a Platform API 403 caused by what the signed-in workspace role (or
+ * the Platform API key) may do, or return `undefined` for any other error.
+ */
+export function platformPermissionProblem(error: unknown): PlatformPermissionProblem | undefined {
+  if (!(error instanceof PlapiError) || error.status !== 403) return undefined;
+  if (error.code === WORKSPACE_ROLE_HAS_NO_ACCESS_CODE) return workspaceRoleHasNoAccess(error.meta);
+  if (error.code === MISSING_SCOPES_CODE) return missingScopes(error.meta);
+  return undefined;
+}
+
 export function isAuthError(error: unknown): error is AuthError | ApiError {
   return (
     (error instanceof CliError && error.code === ERROR_CODE.AUTH_REQUIRED) ||
