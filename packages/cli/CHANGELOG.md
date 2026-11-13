@@ -1,5 +1,61 @@
 # clerk
 
+## 4.2.0
+
+### Minor Changes
+
+- Add event filters to `clerk logs list`: `--type` (with a trailing `*`, like `sign_in.*`), `--user`, `--identifier`, `--actor`, `--subject`, `--session`, `--client`, `--ip`, `--trace`, `--impersonator`, `--end-user-only`, and `--payload-filter <path=value>` to match a payload field of a type. Use `--fields` to show chosen payload fields in a `PAYLOAD` column, and `--match any` to keep logs that match any filter instead of all of them. `clerk logs` is still experimental and needs `CLERK_EXPERIMENTAL=logs`. ([#615](https://github.com/clerk/cli/pull/615)) by [@Jibaru](https://github.com/Jibaru)
+
+- Add `--follow` to `clerk logs` to keep printing new logs as they arrive, oldest first, after the usual backfill. It polls every 2 seconds (change it with `--interval`, at least `1s`), honors `--since`, `--from` and every filter, and looks back 10 seconds on each poll so a log that arrives late is still printed once (a log more than 5 minutes late may be missed). It's meant for live debugging; to export or sync logs, use log drains. It retries network errors, `5xx` and `429` with a warning, gives up after 5 minutes without a successful request, and exits 130 on Ctrl-C. With `--json` it prints one log per line (NDJSON). `clerk logs` is still experimental and needs `CLERK_EXPERIMENTAL=logs`. ([#616](https://github.com/clerk/cli/pull/616)) by [@Jibaru](https://github.com/Jibaru)
+
+- Add `clerk logs get <id>` to show the logs of one sign-in (`sia_…`) or sign-up (`sua_…`), oldest first, under a header with the flow's type, start and subject. It takes the same event filters as `clerk logs list`, `--limit` (up to 500) and `--cursor` to page forward, and `--json` for a `{ data, cursor }` envelope. An unknown ID fails with `log_group_not_found`; looking up a single log by its ID isn't supported yet. `clerk logs` is still experimental and needs `CLERK_EXPERIMENTAL=logs`. ([#620](https://github.com/clerk/cli/pull/620)) by [@Jibaru](https://github.com/Jibaru)
+
+- Add an experimental `clerk logs` that lists an instance's Application Logs, newest first, with `--limit`, `--cursor` to continue a previous run, and `--json` output. It is hidden and refuses to run unless `CLERK_EXPERIMENTAL=logs` is set. ([#612](https://github.com/clerk/cli/pull/612)) by [@Jibaru](https://github.com/Jibaru)
+
+- Run `clerk logs schema` without an event type to list every event type the instance can read. Both outputs list the same types and differ only in detail: the human output has one section per group, headed by the group's title, with each type and its description and no payload fields (run `clerk logs schema <event-type>` for one type's fields), while `--json` (or agent mode) prints the catalog as the Backend API returns it, with every type's payload fields, so a single call covers every type and field `clerk logs list` can filter on. `clerk logs schema <event-type>` is unchanged. `clerk logs` is still experimental and needs `CLERK_EXPERIMENTAL=logs`. ([#625](https://github.com/clerk/cli/pull/625)) by [@Jibaru](https://github.com/Jibaru)
+
+- Add `clerk logs schema <event-type>` to show the payload fields of a log event type, with their types, whether each is optional, and the accepted values of enum fields. Pass a concrete type like `sign_in.completed`, a wildcard like `'sign_in.*'`, or a family like `sign_in` to see the fields every matched type shares. `clerk logs` is still experimental and needs `CLERK_EXPERIMENTAL=logs`. ([#614](https://github.com/clerk/cli/pull/614)) by [@Jibaru](https://github.com/Jibaru)
+
+- Add `--since`, `--from` and `--to` to `clerk logs` to list logs from a time range, like `--since 1h` or `--from 2026-11-01 --to 2026-11-02`. `clerk logs` is still experimental and needs `CLERK_EXPERIMENTAL=logs`. ([#613](https://github.com/clerk/cli/pull/613)) by [@Jibaru](https://github.com/Jibaru)
+
+- Add `clerk migrate sources`, and let `clerk migrate import --source` take the path to a source you wrote. `clerk migrate sources` lists the built-in sources with the passwords, MFA, and metadata each brings across, and `clerk migrate sources <source>` shows where each field lands, how to export, and any caveats. A source you wrote is a `.ts` or `.js` file in your project, checked before use, so a platform with no built-in source can be imported without rebuilding the CLI. ([#530](https://github.com/clerk/cli/pull/530)) by [@royanger](https://github.com/royanger)
+
+- Add `clerk migrate import --reserve-unverified`, which creates the emails and phones an auth platform never verified as reserved (usable for sign-in, locked to the user) instead of unverified. At a terminal, the import asks. ([#531](https://github.com/clerk/cli/pull/531)) by [@royanger](https://github.com/royanger)
+
+- Make `clerk migrate` available without `CLERK_EXPERIMENTAL=migrate`: it now shows in `clerk --help` and shell completion. ([#594](https://github.com/clerk/cli/pull/594)) by [@royanger](https://github.com/royanger)
+
+  - `clerk migrate export` gets users out of Clerk, Supabase, Firebase, Auth0, WorkOS, Better Auth, or Auth.js into a run, and `clerk migrate import` checks every user against your instance, asks before it writes, and continues a run that stopped partway.
+  - `clerk migrate runs` shows what each run did, `clerk migrate undo` deletes the users an import created, and `clerk migrate sources` shows what each source brings across. `--source ./my-source.ts` imports with a source you wrote.
+  - Firebase phones import verified, because Firebase has no phone-verified field.
+
+### Patch Changes
+
+- Reject a bare number before 2020 in `clerk logs --from` and `--to`, like the Unix-seconds value `1762702200` from `date +%s`, instead of reading it as milliseconds in 1970. The error says the flag takes Unix milliseconds or an ISO 8601 date-time. `clerk logs` is still experimental and needs `CLERK_EXPERIMENTAL=logs`. ([#617](https://github.com/clerk/cli/pull/617)) by [@Jibaru](https://github.com/Jibaru)
+
+- Stop calling a claimed application "unclaimed accountless" when `clerk config` reaches it with only a secret key. With `CLERK_SECRET_KEY` (or a key in `.env`) and no `--app` or linked profile, a `clerk config patch`, `put`, `schema` or `--instance` refusal, a `clerk enable billing` / `clerk disable billing` refusal, or a `clerk users open <user-id>` refusal, now asks Clerk whether the application belongs to an account. If it does, it says a secret key can't change those settings, and to pass `--app <id> --instance <dev|prod>` (or run `clerk link`) with `clerk auth login` or `CLERK_PLATFORM_API_KEY`; a login alone isn't enough while the secret key is set. If Clerk can't say, the message covers both cases. A default `clerk config pull` of a claimed application warns what the secret key left out. ([#545](https://github.com/clerk/cli/pull/545)) by [@royanger](https://github.com/royanger)
+
+- Stop asking for the retired `clerk-expo-patterns` skill when `clerk init` installs agent skills on Expo projects. `clerk-expo` now covers both setup and patterns, so the install prompt lists `expo` alone. ([#602](https://github.com/clerk/cli/pull/602)) by [@manovotny](https://github.com/manovotny)
+
+- A continue of `clerk migrate import` no longer counts a user it only attached identifiers to as imported. Once every pending identifier has attached, its summary lists those users under "Finished attaching" and `--json` under `result.attached`. The line that opens the continue no longer counts them among the users left alone, and the progress bar counts the continue's users as finished rather than created. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#609](https://github.com/clerk/cli/pull/609)) by [@royanger](https://github.com/royanger)
+
+- `clerk migrate import` now warns about users it created without an email or phone Clerk refused, in the summary, `--json`, and `clerk migrate runs <id>`, which also warns about users imported without their first phone. An attach that fails on the key or a `429` that outlasts the retries stays pending for a re-run, with a note saying why, and one Clerk calls taken counts as attached when the user already holds it. A secret key Clerk rejects gets Clerk's error and says where the key came from. A refused dry run says so and gives the same next steps as the real run. A run undone in full no longer blocks an import when Clerk can't name the instance. A gateway's HTML error page no longer fills the error breakdown. The checks explain how to replace `APP_ID` in fix commands, and `--json` carries the notes the summary prints. ([#604](https://github.com/clerk/cli/pull/604)) by [@manovotny](https://github.com/manovotny)
+
+- `clerk migrate import` no longer suggests turning on names, usernames, or passwords when only users the checks reject carry them. The import doesn't send those users, so the setting would keep nothing. It also leaves out users no setting would let in, such as one with a bad password hash or one over the user limit. The checks still offer fixes that clear a reject, such as making a required name optional. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#607](https://github.com/clerk/cli/pull/607)) by [@royanger](https://github.com/royanger)
+
+- `clerk migrate import` prints the run's ID and folder once, as the import starts. The summary no longer repeats them. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#608](https://github.com/clerk/cli/pull/608)) by [@royanger](https://github.com/royanger)
+
+- `clerk migrate runs <id>` no longer lists or counts a user as "Not confirmed", or keeps its error in the breakdown, once an undo of the run deleted it. When undo finds a cut-off create by the run's marker, it deletes the user, so `runs <id>` and the `clerk migrate runs` listing count that user as created. Once the run is undone in full, `runs <id>` and the listing show no user as not confirmed, in the list or the counts, since undo looked for each one by the marker. After any undo, the warnings, the users left to attach, and the left-to-attach count also leave out the users it deleted. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#610](https://github.com/clerk/cli/pull/610)) by [@royanger](https://github.com/royanger)
+
+- Record in usage telemetry which platform a `clerk migrate` run's users come from, how far the run got, and the Clerk app and instance it acted on. The first-run telemetry notice now names these fields. ([#596](https://github.com/clerk/cli/pull/596)) by [@royanger](https://github.com/royanger)
+
+- `clerk migrate import` no longer counts a user whose create got no answer (a 5xx or a network error) as failed. Clerk may hold that user, so the summary lists it under "Not confirmed" and `--json` under `result.unconfirmed`, matching `clerk migrate runs <id>`. The import still exits 1, and a continue checks for the user. `clerk migrate` is still experimental and needs `CLERK_EXPERIMENTAL=migrate`. ([#606](https://github.com/clerk/cli/pull/606)) by [@royanger](https://github.com/royanger)
+
+- Mark `clerk migrate`'s Backend API requests with a `migrate` segment in the `User-Agent`, so Clerk can count the users each migration creates. Like usage telemetry, the CLI leaves it out when telemetry is off. ([#596](https://github.com/clerk/cli/pull/596)) by [@royanger](https://github.com/royanger)
+
+- Check `clerk migrate import` against the user limit Clerk reports for the instance, so a development instance Clerk has raised no longer rejects users it has room for. `CLERK_MIGRATE_DEV_USER_LIMIT` is now only a fallback for when Clerk doesn't report a limit, and `--json` says where the limit came from. ([#552](https://github.com/clerk/cli/pull/552)) by [@royanger](https://github.com/royanger)
+
+- Point `clerk users --help` to `clerk migrate` for bringing users in from another provider. ([#592](https://github.com/clerk/cli/pull/592)) by [@manovotny](https://github.com/manovotny)
+
 ## 4.1.0
 
 ### Minor Changes
