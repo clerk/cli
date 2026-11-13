@@ -9,6 +9,7 @@
  */
 
 import { throwUsageError } from "../../lib/errors.ts";
+import type { Example } from "../../lib/help.ts";
 
 export const FILTER_MATCH_CHOICES = ["all", "any"] as const;
 export type FilterMatch = (typeof FILTER_MATCH_CHOICES)[number];
@@ -29,6 +30,22 @@ export type LogFilterOptions = {
   match?: FilterMatch;
   endUserOnly?: boolean;
 };
+
+/**
+ * `--payload-filter` and `--fields` name payload paths, which only mean
+ * something for an event type, so their "requires --type" errors point at
+ * where the types and their paths are listed.
+ */
+const FIND_TYPE_HINT =
+  "Run `clerk logs schema` to list the event types, and `clerk logs schema <event-type>` for the payload paths of one.";
+
+const TYPE_EXAMPLES: Example[] = [
+  { command: "clerk logs schema --json", description: "Every event type with its payload fields" },
+  {
+    command: "clerk logs list --type user.created --payload-filter user_id=user_123",
+    description: "Logs of one type whose payload field matches",
+  },
+];
 
 /** Query parameters, in order, ready to append to every request. */
 export type LogFilters = Array<[name: string, value: string]>;
@@ -131,10 +148,20 @@ export function resolveFilters(options: LogFilterOptions): LogFilters {
   }
 
   if (payloadFilters.length > 0 && !type) {
-    throwUsageError("--payload-filter requires --type.");
+    throwUsageError(
+      `--payload-filter requires --type. ${FIND_TYPE_HINT}`,
+      undefined,
+      undefined,
+      TYPE_EXAMPLES,
+    );
   }
   if (fields && !type) {
-    throwUsageError("--fields requires --type.");
+    throwUsageError(
+      `--fields requires --type. ${FIND_TYPE_HINT}`,
+      undefined,
+      undefined,
+      TYPE_EXAMPLES,
+    );
   }
   if (fields) {
     for (const field of fields) checkPayloadPath(field, "--fields");
