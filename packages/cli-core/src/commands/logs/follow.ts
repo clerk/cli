@@ -37,16 +37,24 @@ import {
   buildListPath,
   DEFAULT_LIMIT,
   fetchLogs,
-  formatPayload,
-  logColumnHeaders,
   MAX_PAGE_SIZE,
   MAX_REQUESTS,
   readLogsPage,
+  type FetchLogsOutcome,
   type ListQuery,
   type LogsListOptions,
   type LogsPageRequest,
 } from "./list.ts";
-import { formatLogLocation, formatLogTime, logsRequest, type Log } from "./shared.ts";
+import { resolveListView } from "./grouped.ts";
+import {
+  formatLogLocation,
+  formatLogTime,
+  formatPayload,
+  logColumnHeaders,
+  logsRequest,
+  type Log,
+  type LogListPage,
+} from "./shared.ts";
 import { resolveTimeRange } from "./time.ts";
 
 export type LogsFollowOptions = LogsListOptions & { follow?: boolean };
@@ -110,8 +118,13 @@ export function resolveFollowOptions(options: LogsFollowOptions): number {
   if (options.cursor !== undefined) {
     throwUsageError("--follow can't be combined with --cursor.");
   }
-  // When `--grouped` lands, reject it here too: grouped output summarizes a
-  // finished window and has no meaning for a stream.
+  // A group summarizes a flow that may still be going, and the grouped view
+  // only pages forward from the newest, so it has no meaning for a stream.
+  if (options.grouped) {
+    throwUsageError("--follow can't be combined with --grouped.");
+  }
+  // Rejects --group-type and --status, which need --grouped.
+  resolveListView(options);
 
   const interval = options.interval ?? DEFAULT_FOLLOW_INTERVAL_MS;
   if (interval < MIN_FOLLOW_INTERVAL_MS) {
@@ -281,14 +294,16 @@ type PollResult = {
   logs: Log[];
   /** Set when the poll stopped at the request cap with older pages left. */
   resume?: PollResume;
+  /** A later page's failure, raised once the logs of the earlier pages are printed. */
+  error?: unknown;
 };
 
 /**
  * Every log at or after `after`, newest first, paging while the API says
  * there may be more. Each poll's window is only as old as the lookback, so this
  * is normally one request. A poll that hits {@link MAX_REQUESTS} hands back
- * where it stopped instead of dropping the rest. A stop mid-poll keeps the
- * pages already fetched, so they still get printed.
+ * where it stopped instead of dropping the rest. A stop or a failure mid-poll
+ * keeps the pages already fetched, so they still get printed.
  */
 async function poll(
   request: LogsPageRequest,
@@ -302,7 +317,7 @@ async function poll(
   let cursor = startingAfter;
 
   for (let requests = 0; requests < MAX_REQUESTS; requests++) {
-    let page: ReturnType<typeof readLogsPage>;
+    let page: LogListPage;
     try {
       const response = await withApiContext(
         request(buildListPath(MAX_PAGE_SIZE, cursor, query)),
@@ -311,6 +326,7 @@ async function poll(
       page = readLogsPage(response);
     } catch (error) {
       if (signal.aborted) return { logs };
+      if (logs.length > 0) return { logs, error };
       throw error;
     }
     logs.push(...page.data);
@@ -450,7 +466,7 @@ export async function follow(
       return response;
     };
 
-    let outcome: Awaited<ReturnType<typeof fetchLogs>>;
+    let outcome: FetchLogsOutcome;
     try {
       outcome = await fetchLogs(
         secretKey,
@@ -505,6 +521,7 @@ export async function follow(
         print(entry);
         printed.mark(entry);
       }
+      if (result.error !== undefined) throw result.error;
       resume = result.resume;
       if (latestApiNow !== undefined) printed.observe(latestApiNow);
       printed.evict(resume?.after);
