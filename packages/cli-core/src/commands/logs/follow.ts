@@ -23,6 +23,7 @@ import { bold, cyan, dim } from "../../lib/color.ts";
 import {
   ApiError,
   CliError,
+  ERROR_CODE,
   errorMessage,
   throwUsageError,
   withApiContext,
@@ -334,7 +335,9 @@ async function poll(
     const next = page.cursor?.starting_after ?? undefined;
     if (page.cursor?.next_page_status === "false" || !next) return { logs };
     if (next === cursor) {
-      throw new CliError("The Logs API returned the same cursor twice, so paging can't continue.");
+      throw new CliError("The Logs API returned the same cursor twice, so paging can't continue.", {
+        code: ERROR_CODE.BAPI_UNEXPECTED_RESPONSE,
+      });
     }
     cursor = next;
   }

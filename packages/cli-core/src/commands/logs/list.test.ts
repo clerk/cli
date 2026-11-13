@@ -1,4 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockBapiRequest = mock();
@@ -28,7 +29,7 @@ mock.module("../../mode.ts", () => ({
   getMode: () => "human",
 }));
 
-const { list, MAX_REQUESTS } = await import("./list.ts");
+const { list, MAX_REQUESTS, readLogsPage } = await import("./list.ts");
 type LogsListOptions = NonNullable<Parameters<typeof list>[0]>;
 
 const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\x1b\[[0-9;]*m`, "g");
@@ -780,5 +781,19 @@ describe("logs list --grouped", () => {
     const output = JSON.parse(captured.out);
     expect(output.data.map((item: { group_id: string }) => item.group_id)).toEqual(["sia_1"]);
     expect(output.cursor.next).toBe("gcur_1");
+  });
+});
+
+describe("readLogsPage", () => {
+  test("gives the unexpected-response error a code, so agent mode prints it as JSON", () => {
+    let error: unknown;
+    try {
+      readLogsPage({ status: 200, headers: new Headers(), body: { nope: 1 }, rawBody: "" });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).code).toBe(ERROR_CODE.BAPI_UNEXPECTED_RESPONSE);
   });
 });

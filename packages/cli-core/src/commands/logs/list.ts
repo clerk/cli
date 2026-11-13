@@ -12,7 +12,7 @@
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import type { ApiResponse } from "../../lib/fetch.ts";
 import { bold, dim } from "../../lib/color.ts";
-import { CliError, throwUsageError, withApiContext } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, withApiContext } from "../../lib/errors.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { closeStatusForError } from "../../lib/signals.ts";
 import { intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
@@ -131,7 +131,9 @@ function isObject(value: unknown): value is Record<string, unknown> {
 export function readLogsPage<T extends LogListItem = Log>(response: ApiResponse): LogListPage<T> {
   const body = response.body;
   if (!isObject(body) || !Array.isArray(body.data) || !body.data.every(isObject)) {
-    throw new CliError("The Logs API returned an unexpected response.");
+    throw new CliError("The Logs API returned an unexpected response.", {
+      code: ERROR_CODE.BAPI_UNEXPECTED_RESPONSE,
+    });
   }
   return body as LogListPage<T>;
 }
@@ -179,7 +181,9 @@ export async function fetchLogs<T extends LogListItem = Log>(
     // A cursor that doesn't move would repeat the same request until the
     // budget runs out and hand back a `next` that goes nowhere.
     if (next === startingAfter) {
-      throw new CliError("The Logs API returned the same cursor twice, so paging can't continue.");
+      throw new CliError("The Logs API returned the same cursor twice, so paging can't continue.", {
+        code: ERROR_CODE.BAPI_UNEXPECTED_RESPONSE,
+      });
     }
     startingAfter = next;
   }
