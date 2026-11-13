@@ -2,7 +2,17 @@ import type { CommandRunner } from "./xcode.ts";
 import { capabilityFixture } from "./capability-test-helpers.ts";
 import { afterEach, expect, test } from "bun:test";
 import { build, parse } from "@bacons/xcode/json";
-import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,7 +20,7 @@ import { IOS_FIXTURE_IDS as ids, treeDigest } from "./test-helpers.ts";
 import { capabilityXML } from "./capabilities.ts";
 import { applySetup, describePreview, prepareSetup } from "./workflow.ts";
 import { doctor } from "./doctor.ts";
-import { useStarterSources } from "./setup-test-helpers.ts";
+import { useStarterSources, useSynchronizedFolder } from "./setup-test-helpers.ts";
 import { integrationHandoff } from "./handoff.ts";
 
 const key = `pk_test_${btoa("fixture.clerk.accounts.dev$")}`;
@@ -542,6 +552,110 @@ test("readable entitlement names do not adopt existing files or another target's
     expect(await treeDigest(f.root)).toEqual(before);
   }
 });
+
+/** A target whose sources are in a synchronized MyApp folder, with no entitlements yet. */
+async function synchronizedFixture(
+  platform: "ios" | "macos" = "ios",
+  edit: (objects: Record<string, any>) => void = () => {},
+) {
+  const f = await fixture(platform, true);
+  await useSynchronizedFolder(f.root);
+  await rm(join(f.root, "MyApp/MyApp.entitlements"));
+  const document = parse(await readFile(f.path, "utf8"));
+  const objects = document.objects as Record<string, any>;
+  for (const id of [ids.targetDebug, ids.targetRelease])
+    delete objects[id].buildSettings.CODE_SIGN_ENTITLEMENTS;
+  edit(objects);
+  await writeFile(f.path, build(document));
+  return f;
+}
+
+test.each([
+  ["ios", "MyApp/MyApp.entitlements", "CODE_SIGN_ENTITLEMENTS[sdk=iphone*]"],
+  ["macos", "MyApp/MyApp-macOS.entitlements", "CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"],
+] as const)(
+  "%s: new entitlements go in the target's synchronized folder, where Xcode puts them",
+  async (platform, path, key) => {
+    const f = await synchronizedFixture(platform);
+    const preview = await prepareSetup(f.options, f.dependencies);
+    expect(preview.capabilities?.actions.map((action) => [action.type, action.path])).toEqual([
+      ["create", path],
+    ]);
+    await applySetup(preview, f.dependencies);
+    expect(await readFile(join(f.root, path), "utf8")).toContain(
+      "webcredentials:fixture.clerk.accounts.dev",
+    );
+    const objects = parse(await readFile(f.path, "utf8")).objects as Record<string, any>;
+    for (const id of [ids.targetDebug, ids.targetRelease])
+      expect(objects[id].buildSettings[key]).toBe(path);
+    expect((await prepareSetup(f.options, f.dependencies)).capabilities?.status).toBe("satisfied");
+  },
+);
+
+const EXTRA_FOLDERS = ["515151515151515151515151", "525252525252525252525252"];
+test.each([
+  { folders: ["Shared", "MyApp"], expected: "MyApp/MyApp.entitlements" },
+  { folders: ["Shared", "Extras"], expected: "Shared/MyApp.entitlements" },
+])(
+  "with synchronized folders $folders, new entitlements go in $expected",
+  async ({ folders, expected }) => {
+    const f = await synchronizedFixture("ios", (objects) => {
+      const groups = folders.map((path, index) => {
+        if (path === "MyApp") return ids.appGroup;
+        objects[EXTRA_FOLDERS[index]!] = {
+          isa: "PBXFileSystemSynchronizedRootGroup",
+          path,
+          sourceTree: "<group>",
+        };
+        objects[ids.mainGroup].children.push(EXTRA_FOLDERS[index]);
+        return EXTRA_FOLDERS[index];
+      });
+      objects[ids.appTarget].fileSystemSynchronizedGroups = groups;
+    });
+    for (const folder of folders) await mkdir(join(f.root, folder), { recursive: true });
+    const preview = await prepareSetup(f.options, f.dependencies);
+    expect(preview.capabilities?.actions.map((action) => action.path)).toEqual([expected]);
+  },
+);
+
+test.each([
+  { name: "missing on disk", path: "Missing", sourceTree: "<group>" },
+  { name: "outside the project root", path: "../Elsewhere", sourceTree: "<group>" },
+  { name: "at an absolute path", path: "/tmp/MyApp", sourceTree: "<absolute>" },
+  { name: "named with a build variable", path: "$(TARGET_NAME)", sourceTree: "<group>" },
+  { name: "a symbolic link", path: "MyApp", sourceTree: "<group>", link: true },
+])("a synchronized folder $name leaves new entitlements at SRCROOT", async (folder) => {
+  const f = await synchronizedFixture("ios", (objects) => {
+    Object.assign(objects[ids.appGroup], { path: folder.path, sourceTree: folder.sourceTree });
+  });
+  if (folder.link) {
+    await rename(join(f.root, "MyApp"), join(f.root, "Real"));
+    await symlink(join(f.root, "Real"), join(f.root, "MyApp"));
+  }
+  const preview = await prepareSetup(f.options, f.dependencies);
+  expect(preview.capabilities?.actions.map((action) => action.path)).toEqual([
+    "MyApp.entitlements",
+  ]);
+});
+
+test.each([
+  { name: "a file already there", existingFile: true },
+  { name: "another target's setting naming it", existingFile: false },
+])(
+  "a new entitlement file in the synchronized folder stops for $name",
+  async ({ existingFile }) => {
+    const f = await synchronizedFixture("ios", (objects) => {
+      if (!existingFile)
+        objects[ids.secondDebug].buildSettings.CODE_SIGN_ENTITLEMENTS = "MyApp/MyApp.entitlements";
+    });
+    if (existingFile) await writeFile(join(f.root, "MyApp/MyApp.entitlements"), "existing file");
+    const before = await treeDigest(f.root);
+    const preview = await prepareSetup(f.options, f.dependencies);
+    expect(preview.capabilities?.status).toBe("manual");
+    expect(preview.capabilities?.actions).toEqual([]);
+    expect(await treeDigest(f.root)).toEqual(before);
+  },
+);
 
 test("existing separate configuration entitlements remain separate", async () => {
   const f = await fixture();

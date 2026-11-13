@@ -1,4 +1,5 @@
 import { build, parse } from "@bacons/xcode/json";
+import { posix } from "node:path";
 import { applyXCProjValue, parseXCProjSource, xcprojTargets } from "./xcproj.ts";
 import type { Selection, SetupInput } from "./plan.ts";
 
@@ -18,6 +19,47 @@ export function configurationNames(
   return objects[objects[targetId].buildConfigurationList].buildConfigurations.map(
     (id: string) => objects[id].name,
   );
+}
+
+/**
+ * The folders, relative to SRCROOT, whose files Xcode adds to the target on its own: a `.pbxproj`
+ * target's synchronized root groups and a `.xcproj` target's member folders, in project order.
+ * A folder placed outside the project's ordinary relative paths is left out.
+ */
+function pbxprojSynchronizedFolders(objects: Record<string, any>, targetId: string): string[] {
+  const parents = new Map<string, string>();
+  for (const [id, object] of Object.entries(objects))
+    for (const child of Array.isArray(object?.children) ? object.children : [])
+      parents.set(child, id);
+  const location = (id: string, depth = 0): string | undefined => {
+    const object = objects[id];
+    if (!object || depth > 64) return undefined;
+    const path = typeof object.path === "string" ? object.path : "";
+    if (object.sourceTree === "SOURCE_ROOT") return path;
+    if (object.sourceTree !== "<group>") return undefined;
+    const parent = parents.get(id);
+    if (!parent) return path;
+    const base = location(parent, depth + 1);
+    return base === undefined ? undefined : posix.join(base, path);
+  };
+  return ((objects[targetId]?.fileSystemSynchronizedGroups ?? []) as string[])
+    .filter((id) => objects[id]?.isa === "PBXFileSystemSynchronizedRootGroup")
+    .map((id) => location(id))
+    .filter((path): path is string => path !== undefined);
+}
+
+function xcprojMemberFolders(entries: unknown, targetName: string, base = ""): string[] {
+  if (!Array.isArray(entries)) return [];
+  return (entries as Record<string, unknown>[]).flatMap((entry) => {
+    const path = typeof entry.path === "string" ? entry.path : "";
+    if (posix.isAbsolute(path)) return [];
+    const location = posix.join(base, path);
+    if (entry.kind === "group") return xcprojMemberFolders(entry.children, targetName, location);
+    const members = entry["target-membership"];
+    return entry.kind === "folder" && Array.isArray(members) && members.includes(targetName)
+      ? [location]
+      : [];
+  });
 }
 
 export function capabilitySettings(
@@ -48,6 +90,7 @@ export function capabilitySettings(
     return {
       settings,
       otherSettings: others.map((other) => other.buildSettings),
+      synchronizedFolders: xcprojMemberFolders(root.files, target.name),
       set(key: string, value: string) {
         const bracket = key.indexOf("[");
         const name =
@@ -81,6 +124,7 @@ export function capabilitySettings(
     otherSettings: others.flatMap(([, target]) =>
       configs(target).map((config) => config.buildSettings ?? {}),
     ) as Record<string, unknown>[],
+    synchronizedFolders: pbxprojSynchronizedFolders(objects, selection.targetId),
     set(key: string, value: string) {
       settings[key] = value;
     },

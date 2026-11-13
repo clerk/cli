@@ -7,13 +7,80 @@ import {
   IOS_FIXTURE_IDS as ids,
 } from "../../packages/cli-core/src/commands/init/ios/test-helpers.ts";
 import { planAllCapabilities } from "../../packages/cli-core/src/commands/init/ios/capabilities.ts";
-import { convertFixtureToXCProj } from "../../packages/cli-core/src/commands/init/ios/setup-test-helpers.ts";
+import {
+  convertFixtureToXCProj,
+  useSynchronizedFolder,
+} from "../../packages/cli-core/src/commands/init/ios/setup-test-helpers.ts";
 import { applyXCProjValue } from "../../packages/cli-core/src/commands/init/ios/xcproj.ts";
 import { createFile, replaceProject } from "../../packages/cli-core/src/commands/init/ios/files.ts";
 import { inspectSelectedProject } from "../../packages/cli-core/src/commands/init/ios/xcode.ts";
+import { compatibleXcode } from "../../packages/cli-core/src/commands/init/ios/xcode-tools.ts";
 
-// Real Xcode before AND after capability edits, with no SDK dependencies attached.
-for (const format of ["pbxproj", "xcproj"] as const)
+async function run(command: string[], env?: Record<string, string>): Promise<string> {
+  const child = Bun.spawn(command, {
+    stdout: "pipe",
+    stderr: "pipe",
+    timeout: 600_000,
+    env: { ...process.env, ...env },
+  });
+  const [output, stderr, code] = await Promise.all([
+    new Response(child.stdout).text(),
+    new Response(child.stderr).text(),
+    child.exited,
+  ]);
+  if (code !== 0) throw new Error(`${command[0]} failed:\n${output.slice(-2000)}${stderr}`);
+  return output;
+}
+
+// The simulator build signs locally (ad hoc) and carries the entitlements in the executable's
+// __entitlements section. A Mac app with restricted entitlements needs a provisioning profile to
+// sign, so it's built unsigned, which checks only what Xcode bundles.
+async function buildApp(
+  root: string,
+  format: "pbxproj" | "xcproj",
+  platform: "ios" | "macos",
+): Promise<{ entitlements?: string; bundledEntitlementFiles: string[] }> {
+  const developerDir = await compatibleXcode(format === "xcproj" ? 27 : 1);
+  const products = join(root, "build");
+  await run(
+    [
+      "xcodebuild",
+      "-project",
+      join(root, "MyApp.xcodeproj"),
+      "-target",
+      "MyApp",
+      "-configuration",
+      "Debug",
+      "-sdk",
+      platform === "ios" ? "iphonesimulator" : "macosx",
+      "ARCHS=arm64",
+      `SYMROOT=${products}`,
+      "PRODUCT_NAME=MyApp",
+      "SWIFT_VERSION=6.0",
+      ...(platform === "ios"
+        ? ["CODE_SIGN_IDENTITY=-", "CODE_SIGN_STYLE=Manual", "DEVELOPMENT_TEAM="]
+        : ["CODE_SIGNING_ALLOWED=NO"]),
+      "build",
+    ],
+    developerDir ? { DEVELOPER_DIR: developerDir } : undefined,
+  );
+  const app = join(products, platform === "ios" ? "Debug-iphonesimulator" : "Debug", "MyApp.app");
+  const bundledEntitlementFiles = await Array.fromAsync(
+    new Bun.Glob("**/*.entitlements").scan({ cwd: app, dot: true }),
+  );
+  if (platform === "macos") return { bundledEntitlementFiles };
+  const section = join(root, "entitlements-section.plist");
+  await run(["segedit", join(app, "MyApp"), "-extract", "__TEXT", "__entitlements", section]);
+  return { entitlements: await readFile(section, "utf8"), bundledEntitlementFiles };
+}
+
+// Real Xcode before AND after capability edits, with no SDK dependencies attached. A JSON
+// project's member folder is its synchronized folder.
+for (const { format, synchronized } of [
+  { format: "pbxproj", synchronized: false },
+  { format: "pbxproj", synchronized: true },
+  { format: "xcproj", synchronized: true },
+] as const)
   for (const platform of ["ios", "macos"] as const)
     for (const createEntitlements of [false, true]) {
       const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-capability-xcode-")));
@@ -25,8 +92,11 @@ for (const format of ["pbxproj", "xcproj"] as const)
           macOSAppleEntitlement: false,
         });
         if (format === "xcproj") await convertFixtureToXCProj(root, platform);
+        else if (synchronized) await useSynchronizedFolder(root);
         const document = join(root, `MyApp.xcodeproj/project.${format}`);
+        const expected = `${synchronized ? "MyApp/" : ""}MyApp${platform === "macos" ? "-macOS" : ""}.entitlements`;
         if (createEntitlements) {
+          if (synchronized) await rm(join(root, "MyApp/MyApp.entitlements"));
           let source = await readFile(document, "utf8");
           if (format === "pbxproj") {
             const graph = parse(source);
@@ -55,6 +125,8 @@ for (const format of ["pbxproj", "xcproj"] as const)
           throw new Error(`Capability plan unavailable: ${plan.reason}`);
         if (plan.actions.length !== 1)
           throw new Error("Matching configurations should share one entitlement file.");
+        if (createEntitlements && plan.actions[0]!.path !== expected)
+          throw new Error(`New entitlements went to ${plan.actions[0]!.path}, not ${expected}.`);
         for (const action of plan.actions) {
           if (action.type === "create") await createFile(root, action.path, action.content);
           else if (action.type === "modify")
@@ -98,6 +170,14 @@ for (const format of ["pbxproj", "xcproj"] as const)
         );
         if (next.status !== "satisfied" || next.actions.length)
           throw new Error("Capability setup was not idempotent.");
+        const app = await buildApp(root, format, platform);
+        if (
+          app.entitlements !== undefined &&
+          !app.entitlements.includes("webcredentials:fixture.clerk.accounts.dev")
+        )
+          throw new Error("The built app wasn't signed with the edited entitlements.");
+        if (app.bundledEntitlementFiles.length)
+          throw new Error(`Xcode copied ${app.bundledEntitlementFiles} into the app bundle.`);
         const child = Bun.spawn(
           [
             process.execPath,
@@ -119,13 +199,20 @@ for (const format of ["pbxproj", "xcproj"] as const)
           JSON.stringify({
             platform,
             format,
-            entitlements: createEntitlements ? "created and attached" : "updated existing",
+            sources: synchronized ? "synchronized folder" : "groups",
+            entitlements: createEntitlements
+              ? `created and attached at ${expected}`
+              : "updated existing",
             xcodeBeforeAndAfter: "passed",
+            build:
+              platform === "ios"
+                ? "ad hoc signed simulator build carries the edited entitlements; none bundled"
+                : "unsigned build; no .entitlements file in the bundle",
             plistValidation: "passed",
             rerun: "no changes",
             publicDryRun: "structured JSON",
             scope:
-              "Debug and Release configurations; no signing, app build, SDK package resolution, live API, or source integration",
+              "Debug and Release configurations; no provisioning, SDK package resolution, live API, or source integration",
           }),
         );
       } finally {

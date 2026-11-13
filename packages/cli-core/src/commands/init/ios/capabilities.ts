@@ -1,11 +1,11 @@
 import { DOMParser, XMLSerializer } from "@xmldom/xmldom";
 import { capabilitySettings } from "./project.ts";
-import { dirname, isAbsolute, relative, resolve } from "node:path";
+import { basename, dirname, isAbsolute, posix, relative, resolve } from "node:path";
 import { lstat, realpath } from "node:fs/promises";
 import type { FileAction } from "../frameworks/types.ts";
-import { snapshotFile, type FileSnapshot } from "./files.ts";
+import { containedPath, snapshotFile, type FileSnapshot } from "./files.ts";
 import type { Inspection } from "./xcode.ts";
-import { otherTargetSettings } from "./plan.ts";
+import { otherTargetSettings, type Selection } from "./plan.ts";
 
 const DOMAIN = "com.apple.developer.associated-domains";
 const APPLE = "com.apple.developer.applesignin";
@@ -172,6 +172,29 @@ export function personalTeamConflictNote(file: string, conflicts: string[]): str
   return `${file} still has ${conflicts.join(" and ")}, which a Personal Team can't sign, so the app won't sign. Remove ${conflicts.length > 1 ? "them" : "it"} in Xcode's Signing & Capabilities, or choose a paid Apple Developer Program team.`;
 }
 
+/**
+ * Xcode creates a new entitlements file inside the target's synchronized folder, the one named
+ * like the target when there are several; a file anywhere else isn't in its navigator. Without
+ * such a folder inside the project root, the file goes at SRCROOT.
+ */
+async function entitlementsFolder(
+  folders: string[],
+  selection: Selection,
+  sourceRoot: string,
+): Promise<string> {
+  const usable: string[] = [];
+  for (const folder of folders) {
+    if (!folder || !folder.split("/").every((part) => /^[\w .-]+$/.test(part) && part !== ".."))
+      continue;
+    const location = await containedPath(
+      selection.root,
+      relative(selection.root, resolve(sourceRoot, folder)),
+    ).catch(() => undefined);
+    if (location && (await lstat(location)).isDirectory()) usable.push(folder);
+  }
+  return usable.find((folder) => basename(folder) === selection.targetName) ?? usable[0] ?? "";
+}
+
 interface CapabilityPlan {
   status: "planned" | "satisfied" | "manual";
   scope: string;
@@ -271,7 +294,8 @@ async function planCapabilities(
         if (Object.keys(settings).some((key) => key.startsWith("CODE_SIGN_ENTITLEMENTS[")))
           return manual("Conditional entitlement routes require setup in Xcode.");
         const name = selection.targetName.replace(/[^a-zA-Z0-9_-]/g, "_") || selection.targetId;
-        const filename = `${name}${mac ? "-macOS" : ""}.entitlements`;
+        const folder = await entitlementsFolder(adapter.synchronizedFolders, selection, sourceRoot);
+        const filename = posix.join(folder, `${name}${mac ? "-macOS" : ""}.entitlements`);
         path = relative(selection.root, resolve(sourceRoot, filename));
         if (
           adapter.otherSettings.some((other) =>

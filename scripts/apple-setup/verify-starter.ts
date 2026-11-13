@@ -76,6 +76,13 @@ for (const platform of ["ios", "macos"] as const) {
       throw new Error(result.message ?? "Setup failed");
     if (result.capabilities.status !== "configured")
       throw new Error(`Capabilities were not configured: ${preview.capabilities?.reason}`);
+    const entitlements = `MyApp/MyApp${platform === "macos" ? "-macOS" : ""}.entitlements`;
+    if (
+      !preview.capabilities?.actions.some(
+        (action) => action.type === "create" && action.path === entitlements,
+      )
+    )
+      throw new Error(`Setup didn't create ${entitlements} in the synchronized folder`);
     if (registrations.length !== 1 || registrations[0]!.app_id_prefix !== teamId)
       throw new Error("The starter wasn't registered with its team as the App ID Prefix");
     const buildLog = `/tmp/clerk-starter-build-${platform}.log`;
@@ -103,12 +110,25 @@ for (const platform of ["ios", "macos"] as const) {
     );
     if ((await child.exited) !== 0)
       throw new Error(`App build failed: ${buildLog} and ${buildLog}.stderr`);
+    const bundled = await Array.fromAsync(
+      new Bun.Glob("**/*.entitlements").scan({
+        cwd: join(
+          root,
+          "DerivedData/Build/Products",
+          platform === "ios" ? "Debug-iphonesimulator" : "Debug",
+          "MyApp.app",
+        ),
+        dot: true,
+      }),
+    );
+    if (bundled.length) throw new Error(`Xcode copied ${bundled} into the app bundle`);
     console.log(
       JSON.stringify({
         platform,
         starter: "generated project recognized as an unchanged starter",
         identity: "Bundle ID from Xcode, App ID Prefix from the starter's team",
         setup: "SDK, capabilities, registration, initialization, and AuthView UI applied",
+        entitlements: `created in the synchronized folder (${entitlements}), not bundled`,
         build: "actual Debug app build passed",
         scope: "Unsigned build; no live API or actual sign-in",
       }),
