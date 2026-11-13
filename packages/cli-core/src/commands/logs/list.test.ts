@@ -718,13 +718,13 @@ describe("logs list --grouped", () => {
     {
       label: "the matching count when event filters were applied",
       overrides: { has_more_events: true, event_count: 80, matched_event_count: 53 },
-      note: "  51 more matching events not shown",
+      note: "  51 more matching events not shown; read them with `clerk logs get sia_1`",
       events: "53 of 80",
     },
     {
       label: "no count without event filters",
       overrides: { has_more_events: true, event_count: 80 },
-      note: "  more events not shown",
+      note: "  more events not shown; read them with `clerk logs get sia_1`",
       events: "80",
     },
   ])("notes the events a group left out, with $label", async ({ overrides, note, events }) => {
