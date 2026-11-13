@@ -354,3 +354,118 @@ test("production checks name the platform of each Release build", async () => {
   ]);
   expect(domains[1]!.message).toContain("Release (macOS) entitlements don't include");
 });
+
+const SHARED_WITH_DOMAIN = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>com.apple.security.app-sandbox</key>
+\t<true/>
+\t<key>com.apple.developer.associated-domains</key>
+\t<array>
+\t\t<string>${DOMAIN}</string>
+\t\t<string>applinks:example.com</string>
+\t</array>
+\t<key>com.apple.developer.applesignin</key>
+\t<array>
+\t\t<string>Default</string>
+\t</array>
+\t<key>com.apple.security.files.user-selected.read-only</key>
+\t<true/>
+</dict>
+</plist>
+`;
+
+test("a Personal Team's shared file that already has Associated Domains is split too", async () => {
+  const f = await fixture({ personal: true });
+  const sharedPath = join(f.root, "MyApp/MyApp.entitlements");
+  await writeFile(sharedPath, SHARED_WITH_DOMAIN);
+
+  // Doctor writes nothing, so before setup it warns and says setup can split the file.
+  const before = await doctorChecks(f);
+  const macWarnings = before.filter(
+    (check) =>
+      check.name.startsWith("Personal Team entitlements:") && check.name.endsWith("(macOS)"),
+  );
+  expect(macWarnings.map((check) => check.name)).toEqual([
+    "Personal Team entitlements: Debug (macOS)",
+    "Personal Team entitlements: Release (macOS)",
+  ]);
+  expect(macWarnings[0]!.message).toContain(
+    "MyApp/MyApp.entitlements gives the Mac build Associated Domains, which a Personal Team can't sign for a Mac app. Run clerk init to give macOS its own copy without them",
+  );
+  // Sign in with Apple blocks both platforms, so it's still reported, not removed.
+  expect(macWarnings[0]!.message).toContain("still has Sign in with Apple");
+
+  const result = await init(f);
+  // iOS keeps the shared file untouched.
+  expect(await readFile(sharedPath, "utf8")).toBe(SHARED_WITH_DOMAIN);
+  const mac = await readFile(join(f.root, "MyApp/MyApp-macOS.entitlements"), "utf8");
+  expect(mac).not.toContain("com.apple.developer.associated-domains");
+  expect(mac).not.toContain("applinks:");
+  for (const key of [
+    "com.apple.security.app-sandbox",
+    "com.apple.developer.applesignin",
+    "com.apple.security.files.user-selected.read-only",
+    "com.apple.security.network.client",
+  ])
+    expect(mac).toContain(key);
+  expect(mac).toContain(
+    "\t<key>com.apple.security.app-sandbox</key>\n\t<true/>\n\t<key>com.apple.developer.applesignin</key>",
+  );
+  const source = await readFile(f.path, "utf8");
+  for (const id of [ids.targetDebug, ids.targetRelease])
+    expect(targetSettings(source, id)["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"]).toBe(
+      "MyApp/MyApp-macOS.entitlements",
+    );
+  const remaining: { id: string; detail: string }[] = result.handoff.remaining;
+  expect(remaining.some((item) => item.detail.includes("Associated Domains (on macOS)"))).toBe(
+    false,
+  );
+  expect(remaining.find((item) => item.id === "associated-domains")?.detail).toContain(
+    "left out of the macOS app",
+  );
+  expect(
+    remaining.filter((item) => item.id === "personal-team-entitlements").map((item) => item.detail),
+  ).toEqual([expect.stringContaining("MyApp/MyApp.entitlements still has Sign in with Apple,")]);
+
+  const project = await readFile(f.path, "utf8");
+  const rerun = await init(f);
+  expect(rerun.changedFiles).toEqual([]);
+  expect(await readFile(f.path, "utf8")).toBe(project);
+  expect(await readFile(sharedPath, "utf8")).toBe(SHARED_WITH_DOMAIN);
+
+  const after = await doctorChecks(f);
+  const warnings = after.filter((check) => check.name.startsWith("Personal Team entitlements:"));
+  expect(warnings.some((check) => check.message.includes("Associated Domains"))).toBe(false);
+  expect(warnings.every((check) => check.message.includes("Sign in with Apple"))).toBe(true);
+});
+
+test("a single-platform Mac app's Associated Domains are still reported, not changed", async () => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-multiplatform-")));
+  roots.push(root);
+  const f = await capabilityFixture(root, "macos");
+  await writeFile(join(root, "MyApp/MyApp.entitlements"), SHARED_WITH_DOMAIN);
+  const run = f.dependencies.run;
+  const dependencies = {
+    ...f.dependencies,
+    xcodeTeams: [{ id: "TEAMID1234", name: "Sean Perez", personal: true }],
+    run: (async (command, cwd, signal) => {
+      const rows = JSON.parse(await run(command, cwd, signal));
+      for (const row of rows) row.buildSettings.DEVELOPMENT_TEAM = "TEAMID1234";
+      return JSON.stringify(rows);
+    }) satisfies CommandRunner,
+  };
+  const result = await init({ ...f, dependencies } as Awaited<ReturnType<typeof fixture>>);
+  expect(await Bun.file(join(root, "MyApp/MyApp-macOS.entitlements")).exists()).toBe(false);
+  expect(await readFile(join(root, "MyApp/MyApp.entitlements"), "utf8")).toContain(
+    "com.apple.developer.associated-domains",
+  );
+  expect(
+    result.handoff.remaining.find(
+      (item: { id: string }) => item.id === "personal-team-entitlements",
+    )?.detail,
+  ).toContain(
+    "still has Sign in with Apple and Associated Domains, which a Personal Team can't sign",
+  );
+});

@@ -4,7 +4,8 @@
  *
  * Without options it covers, in disposable fixtures: a shared entitlements file and none,
  * each for a paid team and a Personal Team, checked with Xcode before and after the
- * capability edits; then full setup with package resolution and an unsigned Debug build
+ * capability edits, plus a Personal Team's shared file that already has Associated Domains;
+ * then full setup with package resolution and an unsigned Debug build
  * for iOS Simulator and macOS. With `--project`, it runs full setup and both builds on a
  * copy of that project instead; the original is never modified.
  *
@@ -12,6 +13,7 @@
  *   bun scripts/apple-setup/verify-multiplatform.ts
  *   bun scripts/apple-setup/verify-multiplatform.ts --project ~/Developer/MyApp
  *   bun scripts/apple-setup/verify-multiplatform.ts --project ~/Developer/MyApp --personal-team --shared-entitlements
+ *   bun scripts/apple-setup/verify-multiplatform.ts --project ~/Developer/MyApp --personal-team --shared-entitlements --existing-domain
  */
 import { build, parse } from "@bacons/xcode/json";
 import { cp, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
@@ -45,12 +47,19 @@ const { values } = parseArgs({
     project: { type: "string" },
     "personal-team": { type: "boolean", default: false },
     "shared-entitlements": { type: "boolean", default: false },
+    "existing-domain": { type: "boolean", default: false },
   },
   strict: true,
 });
-if ((values["personal-team"] || values["shared-entitlements"]) && !values.project) {
-  throw new Error("--personal-team and --shared-entitlements apply to --project.");
-}
+if (
+  (values["personal-team"] || values["shared-entitlements"] || values["existing-domain"]) &&
+  !values.project
+)
+  throw new Error(
+    "--personal-team, --shared-entitlements, and --existing-domain apply to --project.",
+  );
+if (values["existing-domain"] && !values["shared-entitlements"])
+  throw new Error("--existing-domain needs --shared-entitlements.");
 
 const HOST = "fixture.clerk.accounts.dev";
 const DOMAIN = `webcredentials:${HOST}`;
@@ -65,6 +74,12 @@ const SANDBOX_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>
 `;
+
+// The shared file of an app that already uses Associated Domains, such as one set up earlier on a paid team.
+const SANDBOX_ENTITLEMENTS_WITH_DOMAINS = SANDBOX_ENTITLEMENTS.replace(
+  "\t<key>com.apple.security.files.user-selected.read-only</key>",
+  `\t<key>com.apple.developer.associated-domains</key>\n\t<array>\n\t\t<string>${DOMAIN}</string>\n\t\t<string>applinks:example.com</string>\n\t</array>\n\t<key>com.apple.security.files.user-selected.read-only</key>`,
+);
 
 function fakeClerk() {
   const applications: IOSApplication[] = [];
@@ -156,6 +171,8 @@ async function checkResolved(inspection: Inspection, personal: boolean) {
       throw new Error(
         `${selection.configuration}/${selection.sdk}: Associated Domain ${personal && mac ? "present" : "missing"} in ${path}.`,
       );
+    if (personal && mac && source.includes("com.apple.developer.associated-domains"))
+      throw new Error(`${selection.configuration}/macOS still signs Associated Domains.`);
     files[mac ? "macOS" : "iOS"] = path;
   }
   return files;
@@ -198,7 +215,12 @@ async function buildPlatforms(projectRoot: string, project: string, scheme: stri
 }
 
 /** Points every configuration of the app target at one sandboxed file, as Xcode's pre-27 template did. */
-async function shareEntitlements(projectRoot: string, project: string, target: string) {
+async function shareEntitlements(
+  projectRoot: string,
+  project: string,
+  target: string,
+  existingDomain: boolean,
+) {
   const path = join(projectRoot, project, "project.pbxproj");
   const graph = parse(await readFile(path, "utf8"));
   const objects = graph.objects as Record<string, any>;
@@ -208,7 +230,10 @@ async function shareEntitlements(projectRoot: string, project: string, target: s
   for (const id of objects[targetObject.buildConfigurationList].buildConfigurations)
     objects[id].buildSettings.CODE_SIGN_ENTITLEMENTS = `${target}/${target}.entitlements`;
   await writeFile(path, build(graph));
-  await writeFile(join(projectRoot, target, `${target}.entitlements`), SANDBOX_ENTITLEMENTS);
+  await writeFile(
+    join(projectRoot, target, `${target}.entitlements`),
+    existingDomain ? SANDBOX_ENTITLEMENTS_WITH_DOMAINS : SANDBOX_ENTITLEMENTS,
+  );
 }
 
 /** Full setup with package resolution, then Xcode's view of the result and both builds. */
@@ -288,7 +313,7 @@ async function verifyProject(path: string) {
         minimumVersion: "1.5.8",
       });
       const { project, targetName } = inspection.input.selection;
-      await shareEntitlements(projectRoot, project, targetName);
+      await shareEntitlements(projectRoot, project, targetName, values["existing-domain"]!);
     }
     console.log(
       JSON.stringify({
@@ -296,6 +321,7 @@ async function verifyProject(path: string) {
         copy: projectRoot,
         personalTeam: values["personal-team"],
         sharedEntitlements: values["shared-entitlements"],
+        existingDomain: values["existing-domain"],
         ...(await fullSetup(projectRoot, values["personal-team"]!, root)),
         scope: "Unsigned builds; fake Clerk API; no provisioning or actual sign-in",
       }),
@@ -307,96 +333,112 @@ async function verifyProject(path: string) {
 
 async function verifyFixtures() {
   // Capability edits only (no SDK, so Xcode reports settings without package resolution).
-  for (const shared of [true, false])
-    for (const personal of [false, true]) {
-      const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-multiplatform-xcode-")));
-      try {
-        await createIOSFixture(root, {
-          platform: "multiplatform",
-          clerkSDK: false,
-          includeKey: false,
-        });
-        if (!shared) {
-          const path = join(root, "MyApp.xcodeproj/project.pbxproj");
-          const graph = parse(await readFile(path, "utf8"));
-          for (const id of [ids.targetDebug, ids.targetRelease])
-            delete (graph.objects![id] as any).buildSettings.CODE_SIGN_ENTITLEMENTS;
-          await writeFile(path, build(graph));
-        }
-        const options = { root, products: "ui" as const, minimumVersion: "1.0.0" };
-        const inspection = await inspectSelectedProject(options);
-        if (inspection.unsupportedPlatforms.join() !== "visionOS")
-          throw new Error("visionOS was not reported as left alone.");
-        const domainFor = (selection: { sdk: string }) => !(personal && selection.sdk === "macosx");
-        const plan = await planAllCapabilities(
-          inspection,
-          inspection.document.source,
-          HOST,
-          !personal,
-          domainFor,
-        );
-        if (plan.status !== "planned")
-          throw new Error(`Capability plan unavailable: ${plan.reason}`);
-        for (const action of plan.actions) {
-          if (action.type === "create") await createFile(root, action.path, action.content);
-          else if (action.type === "modify")
-            await replaceProject(
-              root,
-              plan.snapshots.find((snapshot) => snapshot.path === action.path)!,
-              action.content,
-            );
-        }
-        await replaceProject(root, inspection.document, plan.projectSource);
-        const after = await inspectSelectedProject(options);
-        const files = await checkResolved(after, personal);
-        const expected = {
-          iOS: shared ? "MyApp/MyApp.entitlements" : "MyApp.entitlements",
-          macOS: !personal
-            ? shared
-              ? "MyApp/MyApp.entitlements"
-              : "MyApp.entitlements"
-            : shared
-              ? "MyApp/MyApp-macOS.entitlements"
-              : "none",
-        };
-        if (JSON.stringify(files) !== JSON.stringify(expected))
-          throw new Error(`Unexpected entitlement layout: ${JSON.stringify(files)}`);
-        if (
-          shared &&
-          personal &&
-          !(await readFile(join(root, files.macOS!), "utf8")).includes(
-            "com.apple.security.files.user-selected.read-only",
-          )
-        )
-          throw new Error("The Mac copy lost an entitlement the shared file had.");
-        const next = await planAllCapabilities(
-          after,
-          after.document.source,
-          HOST,
-          !personal,
-          domainFor,
-        );
-        if (next.status !== "satisfied" || next.actions.length)
-          throw new Error("Capability setup was not idempotent.");
-        console.log(
-          JSON.stringify({
-            entitlements: shared ? "shared file" : "none",
-            team: personal ? "personal" : "paid",
-            resolvedByXcode: files,
-            xcodeBeforeAndAfter: "passed",
-            plistValidation: "passed",
-            rerun: "no changes",
-          }),
-        );
-      } finally {
-        await rm(root, { recursive: true, force: true });
+  for (const [shared, personal, existingDomain] of [
+    [true, false, false],
+    [true, true, false],
+    [false, false, false],
+    [false, true, false],
+    [true, true, true],
+  ] as const) {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-multiplatform-xcode-")));
+    try {
+      await createIOSFixture(root, {
+        platform: "multiplatform",
+        clerkSDK: false,
+        includeKey: false,
+      });
+      const sharedPath = join(root, "MyApp/MyApp.entitlements");
+      if (existingDomain) await writeFile(sharedPath, SANDBOX_ENTITLEMENTS_WITH_DOMAINS);
+      if (!shared) {
+        const path = join(root, "MyApp.xcodeproj/project.pbxproj");
+        const graph = parse(await readFile(path, "utf8"));
+        for (const id of [ids.targetDebug, ids.targetRelease])
+          delete (graph.objects![id] as any).buildSettings.CODE_SIGN_ENTITLEMENTS;
+        await writeFile(path, build(graph));
       }
+      const options = { root, products: "ui" as const, minimumVersion: "1.0.0" };
+      const inspection = await inspectSelectedProject(options);
+      if (inspection.unsupportedPlatforms.join() !== "visionOS")
+        throw new Error("visionOS was not reported as left alone.");
+      const domainFor = (selection: { sdk: string }) => !(personal && selection.sdk === "macosx");
+      const plan = await planAllCapabilities(
+        inspection,
+        inspection.document.source,
+        HOST,
+        !personal,
+        domainFor,
+      );
+      if (plan.status !== "planned") throw new Error(`Capability plan unavailable: ${plan.reason}`);
+      for (const action of plan.actions) {
+        if (action.type === "create") await createFile(root, action.path, action.content);
+        else if (action.type === "modify")
+          await replaceProject(
+            root,
+            plan.snapshots.find((snapshot) => snapshot.path === action.path)!,
+            action.content,
+          );
+      }
+      await replaceProject(root, inspection.document, plan.projectSource);
+      const after = await inspectSelectedProject(options);
+      const files = await checkResolved(after, personal);
+      const expected = {
+        iOS: shared ? "MyApp/MyApp.entitlements" : "MyApp.entitlements",
+        macOS: !personal
+          ? shared
+            ? "MyApp/MyApp.entitlements"
+            : "MyApp.entitlements"
+          : shared
+            ? "MyApp/MyApp-macOS.entitlements"
+            : "none",
+      };
+      if (JSON.stringify(files) !== JSON.stringify(expected))
+        throw new Error(`Unexpected entitlement layout: ${JSON.stringify(files)}`);
+      if (
+        shared &&
+        personal &&
+        !(await readFile(join(root, files.macOS!), "utf8")).includes(
+          "com.apple.security.files.user-selected.read-only",
+        )
+      )
+        throw new Error("The Mac copy lost an entitlement the shared file had.");
+      if (
+        existingDomain &&
+        (await readFile(sharedPath, "utf8")) !== SANDBOX_ENTITLEMENTS_WITH_DOMAINS
+      )
+        throw new Error("The shared file iOS keeps changed.");
+      const next = await planAllCapabilities(
+        after,
+        after.document.source,
+        HOST,
+        !personal,
+        domainFor,
+      );
+      if (next.status !== "satisfied" || next.actions.length)
+        throw new Error("Capability setup was not idempotent.");
+      console.log(
+        JSON.stringify({
+          entitlements: existingDomain
+            ? "shared file that already has Associated Domains"
+            : shared
+              ? "shared file"
+              : "none",
+          team: personal ? "personal" : "paid",
+          resolvedByXcode: files,
+          xcodeBeforeAndAfter: "passed",
+          plistValidation: "passed",
+          rerun: "no changes",
+        }),
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
     }
+  }
 
-  // Full setup and both builds on the fixture: the split, and the template without a file.
-  for (const [shared, personal] of [
-    [true, true],
-    [false, false],
+  // Full setup and both builds on the fixture: both splits, and the template without a file.
+  for (const [shared, personal, existingDomain] of [
+    [true, true, false],
+    [true, true, true],
+    [false, false, false],
   ] as const) {
     const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-multiplatform-build-")));
     try {
@@ -407,6 +449,11 @@ async function verifyFixtures() {
         includeKey: false,
       });
       await useStarterSources(projectRoot);
+      if (existingDomain)
+        await writeFile(
+          join(projectRoot, "MyApp/MyApp.entitlements"),
+          SANDBOX_ENTITLEMENTS_WITH_DOMAINS,
+        );
       if (!shared) {
         const path = join(projectRoot, "MyApp.xcodeproj/project.pbxproj");
         const graph = parse(await readFile(path, "utf8"));
@@ -416,7 +463,11 @@ async function verifyFixtures() {
       }
       console.log(
         JSON.stringify({
-          fixture: shared ? "shared entitlements file" : "no entitlements file",
+          fixture: existingDomain
+            ? "shared entitlements file that already has Associated Domains"
+            : shared
+              ? "shared entitlements file"
+              : "no entitlements file",
           team: personal ? "personal" : "paid",
           ...(await fullSetup(projectRoot, personal, root)),
           scope: "Unsigned builds; fake Clerk API; no provisioning or actual sign-in",

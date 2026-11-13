@@ -208,21 +208,27 @@ export async function prepareSetup(
   const conflictNotes: string[] = [];
   const conflicting = new Set<string>();
   if (options.personalTeam && capabilities) {
-    // One note per file, naming what any platform that signs with it can't sign.
+    // One note per file, naming what any platform that signs with it can't sign. A Mac build
+    // that gets its own copy without Associated Domains no longer signs them.
+    const macCopies = new Set(
+      capabilities.contexts
+        .filter((context) => context.macCopyOf)
+        .map((context) => context.configuration),
+    );
     const files = new Map<string, Set<string>>();
     for (const context of inspection.contexts) {
       const file = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
       if (!file) continue;
+      const macBuild = context.selection.sdk === "macosx";
       let conflicts: string[];
       try {
         const source = await readEntitlements(context);
-        conflicts =
-          source === undefined
-            ? []
-            : personalTeamConflicts(source, context.selection.sdk === "macosx");
+        conflicts = source === undefined ? [] : personalTeamConflicts(source, macBuild);
       } catch {
         continue;
       }
+      if (macBuild && macCopies.has(context.selection.configuration))
+        conflicts = conflicts.filter((conflict) => conflict !== "Associated Domains");
       if (!files.has(file)) files.set(file, new Set());
       for (const conflict of conflicts) {
         conflicting.add(conflict);

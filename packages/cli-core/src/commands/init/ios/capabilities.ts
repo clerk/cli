@@ -129,6 +129,27 @@ export function capabilityXML(source: string, domain?: string, apple = false, ma
   );
 }
 
+/** The entries without Associated Domains, for a Mac build a Personal Team signs. Throws on XML it can't read. */
+function withoutAssociatedDomains(source: string): string {
+  capabilityXML(source);
+  const document = new DOMParser().parseFromString(source, "text/xml");
+  const [dictionary] = elements(document.documentElement);
+  const children = elements(dictionary!);
+  const index = children.findIndex(
+    (node, position) => position % 2 === 0 && node.textContent === DOMAIN,
+  );
+  if (index < 0) return source;
+  for (const node of [children[index]!, children[index + 1]!]) {
+    const indent = node.previousSibling;
+    if (indent?.nodeType === 3 && !indent.textContent?.trim()) dictionary!.removeChild(indent);
+    dictionary!.removeChild(node);
+  }
+  return (
+    new XMLSerializer().serializeToString(document).trimEnd() +
+    source.slice(source.trimEnd().length)
+  );
+}
+
 /** The entitlements file one configuration signs with, or undefined when it has none. Throws when it can't be read. */
 export async function readEntitlements(
   context: Inspection["contexts"][number],
@@ -180,6 +201,11 @@ export function personalTeamConflictNote(
   return `${file} still has ${named.join(" and ")}, which a Personal Team can't sign, so the app won't sign. Remove ${conflicts.length > 1 ? "them" : "it"} in Xcode's Signing & Capabilities, or choose a paid Apple Developer Program team.`;
 }
 
+/** Associated Domains in a file a Multiplatform target's iOS and macOS builds share, on a Personal Team. */
+export function sharedMacDomainsNote(file: string, setupCanSplit: boolean): string {
+  return `${file} gives the Mac build Associated Domains, which a Personal Team can't sign for a Mac app. ${setupCanSplit ? "Run clerk init to give macOS its own copy without them" : "Give macOS its own entitlements file without them in Xcode"}, or choose a paid Apple Developer Program team.`;
+}
+
 /**
  * Xcode creates a new entitlements file inside the target's synchronized folder, the one named
  * like the target when there are several; a file anywhere else isn't in its navigator. Without
@@ -205,6 +231,8 @@ async function entitlementsFolder(
 
 interface CapabilityPlan {
   status: "planned" | "satisfied" | "manual";
+  /** The file a Multiplatform target's iOS and macOS builds share, when macOS gets its own copy. */
+  macCopyOf?: string;
   scope: string;
   reason?: string;
   projectSource: string;
@@ -299,9 +327,9 @@ async function planCapabilities(
     const snapshots: FileSnapshot[] = [];
     let pendingOnDisk = false;
     let path = inspection.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+    let copiedFrom: FileSnapshot | undefined;
     if (domain || apple || (mac && path)) {
       let snapshot: FileSnapshot | undefined;
-      let copiedFrom: FileSnapshot | undefined;
       if (path) {
         if (path.includes("$") || !path.endsWith(".entitlements"))
           return manual("Select a resolved .entitlements path in Xcode.");
@@ -328,8 +356,9 @@ async function planCapabilities(
         }
         snapshot = await snapshotFile(selection.root, path);
         snapshots.push(snapshot);
-        // A Multiplatform target usually signs both platforms with one file. When iOS needs an
-        // Associated Domain the Mac can't sign (a Personal Team), the Mac gets its own copy.
+        // A Multiplatform target usually signs both platforms with one file. When the Mac can't
+        // sign Associated Domains (a Personal Team) that the file has or iOS needs, the Mac gets
+        // its own copy without them.
         const iOS = mac
           ? inspection.contexts.find(
               (context) =>
@@ -342,10 +371,10 @@ async function planCapabilities(
         if (
           iOS &&
           iOSPath &&
-          iOSDomain &&
-          iOSDomain !== domain &&
+          !associatedDomain(selection) &&
           relative(selection.root, resolve(iOS.settings.SRCROOT ?? sourceRoot, iOSPath)) === path &&
-          !hasCapabilities(snapshot.source, iOSDomain)
+          (personalTeamConflicts(snapshot.source, true).includes("Associated Domains") ||
+            (iOSDomain && !hasCapabilities(snapshot.source, iOSDomain)))
         ) {
           copiedFrom = snapshot;
           snapshot = undefined;
@@ -380,7 +409,9 @@ async function planCapabilities(
       const source =
         previous && previous.type !== "skip"
           ? previous.content
-          : ((snapshot ?? copiedFrom)?.source ?? EMPTY);
+          : copiedFrom
+            ? withoutAssociatedDomains(copiedFrom.source)
+            : (snapshot?.source ?? EMPTY);
       const content = capabilityXML(source, domain, apple, mac);
       // A file shared with an earlier configuration may already be planned, but it's unchanged on disk.
       pendingOnDisk = snapshot !== undefined && content !== snapshot.source;
@@ -390,7 +421,7 @@ async function planCapabilities(
           path,
           content,
           description: copiedFrom
-            ? `Give macOS its own copy of ${copiedFrom.path}, without the Associated Domain`
+            ? `Give macOS its own copy of ${copiedFrom.path}, without Associated Domains`
             : mac
               ? "Update macOS entitlements"
               : `Add ${[domain && "Clerk Associated Domain", apple && "Sign in with Apple"].filter(Boolean).join(" and ")}`,
@@ -398,6 +429,7 @@ async function planCapabilities(
     }
     return {
       status: actions.length || changedProject || pendingOnDisk ? "planned" : "satisfied",
+      ...(copiedFrom ? { macCopyOf: copiedFrom.path } : {}),
       scope,
       projectSource: changedProject ? adapter.serialize() : projectSource,
       actions,
@@ -424,7 +456,7 @@ export async function planAllCapabilities(
     typeof associatedDomain === "function" ? associatedDomain : () => associatedDomain;
   const actions = new Map<string, FileAction>();
   const snapshots = new Map<string, FileSnapshot>();
-  const contexts: (Pick<CapabilityPlan, "status" | "scope" | "reason"> & {
+  const contexts: (Pick<CapabilityPlan, "status" | "scope" | "reason" | "macCopyOf"> & {
     configuration: string;
   })[] = [];
   let source = projectSource;
@@ -452,6 +484,7 @@ export async function planAllCapabilities(
       status: plan.status,
       scope: plan.scope,
       reason: plan.reason,
+      ...(plan.macCopyOf ? { macCopyOf: plan.macCopyOf } : {}),
       configuration: context.selection.configuration,
     });
   }

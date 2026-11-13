@@ -4,6 +4,7 @@ import {
   personalTeamConflictNote,
   personalTeamConflicts,
   planAllCapabilities,
+  sharedMacDomainsNote,
   readEntitlements,
 } from "./capabilities.ts";
 import { auditProduction } from "./production.ts";
@@ -99,30 +100,6 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
           ? "This app is signed by a Personal Team, which can't use Sign in with Apple, or Associated Domains for passkeys and password AutoFill on a Mac."
           : "This app is signed by a Personal Team, which can't use Sign in with Apple.",
     });
-  // Setup never removes entitlements, so one the team can't sign can still be there.
-  if (personalTeam)
-    for (const context of inspection.contexts) {
-      let conflicts: string[];
-      try {
-        const source = await readEntitlements(context);
-        conflicts =
-          source === undefined
-            ? []
-            : personalTeamConflicts(source, context.selection.sdk === "macosx");
-      } catch {
-        continue;
-      }
-      if (conflicts.length)
-        checks.push({
-          name: `Personal Team entitlements: ${label(context)}`,
-          status: "warn",
-          message: personalTeamConflictNote(
-            context.settings.CODE_SIGN_ENTITLEMENTS!.trim(),
-            conflicts,
-            multiplatform,
-          ),
-        });
-    }
   const capabilities = await planAllCapabilities(
     inspection,
     inspection.document.source,
@@ -130,6 +107,49 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
     false,
     (selection) => !(personalTeam && selection.sdk === "macosx"),
   );
+  // Setup never removes entitlements, so one the team can't sign can still be there. A file a
+  // Multiplatform target's iOS and macOS builds share is the exception: setup gives macOS a copy.
+  if (personalTeam)
+    for (const context of inspection.contexts) {
+      const file = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+      const mac = context.selection.sdk === "macosx";
+      let conflicts: string[];
+      try {
+        const source = await readEntitlements(context);
+        conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
+      } catch {
+        continue;
+      }
+      const sharedWithIOS =
+        mac &&
+        inspection.contexts.some(
+          (other) =>
+            other.selection.configuration === context.selection.configuration &&
+            other.selection.sdk !== "macosx" &&
+            other.settings.CODE_SIGN_ENTITLEMENTS?.trim() === file,
+        );
+      const notes = [];
+      if (sharedWithIOS && conflicts.includes("Associated Domains")) {
+        conflicts = conflicts.filter((conflict) => conflict !== "Associated Domains");
+        notes.push(
+          sharedMacDomainsNote(
+            file!,
+            capabilities.contexts.some(
+              (planned) =>
+                planned.macCopyOf && planned.configuration === context.selection.configuration,
+            ),
+          ),
+        );
+      }
+      if (conflicts.length)
+        notes.unshift(personalTeamConflictNote(file!, conflicts, multiplatform));
+      if (notes.length)
+        checks.push({
+          name: `Personal Team entitlements: ${label(context)}`,
+          status: "warn",
+          message: notes.join(" "),
+        });
+    }
   for (const context of capabilities.contexts)
     checks.push({
       name: `Capabilities: ${context.scope}`,
