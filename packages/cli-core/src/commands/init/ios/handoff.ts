@@ -27,7 +27,13 @@ export function integrationHandoff(
     changedFiles: [],
     configurations: [selection.configuration],
   },
+  /** What the target builds for; a Multiplatform target lists iOS and macOS. */
+  target: { sdks: Selection["sdk"][]; unsupportedPlatforms: string[] } = {
+    sdks: [selection.sdk],
+    unsupportedPlatforms: [],
+  },
 ) {
+  const multiplatform = target.sdks.length > 1;
   const done = (id: string) => progress.completed.some((item) => item.id === id);
   return {
     schemaVersion: 2,
@@ -48,6 +54,10 @@ export function integrationHandoff(
       targetName: selection.targetName,
       configuration: selection.configuration,
       platform: selection.sdk,
+      ...(multiplatform ? { platforms: target.sdks } : {}),
+      ...(target.unsupportedPlatforms.length
+        ? { unsupportedPlatforms: target.unsupportedPlatforms }
+        : {}),
     },
     publishableKey: publishableKey ?? "<development-publishable-key>",
     tasks: [
@@ -96,8 +106,7 @@ export function integrationHandoff(
       {
         id: "build-target",
         status: "pending",
-        instructions:
-          "Use xcode.developerDir as DEVELOPER_DIR for one unsigned Debug build of the selected target. For iOS, use one available simulator destination with ONLY_ACTIVE_ARCH=YES; for macOS, use the current Mac. Pass CODE_SIGNING_ALLOWED=NO as a command-line override, without editing project settings. Fix integration errors you introduced and retry; report environment or unrelated build blockers and stop. If Debug is unavailable, report that. Build other configurations only when explicitly requested.",
+        instructions: `Use xcode.developerDir as DEVELOPER_DIR for one unsigned Debug build of the selected target. For iOS, use one available simulator destination with ONLY_ACTIVE_ARCH=YES; for macOS, use the current Mac. Pass CODE_SIGNING_ALLOWED=NO as a command-line override, without editing project settings.${multiplatform ? " This target builds for every platform in context.platforms: make one Debug build for each, and leave any context.unsupportedPlatforms unbuilt." : ""} Fix integration errors you introduced and retry; report environment or unrelated build blockers and stop. If Debug is unavailable, report that. Build other configurations only when explicitly requested.`,
       },
       {
         id: "runtime-verification",

@@ -30,6 +30,7 @@ import {
   discoverBundleIdentifier,
   discoverRemote,
   IdentityRequired,
+  platformBundleConflict,
   type IdentityDiscovery,
   type IdentityPrompt,
   type RemoteSelection,
@@ -41,7 +42,7 @@ import {
   type IOSNativeAppleAPI,
   type IOSNativeApplePlan,
 } from "./native-apple.ts";
-import { planAppleSetup } from "./plan.ts";
+import { planAppleSetup, type Selection } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
 import { setupError } from "./types.ts";
 import {
@@ -54,6 +55,7 @@ import {
 } from "./remote.ts";
 import {
   inspectSelectedProject,
+  nativePlatform,
   resolvePackages,
   type CommandRunner,
   type Inspection,
@@ -64,6 +66,8 @@ const PERSONAL_TEAM_APPLE =
   "This app is signed by a Personal Team, which can't use Sign in with Apple, so its capability was left out. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
 const PERSONAL_TEAM_DOMAINS =
   "Associated Domains were left out: a Personal Team can't provision them for a Mac app, so passkeys and password AutoFill stay off. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
+const PERSONAL_TEAM_MAC_DOMAINS =
+  "Associated Domains were left out of the macOS app: a Personal Team can't provision them for a Mac app, so passkeys and password AutoFill stay off on Mac. The iOS app keeps them, so they work in the iOS Simulator. Choose a paid Apple Developer Program team in Xcode, then run clerk init again.";
 
 export interface SetupOptions extends InspectOptions {
   remote?: RemoteSelection;
@@ -100,7 +104,7 @@ export interface SetupPreview {
   apple?: IOSNativeApplePlan;
   appleRequested: boolean;
   appleWarning?: string;
-  /** Why a Mac app signed by a Personal Team has no Associated Domain. */
+  /** Why a Mac app (or a Multiplatform target's Mac side) signed by a Personal Team has no Associated Domain. */
   personalTeamNote?: string;
   /** Entitlements already in a file that its Personal Team can't sign, one note per file. */
   personalTeamConflicts: string[];
@@ -119,12 +123,17 @@ export async function prepareSetup(
         dependencies.run,
       );
   const local = planAppleSetup(inspection.input);
-  for (const context of inspection.contexts.slice(1))
-    planAppleSetup({
+  for (const context of inspection.contexts.slice(1)) {
+    const plan = planAppleSetup({
       ...inspection.input,
       selection: context.selection,
       settingsJSON: context.settingsJSON,
     });
+    // A Multiplatform target's other platform has its own manual steps; the first is the inspection summary.
+    if (context.selection.sdk !== inspection.input.selection.sdk)
+      for (const instruction of plan.postInstructions.slice(1))
+        if (!local.postInstructions.includes(instruction)) local.postInstructions.push(instruction);
+  }
   const sdkCheck = sdkHealth(inspection.input);
   if (sdkCheck.status === "fail")
     local.actions[0] = {
@@ -132,8 +141,12 @@ export async function prepareSetup(
       path: inspection.document.path,
       skipReason: sdkCheck.message,
     };
-  local.postInstructions[0] = `Xcode inspected ${inspection.contexts.map((context) => `${context.selection.configuration}/${context.selection.sdk}`).join(", ")} for ${inspection.input.selection.targetName}. Unchecked configurations: ${inspection.uncheckedConfigurations.join(", ") || "none"}. Other platforms, signing, and source integration remain unverified.`;
+  local.postInstructions[0] = `Xcode inspected ${inspection.contexts.map((context) => `${context.selection.configuration}/${context.selection.sdk}`).join(", ")} for ${inspection.input.selection.targetName}. Unchecked configurations: ${inspection.uncheckedConfigurations.join(", ") || "none"}. ${inspection.unsupportedPlatforms.length ? `Platforms Clerk doesn't set up, left unchanged: ${inspection.unsupportedPlatforms.join(", ")}. ` : ""}Other platforms, signing, and source integration remain unverified.`;
   const api = dependencies.api ?? nativeAPI;
+  if (options.remote) {
+    const conflict = await platformBundleConflict(inspection);
+    if (conflict) throw setupError(conflict);
+  }
   const discovery = options.remote
     ? await discoverRemote(options.remote, inspection, api, dependencies.promptIdentity)
     : undefined;
@@ -144,7 +157,11 @@ export async function prepareSetup(
       "Native Apple sign-in requires an explicitly selected Clerk application and confirmed native identity.",
     );
   const originalAction = local.actions[0]!;
-  const mac = inspection.input.selection.sdk === "macosx";
+  const mac = inspection.contexts.some((context) => context.selection.sdk === "macosx");
+  const multiplatform = nativePlatform(inspection) === "multiplatform";
+  // A Personal Team can't provision Associated Domains for a Mac app; iOS keeps them for the simulator.
+  const associatedDomain = (selection: Selection) =>
+    !(options.personalTeam && selection.sdk === "macosx");
   let appleEnabled = options.signInWithApple === true;
   let appleWarning: string | undefined;
   if (options.checkAppleConnection && remote && !options.signInWithApple) {
@@ -152,7 +169,7 @@ export async function prepareSetup(
       const health = await auditIOSNativeAppleHealth(
         {
           ...remote.context,
-          platform: inspection.input.selection.sdk === "macosx" ? "macos" : "ios",
+          platform: nativePlatform(inspection),
         },
         dependencies.appleAPI,
       );
@@ -183,7 +200,7 @@ export async function prepareSetup(
           originalAction.type === "modify" ? originalAction.content : inspection.document.source,
           remote?.context.frontendHost,
           appleEnabled,
-          !(options.personalTeam && mac),
+          associatedDomain,
         )
       : undefined;
   // Setup never removes entitlements, so name the ones already there that the team can't sign,
@@ -191,21 +208,36 @@ export async function prepareSetup(
   const conflictNotes: string[] = [];
   const conflicting = new Set<string>();
   if (options.personalTeam && capabilities) {
-    const files = new Set<string>();
+    // One note per file, naming what any platform that signs with it can't sign.
+    const files = new Map<string, Set<string>>();
     for (const context of inspection.contexts) {
       const file = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
-      if (!file || files.has(file)) continue;
-      files.add(file);
+      if (!file) continue;
       let conflicts: string[];
       try {
         const source = await readEntitlements(context);
-        conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
+        conflicts =
+          source === undefined
+            ? []
+            : personalTeamConflicts(source, context.selection.sdk === "macosx");
       } catch {
         continue;
       }
-      for (const conflict of conflicts) conflicting.add(conflict);
-      if (conflicts.length) conflictNotes.push(personalTeamConflictNote(file, conflicts));
+      if (!files.has(file)) files.set(file, new Set());
+      for (const conflict of conflicts) {
+        conflicting.add(conflict);
+        files.get(file)!.add(conflict);
+      }
     }
+    for (const [file, conflicts] of files)
+      if (conflicts.size)
+        conflictNotes.push(
+          personalTeamConflictNote(
+            file,
+            ["Sign in with Apple", "Associated Domains"].filter((name) => conflicts.has(name)),
+            multiplatform,
+          ),
+        );
     if (appleWarning === PERSONAL_TEAM_APPLE && conflicting.has("Sign in with Apple"))
       appleWarning = undefined;
   }
@@ -232,7 +264,7 @@ export async function prepareSetup(
             applicationId: remote.context.applicationId,
             instanceId: remote.context.instanceId,
             bundleIdentifier: remote.context.bundleIdentifier,
-            platform: inspection.input.selection.sdk === "macosx" ? "macos" : "ios",
+            platform: nativePlatform(inspection),
           },
           dependencies.appleAPI,
         )
@@ -295,7 +327,9 @@ export async function prepareSetup(
     appleWarning,
     personalTeamNote:
       options.personalTeam && capabilities && mac && !conflicting.has("Associated Domains")
-        ? PERSONAL_TEAM_DOMAINS
+        ? multiplatform
+          ? PERSONAL_TEAM_MAC_DOMAINS
+          : PERSONAL_TEAM_DOMAINS
         : undefined,
     personalTeamConflicts: conflictNotes,
     signInUIRequested: options.signInUI === true,
@@ -306,17 +340,32 @@ export async function prepareSetup(
   };
 }
 
+function inspectedSDKs(inspection: Inspection): Selection["sdk"][] {
+  return [...new Set(inspection.contexts.map((context) => context.selection.sdk))];
+}
+
+function handoffTarget(inspection: Inspection) {
+  return { sdks: inspectedSDKs(inspection), unsupportedPlatforms: inspection.unsupportedPlatforms };
+}
+
 // This is the review surface. Raw build settings and keys are deliberately omitted.
 export function describePreview(preview: SetupPreview) {
+  const { inspection } = preview;
+  const multiplatform = nativePlatform(inspection) === "multiplatform";
   return {
-    context: preview.inspection.input.selection,
+    context: multiplatform
+      ? { ...inspection.input.selection, platforms: inspectedSDKs(inspection) }
+      : inspection.input.selection,
     existingGitChanges: preview.dirtyFiles,
     coverage: {
-      inspected: preview.inspection.contexts.map((context) => ({
+      inspected: inspection.contexts.map((context) => ({
         configuration: context.selection.configuration,
         platform: context.selection.sdk,
       })),
-      uncheckedConfigurations: preview.inspection.uncheckedConfigurations,
+      uncheckedConfigurations: inspection.uncheckedConfigurations,
+      ...(inspection.unsupportedPlatforms.length
+        ? { unsupportedPlatforms: inspection.unsupportedPlatforms }
+        : {}),
     },
     sdk: {
       linkage: preview.sdk.type === "skip" ? preview.sdk.skipReason : "Installation planned",
@@ -409,8 +458,15 @@ export async function applySetup(
           root,
           project: input.selection.project,
           target: input.selection.targetId,
-          configuration: contexts.length === 1 ? input.selection.configuration : undefined,
-          sdk: input.selection.sdk,
+          configuration:
+            new Set(contexts.map((context) => context.selection.configuration)).size === 1
+              ? input.selection.configuration
+              : undefined,
+          // A Multiplatform target resolves each platform again on its own.
+          sdk:
+            nativePlatform(preview.inspection) === "multiplatform"
+              ? undefined
+              : input.selection.sdk,
           products: input.products,
           minimumVersion: input.minimumVersion,
           signal,
@@ -452,6 +508,8 @@ export async function applySetup(
       preview.inspection.input.selection,
       preview.inspection.input.products,
       preview.remote?.context.publishableKey,
+      undefined,
+      handoffTarget(preview.inspection),
     ),
     capabilities: {
       status: "manual",
@@ -580,14 +638,15 @@ export async function applySetup(
         remaining,
         changedFiles: result.changedFiles,
         signInUIRequested: preview.signInUIRequested,
-        configurations: preview.inspection.contexts.map(
-          (context) => context.selection.configuration,
-        ),
+        configurations: [
+          ...new Set(preview.inspection.contexts.map((context) => context.selection.configuration)),
+        ],
         xcode: {
           developerDir: preview.inspection.settings.DEVELOPER_DIR,
           projectFormat: preview.inspection.input.projectFormat,
         },
       },
+      handoffTarget(preview.inspection),
     );
     return result;
   };

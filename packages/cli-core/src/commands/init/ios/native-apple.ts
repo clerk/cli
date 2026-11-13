@@ -8,7 +8,7 @@ import {
   type InstanceConfigSchema,
 } from "../../../lib/plapi.ts";
 import { withNativeSpinner as withSpinner } from "./progress.ts";
-import type { IOSNativePlatform } from "./types.ts";
+import type { IOSNativeTargetPlatform } from "./types.ts";
 
 const APPLE_CONNECTION_KEY = "connection_oauth_apple";
 const CONFIG_VERSION_PATTERN = /^v1_[0-9a-f]{8}$/;
@@ -31,7 +31,7 @@ export interface IOSNativeAppleBlocker {
 export interface IOSNativeAppleTarget {
   applicationId: string;
   instanceId: string;
-  platform?: IOSNativePlatform;
+  platform?: IOSNativeTargetPlatform;
   bundleIdentifier: string;
 }
 
@@ -83,8 +83,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function platformName(platform: IOSNativePlatform | undefined): "iOS" | "macOS" {
-  return platform === "macos" ? "macOS" : "iOS";
+function platformName(platform: IOSNativeTargetPlatform | undefined): string {
+  return platform === "multiplatform" ? "iOS and macOS" : platform === "macos" ? "macOS" : "iOS";
 }
 
 function parseConnection(
