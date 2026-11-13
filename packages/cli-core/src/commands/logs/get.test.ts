@@ -362,12 +362,41 @@ describe("logs get", () => {
     const err = captured.err.replace(ANSI_ESCAPE_PATTERN, "");
     const lines = err.split("\n");
     expect(lines).toContain(`sign_up ${GROUP_ID}`);
-    expect(err).toContain("Subject user_123");
+    // More logs to page through, so the subject could be wrong and is left out.
+    expect(err).not.toContain("Subject");
     expect(err).toMatch(/Started (\d{4}-\d{2}-\d{2} )?\d{2}:\d{2}:\d{2}/);
     expect(err).toMatch(/TIME\s+TYPE\s+ACTOR\s+SUBJECT\s+LOCATION\s+LOG ID/);
     expect(err).toMatch(/sign_up\.created\s+-\s+ins_123\s+Lima, PE\s+log_1/);
     expect(err).toContain("sign_up.completed");
     expect(err).toContain("2 logs · more: re-run with `--cursor cur_next`");
+  });
+
+  test.each([
+    { label: "the page holds the whole group", options: {}, status: "false", shown: true },
+    {
+      label: "the page continues a --cursor",
+      options: { cursor: "cur_1" },
+      status: "false",
+      shown: false,
+    },
+    {
+      label: "an event filter narrowed the page",
+      options: { type: "sign_up.completed" },
+      status: "false",
+      shown: false,
+    },
+    { label: "the group has more logs", options: {}, status: "true", shown: false },
+  ])("shows the subject ($shown) when $label", async ({ options, status, shown }) => {
+    mockBapiRequest.mockResolvedValueOnce(
+      page([makeLog("log_1"), makeLog("log_2", { subject: "user_123" })], {
+        next_page_status: status,
+        starting_after: "cur_next",
+      }),
+    );
+
+    await get(GROUP_ID, options);
+
+    expect(captured.err.includes("Subject user_123")).toBe(shown);
   });
 
   test("adds a PAYLOAD column with the requested fields when --fields is set", async () => {

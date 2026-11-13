@@ -131,7 +131,7 @@ async function groupNotFound(groupId: string, options: LogsGetOptions): Promise<
   const target = await describeTarget(options);
   return new CliError(
     `Log group not found: no log group ${groupId} in ${target}. ` +
-      "Check the ID and the targeted instance (--app, --instance); a group older than your plan's log retention isn't found either.",
+      "Check the ID and the targeted instance (--app, --instance). A group that just started can take a few seconds to show up, and a group older than your plan's log retention isn't found.",
     { code: ERROR_CODE.LOG_GROUP_NOT_FOUND },
   );
 }
@@ -158,7 +158,8 @@ type GroupFields = { group_type?: string | null; group_started_at?: number | nul
 /**
  * Who the flow is about: the latest user any of its logs is about, or the
  * first log's subject (usually the instance) when it never identified one.
- * The same rule the grouped list's `subject` follows, over the logs fetched.
+ * The same rule the grouped list's `subject` follows, so it only matches the
+ * group's when the logs passed are all of the group's logs.
  */
 export function groupSubject(logs: Log[]): string | undefined {
   const user = logs.findLast((entry) => entry.subject?.startsWith("user_"))?.subject;
@@ -169,6 +170,7 @@ function printHuman(
   lookup: Extract<LogLookup, { kind: "group" }>,
   result: LogsGetResult,
   showPayload: boolean,
+  wholeGroup: boolean,
 ): void {
   const fields = result.data[0] as (Log & GroupFields) | undefined;
   const groupType = fields?.group_type || lookup.groupType;
@@ -176,7 +178,9 @@ function printHuman(
   if (typeof fields?.group_started_at === "number") {
     details.push(`Started ${formatLogTime(fields.group_started_at)}`);
   }
-  const subject = groupSubject(result.data);
+  // A page cut by --limit, --cursor or an event filter may miss the log that
+  // names the user, so its subject could differ from the group's.
+  const subject = wholeGroup ? groupSubject(result.data) : undefined;
   if (subject) details.push(`Subject ${subject}`);
 
   log.blank();
@@ -239,7 +243,8 @@ export async function get(id: string | undefined, options: LogsGetOptions = {}):
     if (json) {
       log.data(JSON.stringify(result, null, 2));
     } else {
-      printHuman(lookup, result, options.fields !== undefined);
+      const wholeGroup = !options.cursor && filters.length === 0 && result.cursor.next === null;
+      printHuman(lookup, result, options.fields !== undefined, wholeGroup);
     }
     closeStatus = "success";
   } catch (error) {

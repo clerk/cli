@@ -169,11 +169,11 @@ clerk logs get sia_123 --app app_123 --instance prod
 | `--json`            | Output as JSON (implied in agent mode)          |
 
 - The ID is checked before any request. A sign-in or sign-up ID reads the group's logs. A log ID (a UUID) is a usage error for now, since looking up a single log by its ID isn't supported yet; anything else is a usage error that lists the accepted forms.
-- The request sends no `started_at`: the Backend API looks the group's start up from its ID. A group it can't find in the targeted instance (an unknown ID, another instance's group, or one entirely past the plan's log retention) fails with `log_group_not_found`, naming the instance the request went to.
+- The request sends no `started_at`: the Backend API looks the group's start up from its ID. A group it can't find in the targeted instance (an unknown ID, another instance's group, one that started a few seconds ago and hasn't reached the logs store yet, or one entirely past the plan's log retention) fails with `log_group_not_found`, naming the instance the request went to.
 - The event filters work as in `list` and are checked the same way. `get` has no time range flags, `--follow`, or group filters: the group is already chosen, and the endpoint picks a group's logs by when the group started, not by each log's time.
 - The endpoint returns full pages (it doesn't scan time windows like `GET /v1/logs`), so one request covers `--limit`. When the group has more logs, `cursor.next` is set; pass it to `--cursor` to page forward. Only forward paging is supported.
 
-Human output is a header with the group type and ID, then when the group started and its subject (the latest user any of the fetched logs is about, or the first log's subject when none is), the same table as `list`, and the count with the `--cursor` to continue from when there are more logs. The endpoint doesn't return the group's status, so the header leaves it out.
+Human output is a header with the group type and ID, then when the group started and, when the page holds all of the group's logs (no `--cursor`, no event filter, and nothing left to page), its subject (the latest user any of its logs is about, or the first log's subject when none is), the same table as `list`, and the count with the `--cursor` to continue from when there are more logs. The endpoint doesn't return the group's status, so the header leaves it out.
 
 ```text
 sign_up sua_2xYzAbC123
