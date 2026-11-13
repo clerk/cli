@@ -107,7 +107,9 @@ describe("moreEventsNote", () => {
       event_time: i,
       type: "sign_in.created",
     }));
-    expect(moreEventsNote(group({ events, has_more_events: true, ...overrides }))).toBe(note);
+    expect(moreEventsNote(group({ events, has_more_events: true, ...overrides }))).toBe(
+      `${note}; read them with \`clerk logs get sia_1\``,
+    );
   });
 });
 

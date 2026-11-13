@@ -103,15 +103,16 @@ function formatEventCount(group: LogGroup): string {
  * lists.
  */
 export function moreEventsNote(group: LogGroup): string {
-  // CORE-4344 adds `clerk logs get <group_id>`; this note then names that
-  // command so the rest of the group's events are one copy-paste away.
+  // Names `clerk logs get`, so the rest of the group's events are one
+  // copy-paste away.
+  const read = `read them with \`clerk logs get ${group.group_id}\``;
   if (group.matched_event_count !== undefined) {
     const hidden = group.matched_event_count - group.events.length;
     if (hidden > 0) {
-      return `${hidden} more matching ${hidden === 1 ? "event" : "events"} not shown`;
+      return `${hidden} more matching ${hidden === 1 ? "event" : "events"} not shown; ${read}`;
     }
   }
-  return "more events not shown";
+  return `more events not shown; ${read}`;
 }
 
 /**
