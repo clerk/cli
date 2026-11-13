@@ -10,6 +10,7 @@ import {
   jsxAuthPageContent,
   jsxExt,
   parseMajorVersion,
+  printModule,
   safeAddImport,
   scaffoldAuthFiles,
   scaffoldConfigFile,
@@ -215,7 +216,7 @@ function enableV8Middleware(content: string): string {
 
     if (!defaultExport.future) defaultExport.future = {};
     defaultExport.future.v8_middleware = true;
-    return mod.generate().code;
+    return printModule(mod, content);
   } catch {
     if (content.includes("future:")) {
       return content.replace(/(future:\s*\{)/, "$1\n    v8_middleware: true,");
@@ -415,7 +416,7 @@ function addClerkNoExternal(content: string): string {
     if (!config.ssr.noExternal.includes("@clerk/react-router")) {
       config.ssr.noExternal.push("@clerk/react-router");
     }
-    return mod.generate().code;
+    return printModule(mod, content);
   } catch {
     return content;
   }
