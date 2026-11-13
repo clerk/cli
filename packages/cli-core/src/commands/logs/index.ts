@@ -12,6 +12,25 @@ import { parseDuration, parseTimestamp } from "./time.ts";
 
 const logs = { list, follow, get, schema };
 
+const LOGS_SUMMARY = "Read your instance's Application Logs";
+
+// `summary` is what the root `clerk --help` table shows; the description is
+// the `clerk logs --help` body, which an agent reads to learn the output
+// shapes before it runs anything. Wrapped by hand at 80 columns, like
+// `clerk deploy`.
+const LOGS_DESCRIPTION = `${LOGS_SUMMARY}.
+
+\`list\` is the default subcommand, so \`clerk logs\` alone lists the newest logs
+and takes every \`list\` flag. Start with \`clerk logs schema\` to find the event
+types and the payload fields \`--type\`, \`--payload-filter\` and \`--fields\` take.
+
+With --json (implied in agent mode), list and get print \`{ data, cursor }\`:
+\`data\` holds the logs as the Backend API returns them, and \`cursor.next\` is what
+to pass to --cursor for the next page (null when there are none). With --follow
+the output is NDJSON instead, one log per line. schema prints the API's schema
+objects as-is. Logs go back as far as your plan's log retention;
+\`cursor.retention_limit_reached\` says a list reached it.`;
+
 export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.env): void {
   // Experimental until `clerk logs` is ready to ship (Linear project
   // "Logs: $ clerk logs subcommand"); the gate comes off then. Same stub as
@@ -35,16 +54,42 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
 
   const logsCommand = program
     .command("logs")
-    .description("Read your instance's Application Logs")
+    .summary(LOGS_SUMMARY)
+    .description(LOGS_DESCRIPTION)
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    // The discovery flow, in the order an agent follows it.
     .setExamples([
-      { command: "clerk logs", description: "List the newest logs" },
-      { command: "clerk logs --since 30m", description: "Logs from the last 30 minutes" },
-      { command: "clerk logs --follow", description: "Print new logs as they arrive" },
-      { command: "clerk logs get sia_123", description: "The logs of one sign-in" },
-      { command: "clerk logs --instance prod --json", description: "Production logs as JSON" },
+      {
+        command: "clerk logs schema --json",
+        description: "Every event type and its payload fields",
+      },
+      {
+        command: "clerk logs schema user.created --json",
+        description: "The payload fields of one event type",
+      },
+      {
+        command:
+          "clerk logs --type user.created --payload-filter user_id=user_123 --since 1h --json",
+        description: "The last hour's logs of that type with a matching field",
+      },
+      {
+        command: "clerk logs --grouped --status failed --since 1h --json",
+        description: "Failed sign-in and sign-up flows, one item each",
+      },
+      {
+        command: "clerk logs get sia_123 --json",
+        description: "The logs of one sign-in (sua_... for a sign-up)",
+      },
+      {
+        command: "clerk logs --follow --json",
+        description: "Stream new logs as NDJSON, one per line",
+      },
+      {
+        command: "clerk logs --cursor <cursor> --json",
+        description: "The next page, from a previous cursor.next",
+      },
     ]);
 
   logsCommand
@@ -130,7 +175,6 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
       { command: "clerk logs list", description: "List the 50 newest logs" },
-      { command: "clerk logs list --limit 200", description: "List the 200 newest logs" },
       { command: "clerk logs list --since 1h", description: "Logs from the last hour" },
       {
         command: "clerk logs list --from 2026-11-01 --to 2026-11-02",
@@ -138,6 +182,11 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       },
       { command: "clerk logs list --type 'sign_in.*'", description: "Sign-in logs" },
       { command: "clerk logs list --user user_123", description: "Logs about one user" },
+      {
+        command:
+          "clerk logs list --type user.created --payload-filter user_id=user_123 --since 1h --json",
+        description: "The last hour's logs of a type with a matching payload field, as JSON",
+      },
       {
         command: "clerk logs list --type sms.failed --payload-filter phone_number=+15555550100",
         description: "Failed SMS to one phone number",
@@ -151,17 +200,17 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
         description: "Sign-in and sign-up flows, one row each, with their events",
       },
       {
-        command: "clerk logs list --grouped --group-type sign_in --status failed",
-        description: "Failed sign-ins",
+        command: "clerk logs list --grouped --group-type sign_in --status failed --json",
+        description: "Failed sign-ins with their events, as JSON",
       },
       { command: "clerk logs list --follow", description: "Print new logs as they arrive" },
       {
         command: "clerk logs list --follow --type 'sign_in.*' --json",
-        description: "Stream sign-in logs as JSON, one per line",
+        description: "Stream sign-in logs as NDJSON, one per line",
       },
       {
-        command: "clerk logs list --cursor <cursor>",
-        description: "Continue where a previous run stopped",
+        command: "clerk logs list --cursor <cursor> --json",
+        description: "The next page, from a previous cursor.next",
       },
       {
         command: "clerk logs list --app app_123 --instance prod --json",
@@ -218,12 +267,16 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       { command: "clerk logs get sia_123", description: "The logs of a sign-in" },
       { command: "clerk logs get sua_123 --json", description: "The logs of a sign-up as JSON" },
       {
+        command: "clerk logs list --grouped --json",
+        description: "Find recent sign-in and sign-up IDs (each group_id)",
+      },
+      {
         command: "clerk logs get sia_123 --type 'sign_in.*'",
         description: "Only the sign_in logs of a sign-in",
       },
       {
-        command: "clerk logs get sia_123 --cursor <cursor>",
-        description: "Continue where a previous run stopped",
+        command: "clerk logs get sia_123 --cursor <cursor> --json",
+        description: "The next page, from a previous cursor.next",
       },
       {
         command: "clerk logs get sia_123 --app app_123 --instance prod",
@@ -260,6 +313,10 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
         description: "Fields every sign_in event type shares",
       },
       { command: "clerk logs schema user.created --json", description: "The schema as JSON" },
+      {
+        command: "clerk logs list --type user.created --payload-filter user_id=user_123",
+        description: "Then filter logs of that type on one of its fields",
+      },
     ])
     .action(async (eventType: string | undefined, _opts, cmd) =>
       logs.schema(eventType, cmd.optsWithGlobals() as Parameters<typeof logs.schema>[1]),

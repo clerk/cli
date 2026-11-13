@@ -27,6 +27,38 @@ The secret key is resolved in the same order as `clerk users`: `--secret-key`, t
 
 Every request sends `Clerk-API-Version: 2026-08-20`, the Backend API version whose logs response shape the CLI is written against.
 
+## Discovery flow
+
+`clerk logs --help` and each subcommand's help list these examples, in the order an agent (or a person new to the API) follows them:
+
+```sh
+clerk logs schema --json                      # 1. every event type and its payload fields
+clerk logs schema user.created --json         # 2. the payload fields of one type
+clerk logs --type user.created --payload-filter user_id=user_123 --since 1h --json
+                                              # 3. the logs of that type whose field matches
+clerk logs --grouped --status failed --since 1h --json
+                                              #    failed sign-in and sign-up flows, one item each
+clerk logs get sia_123 --json                 # 4. the logs of one sign-in (sua_… for a sign-up)
+clerk logs --follow --json                    # 5. new logs as they arrive, as NDJSON
+clerk logs --cursor <cursor> --json           #    the next page, from a previous cursor.next
+```
+
+`--payload-filter` and `--fields` take payload paths, which only exist for an event type, so both need `--type`; the paths are the `fields[].path` values `clerk logs schema` prints. Looking up a single log by its ID isn't supported: `clerk logs get <uuid>` is a usage error that points at the group IDs it accepts.
+
+Output shapes, with `--json` or in agent mode (`--mode agent`, `CLERK_MODE=agent`, or no TTY):
+
+| Command                    | Output                                                                                                                                    |
+| -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `clerk logs list`          | `{ data, cursor }`: `data` is the logs (or, with `--grouped`, `log_group` and `log` items) as the API returns them; see [Paging](#paging) |
+| `clerk logs list --follow` | NDJSON: one log object per line, no envelope                                                                                              |
+| `clerk logs get <id>`      | `{ data, cursor }`, where `cursor` has only `next`                                                                                        |
+| `clerk logs schema`        | The API's `list` of `log_schema` objects, each with its `fields`                                                                          |
+| `clerk logs schema <type>` | The API's `log_schema` object                                                                                                             |
+
+Paging: pass `cursor.next` to `--cursor` for the next page; it's `null` when there are no more. Retention: logs go back as far as the plan's log retention, and `cursor.retention_limit_reached` (with `retention_days`) says a `list` search reached it.
+
+In agent mode, an error is one JSON object on stderr, `{ "error": { "code", "message", … } }`, with exit code 2 for a usage error (`usage_error`: a bad flag value or combination, raised before any request, with the flag named in the message) and 1 otherwise. Ctrl-C on `--follow` exits 130 (see [Follow](#follow)). Usage errors with an obvious next step carry it, plus `examples` to run: `--payload-filter` or `--fields` without `--type` points at `clerk logs schema`, and an ID `clerk logs get` can't read lists the forms it accepts. A group `get` can't find fails with `log_group_not_found`, naming the instance it searched. A response the CLI can't use fails with `bapi_unexpected_response`, and `clerk logs schema` against a Backend API without `GET /v1/logs/types` with `log_types_unavailable`. Other API errors keep the API's `code`, with its error list under `errors`.
+
 ## Commands
 
 ### `clerk logs list`
@@ -39,10 +71,12 @@ clerk logs list --limit 200
 clerk logs --since 1h
 clerk logs --from 2026-11-01 --to 2026-11-02T12:00
 clerk logs --type 'sign_in.*' --user user_123
+clerk logs --type user.created --payload-filter user_id=user_123 --since 1h --json
+clerk logs --type sms.failed --payload-filter phone_number=+15555550100
 clerk logs --type user.created --fields email_address,username
-clerk logs list --cursor <cursor>
+clerk logs list --cursor <cursor> --json
 clerk logs --grouped
-clerk logs --grouped --group-type sign_in --status failed
+clerk logs --grouped --group-type sign_in --status failed --json
 clerk logs list --app app_123 --instance prod --json
 clerk logs --follow
 clerk logs --follow --type 'sign_in.*' --json
@@ -186,7 +220,7 @@ Show the logs of one log group, oldest first. A log group is one flow: a sign-in
 clerk logs get sia_123
 clerk logs get sua_123 --json
 clerk logs get sia_123 --type 'sign_in.*'
-clerk logs get sia_123 --cursor <cursor>
+clerk logs get sia_123 --cursor <cursor> --json
 clerk logs get sia_123 --app app_123 --instance prod
 ```
 
@@ -272,7 +306,7 @@ JSON output is the list exactly as the Backend API returns it, sorted by `event_
       "event_type": "sign_in.completed",
       "description": "A user completed a sign-in.",
       "severity": "success",
-      "docs_group": "sign_in",
+      "docs_group": "Sign-in events",
       "fields": [{ "path": "sign_in_id", "type": "string", "optional": false }]
     }
   ],
