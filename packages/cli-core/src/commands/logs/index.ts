@@ -236,16 +236,21 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
 
   logsCommand
     .command("schema")
-    .description("Show the payload fields of a log event type")
+    .description("List every log event type, or show the payload fields of one")
     .argument(
       "[event-type]",
-      "An event type (sign_in.completed), a wildcard (sign_in.*) or a family (sign_in)",
+      "An event type (sign_in.completed), a wildcard (sign_in.*) or a family (sign_in); omit to list every type",
     )
     .option("--json", "Output as JSON")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
+      { command: "clerk logs schema", description: "Every event type, by group" },
+      {
+        command: "clerk logs schema --json",
+        description: "Every event type with its payload fields, as JSON",
+      },
       {
         command: "clerk logs schema sign_in.completed",
         description: "Fields of one event type",
