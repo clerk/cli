@@ -31,7 +31,8 @@ Capability probes cover Debug/Release, existing/new entitlements, preservation,
 and no-op reruns, for sources in groups and in a synchronized folder, where a new
 entitlements file must go. They then build the app: the iOS build is signed ad
 hoc for the simulator and must carry the edited entitlements, and neither build
-may copy a `.entitlements` file into the app. Both probes also exercise public
+may copy a `.entitlements` file into the app. Their build logs are written to
+`/tmp/clerk-capability-build-*.log`. Both probes also exercise public
 `clerk init --dry-run --json`.
 The CLI selects a compatible installed Xcode for `.xcproj` when necessary.
 

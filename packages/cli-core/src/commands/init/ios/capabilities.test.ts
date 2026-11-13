@@ -618,6 +618,20 @@ test.each([
   },
 );
 
+test.each(["Café", "App (iOS)", "My+App"])(
+  "a synchronized folder named %s still gets the new entitlements",
+  async (path) => {
+    const f = await synchronizedFixture("ios", (objects) => {
+      Object.assign(objects[ids.appGroup], { path });
+    });
+    await rename(join(f.root, "MyApp"), join(f.root, path));
+    const preview = await prepareSetup(f.options, f.dependencies);
+    expect(preview.capabilities?.actions.map((action) => action.path)).toEqual([
+      `${path}/MyApp.entitlements`,
+    ]);
+  },
+);
+
 test.each([
   { name: "missing on disk", path: "Missing", sourceTree: "<group>" },
   { name: "outside the project root", path: "../Elsewhere", sourceTree: "<group>" },

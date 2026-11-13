@@ -184,7 +184,9 @@ async function entitlementsFolder(
 ): Promise<string> {
   const usable: string[] = [];
   for (const folder of folders) {
-    if (!folder || !folder.split("/").every((part) => /^[\w .-]+$/.test(part) && part !== ".."))
+    // Xcode reads "$" as a build variable; containedPath below keeps the folder inside the project.
+    const parts = folder.split("/");
+    if (parts.some((part) => !part || part === "." || part === ".." || /[$\p{Cc}]/u.test(part)))
       continue;
     const location = await containedPath(
       selection.root,
