@@ -55,6 +55,7 @@ import {
 import {
   inspectSelectedProject,
   resolvePackages,
+  xcodeWasResolving,
   type CommandRunner,
   type Inspection,
   type InspectOptions,
@@ -469,6 +470,7 @@ export async function applySetup(
       : {}),
   };
   let sdkCheck = preview.sdkCheck;
+  let xcodeStillResolving = false;
   const finish = () => {
     const completed: { id: string; detail: string }[] = [];
     const remaining: { id: string; detail: string }[] = [];
@@ -530,7 +532,9 @@ export async function applySetup(
         result.packages === "resolved",
         result.packages === "resolved"
           ? "Xcode resolved Swift package dependencies. Compilation remains unverified."
-          : "Swift package resolution remains incomplete; retry setup after checking Xcode's network and private-package access.",
+          : xcodeStillResolving
+            ? "Xcode is still resolving this project's Swift packages; let it finish, then run clerk init again."
+            : "Swift package resolution remains incomplete; retry setup after checking Xcode's network and private-package access.",
       );
     for (const configuration of preview.inspection.uncheckedConfigurations)
       remaining.push({
@@ -657,6 +661,7 @@ export async function applySetup(
       if (signal?.aborted) throw error;
       // Registration doesn't depend on packages, so carry on and report both.
       result.packages = "incomplete";
+      xcodeStillResolving = xcodeWasResolving(error);
       messages.push(errorMessage(error));
     }
   }

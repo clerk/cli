@@ -1,4 +1,5 @@
 import { readdir, realpath } from "node:fs/promises";
+import { setTimeout as delay } from "node:timers/promises";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { selectApplication, type ChooseApp } from "./discovery.ts";
 import { configurationNames } from "./project.ts";
@@ -256,24 +257,48 @@ export async function inspectSelectedProject(
   };
 }
 
+// An open Xcode starts resolving the packages as soon as setup adds one, in the same
+// DerivedData checkout folder, so xcodebuild can read a checkout Xcode hasn't finished writing.
+const XCODE_RESOLVING = /SourcePackages\/checkouts\/[^']*Package\.swift' cannot be accessed/;
+const XCODE_RESOLVING_RETRY_DELAYS = [5_000, 10_000, 15_000];
+
+/** Whether package resolution failed because an open Xcode was resolving the same packages. */
+export function xcodeWasResolving(error: unknown): boolean {
+  return error instanceof XcodeCommandError && XCODE_RESOLVING.test(error.stderr);
+}
+
 export async function resolvePackages(
   root: string,
   project: string,
   run: CommandRunner = runCommand,
   signal?: AbortSignal,
   progress?: (message: string) => void,
+  retryDelays = XCODE_RESOLVING_RETRY_DELAYS,
 ): Promise<void> {
   const message = "Resolving Swift packages with Xcode (downloads may take a few minutes)...";
   progress?.(message);
   const timer = progress ? setInterval(() => progress(message), 15_000) : undefined;
   try {
-    await run(["xcodebuild", "-resolvePackageDependencies", "-project", project], root, signal);
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await run(["xcodebuild", "-resolvePackageDependencies", "-project", project], root, signal);
+        break;
+      } catch (error) {
+        const stderr = error instanceof XcodeCommandError ? error.stderr : "";
+        if (!XCODE_RESOLVING.test(stderr) || attempt >= retryDelays.length) throw error;
+        progress?.("Xcode is resolving this project's packages too; waiting for it to finish...");
+        await delay(retryDelays[attempt]!, undefined, { signal });
+      }
+    }
     progress?.("Swift packages resolved.");
   } catch (error) {
     signal?.throwIfAborted();
+    const stderr = error instanceof XcodeCommandError ? error.stderr : errorMessage(error);
     throw new XcodeCommandError(
-      "Swift package resolution failed. Check network access and private-package credentials in Xcode, then retry. Project edits and downloaded packages may remain.",
-      error instanceof XcodeCommandError ? error.stderr : errorMessage(error),
+      XCODE_RESOLVING.test(stderr)
+        ? "Swift package resolution didn't finish because Xcode is resolving this project's packages itself. Let Xcode finish (its activity bar shows package resolution), then run clerk init again."
+        : "Swift package resolution failed. Check network access and private-package credentials in Xcode, then retry. Project edits and downloaded packages may remain.",
+      stderr,
     );
   } finally {
     clearInterval(timer);
