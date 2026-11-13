@@ -149,6 +149,55 @@ TIME      TYPE                          ACTOR                             SUBJEC
 15:30:00  user.created                  user_2abc…                        user_2abc…                        Lima, PE              log_2xyz…
 ```
 
+### `clerk logs get <id>`
+
+Show the logs of one log group, oldest first. A log group is one flow: a sign-in (`sia_…`) or a sign-up (`sua_…`), and the flow's ID is the group's ID.
+
+```sh
+clerk logs get sia_123
+clerk logs get sua_123 --json
+clerk logs get sia_123 --type 'sign_in.*'
+clerk logs get sia_123 --cursor <cursor>
+clerk logs get sia_123 --app app_123 --instance prod
+```
+
+| Option              | Description                                     |
+| ------------------- | ----------------------------------------------- |
+| `--limit <number>`  | Maximum logs to return, 1-500 (default 50)      |
+| `--cursor <cursor>` | Continue from the cursor a previous run printed |
+| Filter flags        | The same as `list`; see [Filters](#filters)     |
+| `--json`            | Output as JSON (implied in agent mode)          |
+
+- The ID is checked before any request. A sign-in or sign-up ID reads the group's logs. A log ID (a UUID) is a usage error for now, since looking up a single log by its ID isn't supported yet; anything else is a usage error that lists the accepted forms.
+- The request sends no `started_at`: the Backend API looks the group's start up from its ID. A group it can't find in the targeted instance (an unknown ID, another instance's group, one that started a few seconds ago and hasn't reached the logs store yet, or one entirely past the plan's log retention) fails with `log_group_not_found`, naming the instance the request went to.
+- The event filters work as in `list` and are checked the same way. `get` has no time range flags, `--follow`, or group filters: the group is already chosen, and the endpoint picks a group's logs by when the group started, not by each log's time.
+- The endpoint returns full pages (it doesn't scan time windows like `GET /v1/logs`), so one request covers `--limit`. When the group has more logs, `cursor.next` is set; pass it to `--cursor` to page forward. Only forward paging is supported.
+
+Human output is a header with the group type and ID, then when the group started and, when the page holds all of the group's logs (no `--cursor`, no event filter, and nothing left to page), its subject (the latest user any of its logs is about, or the first log's subject when none is), the same table as `list`, and the count with the `--cursor` to continue from when there are more logs. The endpoint doesn't return the group's status, so the header leaves it out.
+
+```text
+sign_up sua_2xYzAbC123
+Started 15:56:21 · Subject user_2def
+
+TIME      TYPE                            ACTOR  SUBJECT    LOCATION  LOG ID
+15:56:21  sign_up.created                 -      ins_2abc   Lima, PE  019d8e31-a1bc-…
+15:56:25  sign_up.verification_attempted  -      ins_2abc   Lima, PE  019d8e31-b2cd-…
+15:56:27  sign_up.completed               -      user_2def  Lima, PE  019d8e31-c3de-…
+
+3 logs · more: re-run with `--cursor <cursor>`
+```
+
+JSON output has the same `{ data, cursor }` shape as `list`. `cursor` carries only `next`, since the endpoint doesn't search a time window or report retention:
+
+```json
+{
+  "data": [
+    { "object": "log", "id": "…", "type": "sign_up.created", "group_id": "sua_…", "…": "…" }
+  ],
+  "cursor": { "next": null }
+}
+```
+
 ### `clerk logs schema <event-type>`
 
 Show the payload fields of a log event type: the dot-paths, their types, whether each is optional, and the accepted values of enum fields.
@@ -189,7 +238,8 @@ JSON output is the `log_schema` object exactly as the Backend API returns it:
 
 ## API endpoints
 
-| Method | Path               | Description                                                                                                                                                                                                                                                                                                                     |
-| ------ | ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `GET`  | `/v1/logs`         | List logs (`view=flat`, `limit`, `starting_after`, `event_time_after`, `event_time_before`, `type`, `user_id`, `identifier`, `actor`, `subject`, `session_id`, `client_id`, `ip_address`, `trace_id`, `impersonator_user_id`, `payload_filter[<path>]`, `payload_fields`, `filter_match`, `end_user_facing_only`), newest first |
-| `GET`  | `/v1/logs/schemas` | Payload schema of an event type (`type`)                                                                                                                                                                                                                                                                                        |
+| Method | Path                                | Description                                                                                                                                                                                                                                                                                                                     |
+| ------ | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/v1/logs`                          | List logs (`view=flat`, `limit`, `starting_after`, `event_time_after`, `event_time_before`, `type`, `user_id`, `identifier`, `actor`, `subject`, `session_id`, `client_id`, `ip_address`, `trace_id`, `impersonator_user_id`, `payload_filter[<path>]`, `payload_fields`, `filter_match`, `end_user_facing_only`), newest first |
+| `GET`  | `/v1/logs/groups/{group_id}/events` | A log group's logs, oldest first (`limit`, `starting_after` and the list's event filters; no `started_at`)                                                                                                                                                                                                                      |
+| `GET`  | `/v1/logs/schemas`                  | Payload schema of an event type (`type`)                                                                                                                                                                                                                                                                                        |

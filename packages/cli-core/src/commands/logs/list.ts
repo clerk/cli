@@ -211,7 +211,8 @@ export function logColumnHeaders(showPayload: boolean): string[] {
   return headers;
 }
 
-function printTable(logs: Log[], showPayload: boolean): void {
+/** The `list` table: one row per log, columns sized to the widest cell. */
+export function printTable(logs: Log[], showPayload: boolean): void {
   const now = new Date();
   const headers = logColumnHeaders(showPayload);
   const rows = [

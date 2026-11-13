@@ -35,6 +35,7 @@ describe("with CLERK_EXPERIMENTAL unset", () => {
     [["logs", "list", "--help"]],
     [["logs", "list", "--json", "--limit", "10"]],
     [["logs", "schema", "sign_in.completed"]],
+    [["logs", "get", "sia_123"]],
     [["logs", "--not-a-flag"]],
     [["help", "logs"]],
     [["--verbose", "logs", "list"]],
@@ -57,15 +58,15 @@ describe("with CLERK_EXPERIMENTAL=logs", () => {
     expect(createProgram().helpInformation()).toMatch(/^\s+logs\b/m);
   });
 
-  test("the real list and schema subcommands are registered", () => {
+  test("the real list, get and schema subcommands are registered", () => {
     process.env.CLERK_EXPERIMENTAL = "logs";
     const logs = createProgram().commands.find((c) => c.name() === "logs");
-    expect(logs?.commands.map((c) => c.name())).toEqual(["list", "schema"]);
+    expect(logs?.commands.map((c) => c.name())).toEqual(["list", "get", "schema"]);
   });
 
-  test("completion offers list and schema under logs", () => {
+  test("completion offers list, get and schema under logs", () => {
     process.env.CLERK_EXPERIMENTAL = "logs";
     const names = generateCompletions(createProgram(), ["logs", ""]).completions.map((c) => c.name);
-    expect(names).toEqual(expect.arrayContaining(["list", "schema"]));
+    expect(names).toEqual(expect.arrayContaining(["list", "get", "schema"]));
   });
 });
