@@ -15,6 +15,7 @@ bun scripts/apple-setup/verify-packages.ts
 bun scripts/apple-setup/verify-starter.ts
 bun scripts/apple-setup/verify-ownership.ts
 bun scripts/apple-setup/verify-production.ts
+bun scripts/apple-setup/verify-multiplatform.ts
 ```
 
 The package probe downloads Clerk, verifies lockfile entries, and builds the
@@ -43,3 +44,13 @@ The production probe checks that Xcode's resolved settings carry what doctor's
 production checks read: a per-configuration xcconfig key surfaced through an
 Info.plist entry and a Release-only entitlements file, and that `#if DEBUG`
 literals, which doctor doesn't evaluate, report the key as not verified.
+
+The multiplatform probe covers Xcode Multiplatform App targets (one target for
+iOS and macOS, `SDKROOT = auto`): a shared entitlements file and none, for a paid
+team and a Personal Team, with Xcode resolving which file each platform signs
+with after the edits (the Personal Team's Mac build gets its own copy without
+the Associated Domain). It then runs full setup with package resolution and
+builds Debug unsigned for iOS Simulator and macOS. `--project <path>` runs the
+full setup and both builds on a copy of a real project instead, with
+`--personal-team` and `--shared-entitlements` to exercise the split; the
+original is never modified.
