@@ -22,7 +22,7 @@ import { applySetup, describePreview, prepareSetup, type SetupOptions } from "./
 import { doctor } from "./doctor.ts";
 import { PlapiError } from "../../../lib/errors.ts";
 import { type NativeAPI, type RemoteInput } from "./remote.ts";
-import { runCommand, XcodeCommandError, type CommandRunner } from "./xcode.ts";
+import { resolvePackages, runCommand, XcodeCommandError, type CommandRunner } from "./xcode.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -620,6 +620,83 @@ test("setup resolves preexisting dependencies only after inspection fails, then 
   expect(events.at(-1)).toBe("resolve");
   expect(progress.some((message) => message.includes("Swift packages resolved"))).toBe(true);
   expect(result.handoff.completed.some((step) => step.id === "swift-packages")).toBe(true);
+});
+
+const XCODE_RESOLVING_STDERR =
+  "xcodebuild: error: Could not resolve package dependencies:\n  the package manifest at '/Users/me/Library/Developer/Xcode/DerivedData/App-abc/SourcePackages/checkouts/clerk-ios/Package.swift' cannot be accessed (/Users/me/Library/Developer/Xcode/DerivedData/App-abc/SourcePackages/checkouts/clerk-ios/Package.swift doesn't exist in file system)";
+
+test("package resolution waits for an open Xcode that is resolving the same packages", async () => {
+  let attempts = 0;
+  const run: CommandRunner = async () => {
+    if (++attempts < 3)
+      throw new XcodeCommandError("xcodebuild exited with code 74.", XCODE_RESOLVING_STDERR);
+    return "Resolved packages";
+  };
+  const progress: string[] = [];
+  await resolvePackages(
+    "/tmp",
+    "App.xcodeproj",
+    run,
+    undefined,
+    (m) => progress.push(m),
+    [0, 0, 0],
+  );
+  expect(attempts).toBe(3);
+  expect(progress).toContain(
+    "Xcode is resolving this project's packages too; waiting for it to finish...",
+  );
+  expect(progress.at(-1)).toBe("Swift packages resolved.");
+});
+
+test("package resolution says Xcode is still resolving when it never finishes", async () => {
+  let attempts = 0;
+  const run: CommandRunner = async () => {
+    attempts++;
+    throw new XcodeCommandError("xcodebuild exited with code 74.", XCODE_RESOLVING_STDERR);
+  };
+  const error = await resolvePackages(
+    "/tmp",
+    "App.xcodeproj",
+    run,
+    undefined,
+    undefined,
+    [0, 0],
+  ).catch((e: unknown) => e);
+  expect(attempts).toBe(3);
+  expect(String(error)).toContain("Xcode is resolving this project's packages itself");
+  expect(String(error)).not.toContain("Check network access");
+});
+
+test("package resolution doesn't retry other failures", async () => {
+  let attempts = 0;
+  const run: CommandRunner = async () => {
+    attempts++;
+    throw new XcodeCommandError(
+      "xcodebuild exited with code 74.",
+      "xcodebuild: error: Could not resolve package dependencies: network unavailable",
+    );
+  };
+  const error = await resolvePackages(
+    "/tmp",
+    "App.xcodeproj",
+    run,
+    undefined,
+    undefined,
+    [0, 0],
+  ).catch((e: unknown) => e);
+  expect(attempts).toBe(1);
+  expect(String(error)).toContain("Check network access");
+});
+
+test("package resolution stops waiting when cancelled", async () => {
+  const controller = new AbortController();
+  const run: CommandRunner = async () => {
+    setTimeout(() => controller.abort(new Error("cancelled")), 0);
+    throw new XcodeCommandError("xcodebuild exited with code 74.", XCODE_RESOLVING_STDERR);
+  };
+  await expect(
+    resolvePackages("/tmp", "App.xcodeproj", run, controller.signal, undefined, [60_000]),
+  ).rejects.toThrow("cancelled");
 });
 
 test("inspection failures unrelated to packages do not trigger package resolution", async () => {
