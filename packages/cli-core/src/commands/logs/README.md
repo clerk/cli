@@ -248,17 +248,16 @@ clerk logs schema user.created --json
 
 `clerk logs schema` with no argument reads `GET /v1/logs/types`: one entry per event type the instance can read, each with its payload schema. Event types whose logs are enabled per instance (such as `sms.*` and `email.*`) are listed only once enabled. The list isn't paginated.
 
-Human output is a table (`TYPE`, `GROUP`, `DESCRIPTION`) sorted by docs group, then by type, so a family's types sit together (a type without a group goes last), followed by the count and a hint to run `clerk logs schema <event-type>` for a type's fields. The table leaves the fields out.
+Human output has one section per docs group, sorted by the group's title and headed by it (the title is a phrase such as "Billing events", so it doesn't fit as a column), with each type and its description under it, sorted by type. Types without a group go last, under "Other events". Each section aligns on its own, so one long type name only widens its own group. After the sections come the count and a hint to run `clerk logs schema <event-type>` for a type's fields. The human output leaves the fields out.
 
 ```text
-TYPE               GROUP    DESCRIPTION
-session.created    session  A session was created.
-session.ended      session  A session ended.
-sign_in.completed  sign_in  A user completed a sign-in.
-sign_in.failed     sign_in  A sign-in attempt failed.
-user.created       user     A user was created.
+Billing events
+  organization.subscription_item.price_transition.created  Price transition was created for organization subscription
 
-5 event types
+Enterprise and SSO connection events
+  enterprise_connection.created  Enterprise connection was created
+
+2 event types
 → See a type's fields: clerk logs schema <event-type>
 ```
 

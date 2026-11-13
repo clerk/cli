@@ -310,7 +310,7 @@ const CATALOG = {
       event_type: "session.created",
       description: "A session was created.",
       severity: "info",
-      docs_group: "session",
+      docs_group: "Session events",
       fields: [{ path: "session_id", type: "string", optional: false }],
     },
     {
@@ -318,7 +318,7 @@ const CATALOG = {
       event_type: "sign_in.failed",
       description: "A sign-in attempt failed.",
       severity: "warning",
-      docs_group: "sign_in",
+      docs_group: "Sign-in events",
       fields: [{ path: "reason", type: "string", optional: true, enum: ["bad_password"] }],
     },
     {
@@ -326,7 +326,7 @@ const CATALOG = {
       event_type: "user.created",
       description: "A user was created.",
       severity: "success",
-      docs_group: "auth",
+      docs_group: "Authentication events",
       fields: [{ path: "user_id", type: "string", optional: false }],
     },
     {
@@ -334,7 +334,7 @@ const CATALOG = {
       event_type: "sign_in.completed",
       description: "A user completed a sign-in.",
       severity: "success",
-      docs_group: "sign_in",
+      docs_group: "Sign-in events",
       fields: [],
     },
     {
@@ -405,32 +405,31 @@ describe("logs schema (no event type)", () => {
     expect(JSON.parse(captured.out)).toEqual(CATALOG);
   });
 
-  test("prints a TYPE / GROUP / DESCRIPTION table on stderr, without fields", async () => {
+  test("prints one section per group on stderr, without fields", async () => {
     await schema(undefined);
 
     expect(captured.out).toBe("");
     const err = plain(captured.err);
-    expect(err).toMatch(/TYPE\s+GROUP\s+DESCRIPTION/);
-    expect(err).toMatch(/sign_in\.completed\s+sign_in\s+A user completed a sign-in\./);
-    expect(err).toMatch(/aaa\.ungrouped\s+-/);
+    expect(err).toContain(
+      [
+        "Authentication events",
+        "  user.created  A user was created.",
+        "",
+        "Session events",
+        "  session.created  A session was created.",
+        "",
+        "Sign-in events",
+        "  sign_in.completed  A user completed a sign-in.",
+        "  sign_in.failed     A sign-in attempt failed.",
+        "",
+        "Other events",
+        "  aaa.ungrouped",
+      ].join("\n"),
+    );
+    expect(err).toContain("5 event types");
+    expect(err).not.toContain("GROUP");
     expect(err).not.toContain("PATH");
     expect(err).not.toContain("session_id");
-  });
-
-  test("sorts by group, then by type, with ungrouped types last", async () => {
-    await schema(undefined);
-
-    const rows = plain(captured.err)
-      .split("\n")
-      .map((line) => line.split(/\s+/)[0])
-      .filter((first) => first?.includes("."));
-    expect(rows).toEqual([
-      "user.created",
-      "session.created",
-      "sign_in.completed",
-      "sign_in.failed",
-      "aaa.ungrouped",
-    ]);
   });
 
   test.each([

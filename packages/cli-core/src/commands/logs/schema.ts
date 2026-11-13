@@ -183,6 +183,39 @@ export function compareByGroup(a: LogSchema, b: LogSchema): number {
   return a.event_type < b.event_type ? -1 : 1;
 }
 
+/** The heading for event types the API returns without a docs group. */
+export const UNGROUPED_HEADING = "Other events";
+
+/**
+ * One section per docs group, headed by the group's title (a phrase such as
+ * "Billing events", too long for a column), with each type and its
+ * description under it. Each section aligns on its own, so one long type name
+ * only widens its own group.
+ */
+export function formatList(types: LogSchema[]): string[] {
+  const lines: string[] = [];
+  let rows: string[][] = [];
+  let group: string | undefined;
+  const flush = () => {
+    for (const line of pad(rows)) lines.push(`  ${line}`);
+    rows = [];
+  };
+  for (const type of types.toSorted(compareByGroup)) {
+    const heading = type.docs_group || UNGROUPED_HEADING;
+    if (heading !== group) {
+      if (group !== undefined) {
+        flush();
+        lines.push("");
+      }
+      lines.push(bold(heading));
+      group = heading;
+    }
+    rows.push([cyan(type.event_type), type.description || ""]);
+  }
+  flush();
+  return lines;
+}
+
 function printList(types: LogSchema[]): void {
   log.blank();
   if (types.length === 0) {
@@ -190,13 +223,7 @@ function printList(types: LogSchema[]): void {
     return;
   }
 
-  const rows = [
-    ["TYPE", "GROUP", "DESCRIPTION"].map((header) => bold(header)),
-    ...types
-      .toSorted(compareByGroup)
-      .map((type) => [cyan(type.event_type), type.docs_group || dim("-"), type.description || ""]),
-  ];
-  for (const line of pad(rows)) log.info(line);
+  for (const line of formatList(types)) log.info(line);
 
   log.info(dim(`\n${types.length} ${types.length === 1 ? "event type" : "event types"}`));
   log.info(dim("→ See a type's fields: clerk logs schema <event-type>"));
