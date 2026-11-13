@@ -1,4 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
+import { CliError, ERROR_CODE } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockBapiRequest = mock();
@@ -28,7 +29,8 @@ mock.module("../../mode.ts", () => ({
   getMode: () => "human",
 }));
 
-const { list, MAX_REQUESTS } = await import("./list.ts");
+const { list, MAX_REQUESTS, readLogsPage } = await import("./list.ts");
+type LogsListOptions = NonNullable<Parameters<typeof list>[0]>;
 
 const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\x1b\[[0-9;]*m`, "g");
 
@@ -47,7 +49,7 @@ function makeLog(id: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function page(data: unknown[], cursor: Record<string, unknown> = {}) {
+function page(data: readonly unknown[], cursor: Record<string, unknown> = {}) {
   return { status: 200, headers: new Headers(), body: { data, cursor }, rawBody: "" };
 }
 
@@ -491,5 +493,307 @@ describe("logs list", () => {
     expect(captured.err).toContain("1 log");
     expect(captured.err).toContain("Listing stopped early because a request failed");
     expect(captured.err).toContain("--cursor cur_1");
+  });
+});
+
+function makeGroup(groupId: string, overrides: Record<string, unknown> = {}) {
+  const events = [
+    makeLog("log_g1", { type: "sign_in.created", event_time: Date.UTC(2026, 10, 9, 15, 0, 0) }),
+    makeLog("log_g2", { type: "sign_in.completed", event_time: Date.UTC(2026, 10, 9, 15, 0, 5) }),
+  ];
+  return {
+    object: "log_group",
+    group_id: groupId,
+    group_type: "sign_in",
+    started_at: Date.UTC(2026, 10, 9, 15, 0, 0),
+    event_count: 2,
+    status: "completed",
+    status_label: "Completed",
+    subject: "user_123",
+    first_event: events[0],
+    events,
+    has_more_events: false,
+    events_cursor: null,
+    ...overrides,
+  };
+}
+
+describe("logs list --grouped", () => {
+  const captured = useCaptureLog();
+
+  beforeEach(() => {
+    mockIsAgent.mockReturnValue(false);
+    mockResolveBapiSecretKey.mockResolvedValue("sk_test_123");
+    mockBapiRequest.mockResolvedValue(page([makeGroup("sia_1")], { next_page_status: "false" }));
+  });
+
+  afterEach(() => {
+    mockBapiRequest.mockReset();
+    mockResolveBapiSecretKey.mockReset();
+    mockIsAgent.mockReset();
+  });
+
+  test("requests view=grouped with the default limit", async () => {
+    await list({ json: true, grouped: true });
+
+    expect(mockBapiRequest).toHaveBeenCalledWith({
+      method: "GET",
+      path: "/logs?view=grouped&limit=50",
+      secretKey: "sk_test_123",
+      apiVersion: "2026-08-20",
+    });
+  });
+
+  test("sends repeated --group-type and --status, deduplicated, with the event filters and time range", async () => {
+    await list({
+      json: true,
+      grouped: true,
+      groupType: ["sign_in", "sign_up", "sign_in"],
+      status: ["failed"],
+      type: "sign_in.*",
+      from: 1_000,
+      limit: 100,
+      cursor: "cur_prev",
+    });
+
+    const params = requestedUrl(0).searchParams;
+    expect(params.get("view")).toBe("grouped");
+    expect(params.get("limit")).toBe("100");
+    expect(params.getAll("group_type")).toEqual(["sign_in", "sign_up"]);
+    expect(params.getAll("status")).toEqual(["failed"]);
+    expect(params.get("type")).toBe("sign_in.*");
+    expect(params.get("event_time_after")).toBe("1000");
+    expect(params.get("starting_after")).toBe("cur_prev");
+  });
+
+  test("keeps paging while next_page_status is unknown, with the group filters on every page", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([], { next_page_status: "unknown", starting_after: "gcur_1" }))
+      .mockResolvedValueOnce(
+        page([makeGroup("sia_1")], { next_page_status: "true", starting_after: "gcur_2" }),
+      );
+
+    await list({ json: true, grouped: true, groupType: ["sign_in"], limit: 1 });
+
+    expect(mockBapiRequest).toHaveBeenCalledTimes(2);
+    const later = requestedUrl(1).searchParams;
+    expect(later.get("view")).toBe("grouped");
+    expect(later.get("starting_after")).toBe("gcur_1");
+    expect(later.get("group_type")).toBe("sign_in");
+    expect(JSON.parse(captured.out).cursor.next).toBe("gcur_2");
+  });
+
+  test.each([
+    { label: "null", data: [null] },
+    { label: "a string", data: [makeGroup("sia_1"), "sia_2"] },
+    { label: "an array", data: [[]] },
+  ])("fails cleanly when a grouped page's data holds $label", async ({ data }) => {
+    mockBapiRequest.mockResolvedValueOnce(page(data, { next_page_status: "false" }));
+
+    await expect(list({ json: true, grouped: true })).rejects.toThrow(
+      "The Logs API returned an unexpected response.",
+    );
+    expect(captured.out).toBe("");
+  });
+
+  test("never sends group parameters without --grouped", async () => {
+    await list({ json: true });
+
+    const params = requestedUrl(0).searchParams;
+    expect(params.get("view")).toBe("flat");
+    expect(params.has("group_type")).toBe(false);
+    expect(params.has("status")).toBe(false);
+  });
+
+  const invalidGrouped: Array<{ label: string; options: LogsListOptions; message: string }> = [
+    {
+      label: "--group-type without --grouped",
+      options: { groupType: ["sign_in"] },
+      message: "--group-type requires --grouped.",
+    },
+    {
+      label: "--status without --grouped",
+      options: { status: ["failed"] },
+      message: "--status requires --grouped.",
+    },
+    {
+      label: "--limit over 100 with --grouped",
+      options: { grouped: true, limit: 101 },
+      message: "--limit can be at most 100 with --grouped",
+    },
+  ];
+
+  test.each(invalidGrouped)(
+    "rejects $label before resolving a key or calling the API",
+    async ({ options, message }) => {
+      await expect(list({ json: true, ...options })).rejects.toThrow(message);
+      expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
+      expect(mockBapiRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  test("passes groups and ungrouped logs through unchanged in JSON output", async () => {
+    const items = [
+      makeGroup("sia_1"),
+      makeLog("log_free", { type: "user.updated" }),
+      makeGroup("sua_1", { group_type: "sign_up", status: null, status_label: null }),
+    ];
+    mockBapiRequest.mockResolvedValueOnce(
+      page(items, { next_page_status: "false", searched_from: 1_000, searched_to: 2_000 }),
+    );
+
+    await list({ json: true, grouped: true });
+
+    expect(JSON.parse(captured.out)).toEqual({
+      data: items,
+      cursor: {
+        next: null,
+        retention_limit_reached: false,
+        retention_days: null,
+        searched_from: 1_000,
+        searched_to: 2_000,
+      },
+    });
+  });
+
+  test("prints one row per group with its events indented, and ungrouped logs as rows of their own", async () => {
+    mockBapiRequest.mockResolvedValueOnce(
+      page(
+        [
+          makeGroup("sia_1"),
+          makeLog("log_free", { type: "user.updated" }),
+          makeGroup("sua_1", {
+            group_type: "sign_up",
+            status: "failed",
+            events: [makeLog("log_s1", { type: "sign_up.created" })],
+            event_count: 1,
+          }),
+          makeGroup("sia_2", {
+            status: null,
+            status_label: null,
+            events: [makeLog("log_p1", { type: "sign_in.created" })],
+            event_count: 1,
+          }),
+        ],
+        { next_page_status: "true", starting_after: "gcur_next" },
+      ),
+    );
+
+    await list({ grouped: true, limit: 4 });
+
+    expect(captured.out).toBe("");
+    const lines = captured.err.replace(ANSI_ESCAPE_PATTERN, "").split("\n");
+    const header = lines.findIndex((line) =>
+      /STARTED\s+TYPE\s+GROUP\s+STATUS\s+SUBJECT\s+EVENTS/.test(line),
+    );
+    expect(header).toBeGreaterThanOrEqual(0);
+    const table = lines.slice(header + 1, header + 11);
+    expect(table[0]).toMatch(/^\S.*sign_in\s+sia_1\s+completed\s+user_123\s+2$/);
+    expect(table[1]).toMatch(/^ {2}\S.*sign_in\.created .*log_g1$/);
+    expect(table[2]).toMatch(/^ {2}\S.*sign_in\.completed .*log_g2$/);
+    expect(table[3]).toMatch(/^\S.*\s-\s+-\s+user_123\s+1$/);
+    expect(table[4]).toMatch(/^ {2}\S.*user\.updated .*log_free$/);
+    expect(table[5]).toMatch(/sign_up\s+sua_1\s+failed\s+user_123\s+1$/);
+    expect(table[6]).toMatch(/^ {2}\S.*sign_up\.created .*log_s1$/);
+    // A flow that hasn't concluded leaves STATUS empty.
+    expect(table[7]).toMatch(/sign_in\s+sia_2\s+user_123\s+1$/);
+    expect(table[8]).toMatch(/^ {2}\S.*sign_in\.created .*log_p1$/);
+    expect(captured.err).toContain("3 groups, 1 log outside a group");
+    expect(captured.err).toContain("--cursor gcur_next");
+  });
+
+  test("colors the status green when completed and red when failed", async () => {
+    mockBapiRequest.mockResolvedValueOnce(
+      page([makeGroup("sia_1"), makeGroup("sia_2", { status: "failed" })], {
+        next_page_status: "false",
+      }),
+    );
+
+    await list({ grouped: true });
+
+    expect(captured.err).toContain("\x1b[32mcompleted\x1b[0m");
+    expect(captured.err).toContain("\x1b[31mfailed\x1b[0m");
+  });
+
+  test.each([
+    {
+      label: "the matching count when event filters were applied",
+      overrides: { has_more_events: true, event_count: 80, matched_event_count: 53 },
+      note: "  51 more matching events not shown; read them with `clerk logs get sia_1`",
+      events: "53 of 80",
+    },
+    {
+      label: "no count without event filters",
+      overrides: { has_more_events: true, event_count: 80 },
+      note: "  more events not shown; read them with `clerk logs get sia_1`",
+      events: "80",
+    },
+  ])("notes the events a group left out, with $label", async ({ overrides, note, events }) => {
+    mockBapiRequest.mockResolvedValueOnce(
+      page([makeGroup("sia_1", overrides)], { next_page_status: "false" }),
+    );
+
+    await list({ grouped: true });
+
+    const lines = captured.err.replace(ANSI_ESCAPE_PATTERN, "").split("\n");
+    expect(lines.find((line) => line.includes("sia_1"))).toMatch(new RegExp(`\\s${events}$`));
+    expect(lines[lines.findIndex((line) => line.includes("log_g2")) + 1]).toBe(note);
+  });
+
+  test("adds the PAYLOAD column to event rows with --fields", async () => {
+    mockBapiRequest.mockResolvedValueOnce(
+      page(
+        [
+          makeGroup("sua_1", {
+            events: [makeLog("log_s1", { type: "sign_up.created", payload: { status: "x" } })],
+          }),
+        ],
+        { next_page_status: "false" },
+      ),
+    );
+
+    await list({ grouped: true, type: "sign_up.created", fields: "status" });
+
+    expect(captured.err.replace(ANSI_ESCAPE_PATTERN, "")).toMatch(
+      /sign_up\.created .*status=x\s+log_s1/,
+    );
+  });
+
+  test("warns when no groups are found", async () => {
+    mockBapiRequest.mockResolvedValueOnce(page([], { next_page_status: "false" }));
+
+    await list({ grouped: true });
+
+    expect(captured.err).toContain("No logs found.");
+    expect(captured.err).toContain("0 groups");
+  });
+
+  test("keeps the groups already fetched when a later page fails", async () => {
+    const failure = new Error("boom");
+    mockBapiRequest
+      .mockResolvedValueOnce(
+        page([makeGroup("sia_1")], { next_page_status: "unknown", starting_after: "gcur_1" }),
+      )
+      .mockRejectedValueOnce(failure);
+
+    await expect(list({ json: true, grouped: true, limit: 5 })).rejects.toBe(failure);
+
+    const output = JSON.parse(captured.out);
+    expect(output.data.map((item: { group_id: string }) => item.group_id)).toEqual(["sia_1"]);
+    expect(output.cursor.next).toBe("gcur_1");
+  });
+});
+
+describe("readLogsPage", () => {
+  test("gives the unexpected-response error a code, so agent mode prints it as JSON", () => {
+    let error: unknown;
+    try {
+      readLogsPage({ status: 200, headers: new Headers(), body: { nope: 1 }, rawBody: "" });
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).code).toBe(ERROR_CODE.BAPI_UNEXPECTED_RESPONSE);
   });
 });
