@@ -12,6 +12,12 @@ const BREADCRUMB_DIR = ".clerk";
 const BREADCRUMB_FILE = "keyless.json";
 const CREATE_TIMEOUT_MS = 15_000;
 
+/**
+ * Where a Clerk SDK in keyless mode writes the app it created:
+ * `{ publishableKey, secretKey, claimUrl, apiKeysUrl }`.
+ */
+export const SDK_KEYLESS_FILE = [".clerk", ".tmp", "keyless.json"];
+
 interface AccountlessAppResponse {
   publishable_key: string;
   secret_key: string;
@@ -108,6 +114,41 @@ export function parseClaimToken(claimUrl: string): string {
   const token = new URL(claimUrl, base).searchParams.get("token");
   if (!token) throw new Error(`No token parameter in claim URL: ${claimUrl}`);
   return token;
+}
+
+/**
+ * The claim URL a Clerk SDK in keyless mode wrote to `.clerk/.tmp/keyless.json`, already
+ * pointed at the right dashboard host, when it is well-formed https. `clerk open` opens it,
+ * and the `not_linked` advice recommends `clerk open` only when it exists.
+ * `lib/keyless-target.ts` reads the same file, but only for its key pair.
+ */
+export async function readSdkClaimUrl(cwd: string): Promise<string | undefined> {
+  const file = Bun.file(join(cwd, ...SDK_KEYLESS_FILE));
+  if (!(await file.exists())) return undefined;
+
+  try {
+    const parsed = (await file.json()) as { claimUrl?: unknown };
+    const claimUrl = typeof parsed.claimUrl === "string" ? parsed.claimUrl : undefined;
+    if (!claimUrl) return undefined;
+
+    // Written by another process, so untrusted input. The browser launcher on Windows runs
+    // `cmd /c start "" "<url>"`, so only https goes through, and only as the parsed URL's
+    // `href`, which percent-encodes quotes and spaces: no raw `"` can end the argument.
+    let url: URL | undefined;
+    try {
+      url = new URL(claimUrl);
+    } catch {
+      // fall through: not a URL at all
+    }
+    if (url?.protocol !== "https:") {
+      log.debug(`keyless: ignoring non-https claimUrl in ${SDK_KEYLESS_FILE.join("/")}`);
+      return undefined;
+    }
+    return url.href;
+  } catch {
+    // A half-written file during an SDK refresh isn't worth failing over.
+    return undefined;
+  }
 }
 
 function breadcrumbPath(cwd: string): string {

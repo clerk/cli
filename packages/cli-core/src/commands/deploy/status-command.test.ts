@@ -1,8 +1,9 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CliError, ERROR_CODE, EXIT_CODE, PlapiError } from "../../lib/errors.ts";
+import { reportError } from "../../cli-program.ts";
 import {
   captureTelemetryPayload,
   fakeTelemetryCommand,
@@ -800,6 +801,78 @@ describe("deploy status", () => {
   // would be recorded rather than that the setter ran. The whole path,
   // including `runProgram` itself, is covered end to end in
   // `test/integration/telemetry.test.ts`.
+  describe("not_linked message names the app the folder runs on", () => {
+    const INIT_APP =
+      "This folder holds a claim token a signed-out `clerk init` wrote to `.clerk/keyless.json`. " +
+      "If no account owns that application yet, `clerk link` claims it into your account. " +
+      "Run `clerk link` to link this folder, then rerun `clerk deploy status`.";
+    const SDK_APP =
+      "This folder holds a claim link a Clerk SDK wrote to `.clerk/.tmp/keyless.json`. " +
+      "If no account owns that application yet, a person must run `clerk open` to claim it in the Dashboard. " +
+      "Then run `clerk link` and choose it (agents: `clerk auth login` if needed, then `clerk apps list --json` and `clerk link --app <app_id>`), " +
+      "then rerun `clerk deploy status`.";
+    const PLAIN =
+      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy status`.";
+
+    let folder = "";
+    let cwdSpy: ReturnType<typeof spyOn> | undefined;
+
+    afterEach(async () => {
+      cwdSpy?.mockRestore();
+      cwdSpy = undefined;
+      if (folder) await rm(folder, { recursive: true, force: true });
+      folder = "";
+    });
+
+    /** A folder with no profile, holding the given keyless file, as the working directory. */
+    async function unlinkedFolder(state: "init_app" | "sdk_app" | "plain") {
+      folder = await mkdtemp(join(tmpdir(), "clerk-status-unlinked-test-"));
+      cwdSpy = spyOn(process, "cwd").mockReturnValue(folder);
+      if (state === "init_app") {
+        await mkdir(join(folder, ".clerk"), { recursive: true });
+        await Bun.write(
+          join(folder, ".clerk", "keyless.json"),
+          JSON.stringify({ claimToken: "tok_init", createdAt: "2026-11-02T00:00:00.000Z" }),
+        );
+      }
+      if (state === "sdk_app") {
+        await mkdir(join(folder, ".clerk", ".tmp"), { recursive: true });
+        await Bun.write(
+          join(folder, ".clerk", ".tmp", "keyless.json"),
+          JSON.stringify({ claimUrl: "https://dashboard.clerk.com/apps/claim?token=tok_sdk" }),
+        );
+      }
+    }
+
+    test.each([
+      ["init_app", INIT_APP],
+      ["sdk_app", SDK_APP],
+      ["plain", PLAIN],
+    ] as const)("%s folder: the agent JSON error carries the message", async (state, expected) => {
+      await unlinkedFolder(state);
+
+      const error = await deployStatus().catch((caught: unknown) => caught);
+      captured.clear();
+      const exitCode = reportError(error, false);
+
+      expect(exitCode).toBe(EXIT_CODE.GENERAL);
+      expect(JSON.parse(captured.err.trim())).toEqual({
+        error: { code: "not_linked", message: expected },
+      });
+    });
+
+    test("init_app folder in human mode prints the same message", async () => {
+      setMode("human");
+      await unlinkedFolder("init_app");
+
+      const error = await deployStatus().catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.NOT_LINKED);
+      expect((error as CliError).message).toBe(INIT_APP);
+    });
+  });
+
   describe("telemetry", () => {
     function recordedResult() {
       return telemetryResultForSoftExit(Number(process.exitCode ?? EXIT_CODE.SUCCESS));
