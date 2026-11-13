@@ -1,0 +1,999 @@
+[
+  {
+    "id": "kh_a69d35a6e0ca03a44ebfdb4c",
+    "email": "guido.mccullough1@example.com",
+    "email_verified": true,
+    "phone_number": "+447752753111",
+    "phone_verified": true,
+    "username": "guido_mccullough",
+    "first_name": "Guido",
+    "last_name": "McCullough",
+    "password_hash": "$2b$10$URSOgUCIdAQ.N/dU0Jdr0uTrP3uJDDjhMC.7GvMquKvhXTb3n.SHi",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_T2rTFOFaHCEWNY",
+      "signup_source": "organic"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2024-02-03T12:43:03.173Z",
+    "banned": false
+  },
+  {
+    "id": "kh_413a7ad99373cd4cddc85fe9",
+    "email": "ulises.von2@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": "ulises_von",
+    "first_name": "Ulises",
+    "last_name": "Von",
+    "password_hash": "$2b$10$suwCikuZnJQF2fvqxSQWj.UEC0lqT4tqPx/uWSb5prluBQHj4R5LW",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_TCQ64ljoMQmiZS"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2025-03-11T22:07:33.234Z",
+    "banned": false
+  },
+  {
+    "id": "kh_6baf8a6d24faacd1bc41dd8b",
+    "email": "avis.hermann3@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": "avis_hermann65",
+    "first_name": "Avis",
+    "last_name": "Hermann",
+    "password_hash": "$2b$10$NiV749T.gki1GN1eNswrJ.gUe8zHWT.4vBkJFKshKXT3JAFOzDCcq",
+    "public_metadata": {
+      "plan": "free",
+      "role": "member"
+    },
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2022-08-10T01:08:19.117Z",
+    "banned": false
+  },
+  {
+    "id": "kh_db41c1e05bf0819ff8e46da1",
+    "email": "kelsi.reichel4@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Kelsi",
+    "last_name": "Reichel",
+    "password_hash": "$2b$10$wCkL55TaLV5gr6XhN5gJg.jWhcG.MN3HCnVJTdNjvoLq2WEJHcQaq",
+    "public_metadata": {
+      "plan": "team",
+      "role": "admin"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_Ox8H5ogzo0qT37",
+      "signup_source": "referral"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2021-02-28T22:53:22.315Z",
+    "banned": true
+  },
+  {
+    "id": "kh_6c57aed492dfd0c10a0910cb",
+    "email": null,
+    "email_verified": false,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": "wilfrid_gleichner",
+    "first_name": "Wilfrid",
+    "last_name": "Gleichner",
+    "password_hash": "$2b$10$yto0yRaAfJtB4DlFwfLF7uWkx1SgDHEYv/ik4G4YlDuZxL7/q/NeG",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {
+      "theme": "light"
+    },
+    "created_at": "2025-05-12T00:50:52.292Z",
+    "banned": false
+  },
+  {
+    "id": "kh_faee7fdedfd04df9164bdd5e",
+    "email": "nannie.block6@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Nannie",
+    "last_name": "Block",
+    "password_hash": "$2b$10$ymuSfVxKEvw8MC1FOX8pduJk7eSN9HYTsnlJ2pni4sLToH35bqWgq",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_INKSPbd1yuKbJk",
+      "signup_source": "referral"
+    },
+    "unsafe_metadata": {
+      "theme": "dark"
+    },
+    "created_at": "2022-11-17T23:54:33.323Z",
+    "banned": true
+  },
+  {
+    "id": "kh_3eeec8e0a54295eaf33f8af0",
+    "email": "kenton.stehr7@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Kenton",
+    "last_name": "Stehr",
+    "password_hash": null,
+    "public_metadata": {
+      "plan": "free",
+      "role": "admin"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_hOXOufgWeqOOcR"
+    },
+    "unsafe_metadata": {
+      "theme": "system",
+      "onboarding_done": false
+    },
+    "created_at": "2021-02-28T22:53:35.858Z",
+    "banned": false
+  },
+  {
+    "id": "kh_3a0efdb1b0a69bbb2ce9894a",
+    "email": "cristopher.heller8@example.com",
+    "email_verified": true,
+    "phone_number": "+4915171075358",
+    "phone_verified": true,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$wKIOwVKrDvDFY8PrlhgMwO.GBAvRfEDuCtnTLHvhWmsL16kJDpPwu",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2024-07-23T11:15:17.522Z",
+    "banned": false
+  },
+  {
+    "id": "kh_3ecf12a0cb5afcde8b27a9ac",
+    "email": null,
+    "email_verified": false,
+    "phone_number": "+33669075963",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Shannon",
+    "last_name": "Konopelski",
+    "password_hash": "$2b$10$ZX4PJAsXs2QhaUaFefzeQ.fuUK4FF3G/FSxei9NaJ1pjfUtNkIkTW",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_D8RgvQdfcAbiIm",
+      "signup_source": "organic"
+    },
+    "unsafe_metadata": {
+      "theme": "light",
+      "onboarding_done": true
+    },
+    "created_at": "2025-01-05T08:56:21.618Z",
+    "banned": false
+  },
+  {
+    "id": "kh_baf0afa4cdca0acceeb61edd",
+    "email": "pauline.ernser10@example.com",
+    "email_verified": false,
+    "phone_number": "+34635441135",
+    "phone_verified": true,
+    "username": "pauline_ernser",
+    "first_name": "Pauline",
+    "last_name": "Ernser",
+    "password_hash": "$2b$10$piJD.EijwrZt/1Jr4cFIMuPKhZfh14EQwLCCp76Xlt.JO1Td1Ccqu",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_itQpvWk3b2fXJj",
+      "signup_source": "referral"
+    },
+    "unsafe_metadata": {
+      "theme": "system",
+      "onboarding_done": true
+    },
+    "created_at": "2023-06-13T13:20:31.504Z",
+    "banned": false
+  },
+  {
+    "id": "kh_4bee52280581e94bb6cce3ac",
+    "email": null,
+    "email_verified": false,
+    "phone_number": "+393847636020",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Braxton",
+    "last_name": "Feil",
+    "password_hash": "$2b$10$uXowOgUXXCbUtVPGD.DWCu8E2mpgl9glAr2lrvbOKtqNeiXhQMsSy",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2024-09-02T19:31:23.561Z",
+    "banned": false
+  },
+  {
+    "id": "kh_76f89cdbeabaa10d9bcbf9a9",
+    "email": "christine.schaefer12@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": "christine_schaefer",
+    "first_name": "Christine",
+    "last_name": null,
+    "password_hash": "$2b$10$S3ljU8kw7/AG6a4aWLF5IODrw4pxEcSIBISw6/PVOAL5kqZhjRY3y",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_Th4aHYvzM4QMPm",
+      "signup_source": "referral"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2021-06-15T04:55:13.141Z",
+    "banned": false
+  },
+  {
+    "id": "kh_bffffb9ff4aad522dbf7ad24",
+    "email": "tevin.rau13@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Tevin",
+    "last_name": "Rau",
+    "password_hash": null,
+    "public_metadata": {
+      "plan": "pro"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_kBrAsTAPo7ErQ7",
+      "signup_source": "organic"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2026-04-24T06:06:46.188Z",
+    "banned": false
+  },
+  {
+    "id": "kh_4e8bbdb6da10d0f65fd933d8",
+    "email": "vern.moen14@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$whhbZ8odKnHLoQgiX00EXu54Imz1JjGo/NmVdMEirwpcbvniBZJkW",
+    "public_metadata": {
+      "plan": "free",
+      "role": "viewer"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_z4isBPzt32y2Z6",
+      "signup_source": "referral"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2024-08-01T05:40:34.717Z",
+    "banned": true
+  },
+  {
+    "id": "kh_ea86cb9eecba7da050bb5c6c",
+    "email": "adella.kirlin15@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Adella",
+    "last_name": "Kirlin",
+    "password_hash": "$2b$10$xG4Cj/BvnBlK.qq4dHZuKuvhKjQb8JUe7HtDynfDaFeT/rcgccIcu",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2022-07-19T03:22:04.097Z",
+    "banned": false
+  },
+  {
+    "id": "kh_986cf2da1b8ccf7b7491908a",
+    "email": null,
+    "email_verified": false,
+    "phone_number": "+31623661341",
+    "phone_verified": true,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$Wtm3C.BXLP9.jxlZHDwJburytD5YOF5guNKz/O/kLG1LhC4DnSNpu",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_8Hk9t7i2nFUwjl",
+      "signup_source": "google_ads"
+    },
+    "unsafe_metadata": {
+      "theme": "system",
+      "onboarding_done": false
+    },
+    "created_at": "2024-11-09T23:10:38.511Z",
+    "banned": false
+  },
+  {
+    "id": "kh_5a4b5dfcc8cdea5be4a97774",
+    "email": "stevie.bruen17@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Stevie",
+    "last_name": "Bruen",
+    "password_hash": "$2b$10$tAVv6y3UuhcinOZEIZy30.o5YREGN48//sSRQQJ.wJb8eKnhhYcfW",
+    "public_metadata": {
+      "plan": "pro"
+    },
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2025-08-05T04:47:01.248Z",
+    "banned": false
+  },
+  {
+    "id": "kh_a1bf9e2b823bdf212a6ba5dc",
+    "email": "roman.brekke18@example.com",
+    "email_verified": false,
+    "phone_number": "+46724798272",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Roman",
+    "last_name": "Brekke",
+    "password_hash": "$2b$10$MDjiHNBnpmmhTSuLK/1/de4P8qO4.Ni4J4t/9I.PmJwAj.JXBO4Cm",
+    "public_metadata": {
+      "plan": "free"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_brWPaNqbBww01D"
+    },
+    "unsafe_metadata": {
+      "theme": "light"
+    },
+    "created_at": "2023-06-07T04:52:55.881Z",
+    "banned": false
+  },
+  {
+    "id": "kh_2dcdca6a23aa072de45bd410",
+    "email": "elizabeth.wilderman19@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Elizabeth",
+    "last_name": null,
+    "password_hash": "$2b$10$r.ASX2ngGrW6tcNiYSrUr.tioAskLJ9SD.Jf59F6JcEg9UWoIHzDy",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_YTIdxlaGp2uv5C"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2025-12-05T17:32:16.192Z",
+    "banned": false
+  },
+  {
+    "id": "kh_1f2f64bc4654f02bf9dda8ee",
+    "email": "tracey.murray20@example.com",
+    "email_verified": true,
+    "phone_number": "+353873404356",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Tracey",
+    "last_name": "Murray",
+    "password_hash": "$2b$10$c4Hbc4UHlSsdtAC/d306qOxzCUG3yJNRG9x5OQKF/bLYTiEh.V9Zu",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2021-07-14T23:37:23.750Z",
+    "banned": false
+  },
+  {
+    "id": "kh_ae6cbac3fdef3406ed976086",
+    "email": "rene.glover21@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": null,
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_Wj9cobKKeVBKes"
+    },
+    "unsafe_metadata": {
+      "theme": "system"
+    },
+    "created_at": "2024-03-27T01:28:32.100Z",
+    "banned": false
+  },
+  {
+    "id": "kh_833f9a3a16c9acacebad80ea",
+    "email": "stanton.gusikowski22@example.com",
+    "email_verified": false,
+    "phone_number": "+14165550101",
+    "phone_verified": true,
+    "username": "stanton.gusikowski55",
+    "first_name": "Stanton",
+    "last_name": "Gusikowski",
+    "password_hash": "$2b$10$.XgZFr2YOqehbssrhqSEN.PPHkBIpAzRh5AV0ZS2agx.vrFnE.g/W",
+    "public_metadata": {
+      "plan": "pro"
+    },
+    "private_metadata": {},
+    "unsafe_metadata": {
+      "theme": "light",
+      "onboarding_done": false
+    },
+    "created_at": "2025-04-27T02:25:12.764Z",
+    "banned": false
+  },
+  {
+    "id": "kh_2b9f3de6efaba8079becf376",
+    "email": "jeremie.kassulke23@example.com",
+    "email_verified": true,
+    "phone_number": "+16475550101",
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Jeremie",
+    "last_name": "Kassulke",
+    "password_hash": "$2b$10$98FBjc52jEFwIvLKqdXXtu8Q01JLXcZ78VhAyrF7suQuVUSn2AhcK",
+    "public_metadata": {
+      "plan": "pro"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_2y1WOtIUxeXZh1"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2021-12-27T10:18:13.447Z",
+    "banned": false
+  },
+  {
+    "id": "kh_bf4f2edf2f4b0e3fb21210ec",
+    "email": null,
+    "email_verified": false,
+    "phone_number": "+14375550101",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Aylin",
+    "last_name": "Sanford",
+    "password_hash": null,
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {
+      "theme": "light",
+      "onboarding_done": true
+    },
+    "created_at": "2023-03-07T23:34:43.346Z",
+    "banned": false
+  },
+  {
+    "id": "kh_929bdac9c9dfe33ddb3b84f7",
+    "email": null,
+    "email_verified": false,
+    "phone_number": "+19055550101",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Anahi",
+    "last_name": "Treutel",
+    "password_hash": null,
+    "public_metadata": {
+      "plan": "free",
+      "role": "admin"
+    },
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2025-05-10T06:20:59.041Z",
+    "banned": false
+  },
+  {
+    "id": "kh_2edbabefb25bf05e81a614b9",
+    "email": "lavonne.witting26@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$mcmVcVbAC94uoMQAAtX2fO44bb4UFfhKNbjak2Ydj1u5Y47rOsuD2",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_HnatC4X7UtDcOd",
+      "signup_source": "organic"
+    },
+    "unsafe_metadata": {
+      "theme": "system",
+      "onboarding_done": true
+    },
+    "created_at": "2025-11-28T17:24:27.691Z",
+    "banned": false
+  },
+  {
+    "id": "kh_d71c7432b41ae3425af7db2c",
+    "email": "adah.jacobibatz27@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": null,
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2022-02-06T21:52:31.394Z",
+    "banned": false
+  },
+  {
+    "id": "kh_efcadda00ec400d0a13fbba9",
+    "email": null,
+    "email_verified": false,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": "leann.carter75",
+    "first_name": "Leann",
+    "last_name": "Carter",
+    "password_hash": "$2b$10$0teu9LCg9d4UJZUvufot5OZDtJH8Zjcm2F15RUHHOM/Lv/JcmfraK",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {
+      "theme": "system",
+      "onboarding_done": true
+    },
+    "created_at": "2024-03-19T17:40:06.308Z",
+    "banned": false
+  },
+  {
+    "id": "kh_3128bf1c2bfab7c2c31d2470",
+    "email": null,
+    "email_verified": false,
+    "phone_number": "+16045550101",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Rebekah",
+    "last_name": "Hamill-Mayert",
+    "password_hash": "$2b$10$bSspuaHKKVWqNjPxfr23xeuvMZdPv8Lh6OXmPO5W0D.pFi81Vlace",
+    "public_metadata": {
+      "plan": "team"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_Md6thw6gQHGGOb",
+      "signup_source": "referral"
+    },
+    "unsafe_metadata": {
+      "theme": "light"
+    },
+    "created_at": "2025-01-20T23:50:26.657Z",
+    "banned": false
+  },
+  {
+    "id": "kh_d5fd7dfee32fb8afdf083b1b",
+    "email": "reyna.raurussel30@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Reyna",
+    "last_name": "Rau-Russel",
+    "password_hash": null,
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_GkPkNbdADMhI8q"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2024-10-23T06:23:43.702Z",
+    "banned": false
+  },
+  {
+    "id": "kh_c35eefb09e55ca5ccccab0ae",
+    "email": "shakira.pacocha31@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Shakira",
+    "last_name": "Pacocha",
+    "password_hash": "$2b$10$t6EI7xf31.BhYVrb0vR/kO9Lxqf.b8fPqz4cDrQFyC1F0Syntus0K",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {
+      "theme": "light",
+      "onboarding_done": true
+    },
+    "created_at": "2024-09-17T18:54:00.687Z",
+    "banned": false
+  },
+  {
+    "id": "kh_0f8eeeffbec9ff8cabe69f7e",
+    "email": "burnice.gusikowski32@example.com",
+    "email_verified": true,
+    "phone_number": "+17785550101",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Burnice",
+    "last_name": "Gusikowski",
+    "password_hash": "$2b$10$E.i1UzmPQokNMfDtKJ1AhufraolDAmNCLQYHZ6ldPdHRbyJr/pJ/6",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_wo3IlHJQ4H9dlB",
+      "signup_source": "referral"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2021-01-28T10:06:34.345Z",
+    "banned": false
+  },
+  {
+    "id": "kh_4b5a00bdb5dfdef882eda70d",
+    "email": "douglas.bayer33@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$6qSxOMMmq.fifnczKJeDBOUsSCILq7XWdVzDB65q02FVr96.cP5pK",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2021-04-27T06:15:33.617Z",
+    "banned": false
+  },
+  {
+    "id": "kh_a65acfbfd27b5b924fd25dbd",
+    "email": null,
+    "email_verified": false,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": "amber_pollich28",
+    "first_name": "Amber",
+    "last_name": "Pollich",
+    "password_hash": "$2b$10$zq0UBe/V/SV8S4og00VfE.5bKRDzoWLAzr.oJEhTExhzf08vIJKbq",
+    "public_metadata": {
+      "plan": "free"
+    },
+    "private_metadata": {},
+    "unsafe_metadata": {
+      "theme": "dark"
+    },
+    "created_at": "2023-01-21T20:48:18.930Z",
+    "banned": false
+  },
+  {
+    "id": "kh_bc3fad1e4eed01cc3b0c1bde",
+    "email": "tania.gleichner35@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$YZ8CX3CCk3pmE8RbmWHH9uYhBTAjZfvQO.hozpIJq9rS1JHh/htPi",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {
+      "theme": "dark",
+      "onboarding_done": true
+    },
+    "created_at": "2023-01-02T04:06:36.716Z",
+    "banned": false
+  },
+  {
+    "id": "kh_ec2dd0f1f18ebed599ee09fa",
+    "email": "elmira.muller36@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$lu5lcbxTbkQ/uQnE2aXnQOV8HhRtW.YcgYPHzfsjiXYNBVjJUWtm.",
+    "public_metadata": {
+      "plan": "free"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_ye82tWkJFnFCr0"
+    },
+    "unsafe_metadata": {
+      "theme": "light",
+      "onboarding_done": false
+    },
+    "created_at": "2025-06-30T03:56:51.125Z",
+    "banned": false
+  },
+  {
+    "id": "kh_d3f7e48bdd4a25d1aaaa5f21",
+    "email": "noemy.schaefer37@example.com",
+    "email_verified": true,
+    "phone_number": "+15145550101",
+    "phone_verified": true,
+    "username": "noemy.schaefer9",
+    "first_name": "Noemy",
+    "last_name": "Schaefer",
+    "password_hash": "$2b$10$fa/CMOkGtA2YDkL2Cvfo4.mZLk1b5JEvBfCxlCdtZnW5aNRSqEh7i",
+    "public_metadata": {
+      "plan": "pro"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_NmVy47Yd03ken9",
+      "signup_source": "google_ads"
+    },
+    "unsafe_metadata": {
+      "theme": "dark",
+      "onboarding_done": true
+    },
+    "created_at": "2021-07-14T12:09:13.431Z",
+    "banned": false
+  },
+  {
+    "id": "kh_a2bf7dd40f7ece4ddb1ff63f",
+    "email": "nadine.bosco38@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": null,
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_nHHPlKKgMVVRcw"
+    },
+    "unsafe_metadata": {
+      "theme": "system",
+      "onboarding_done": true
+    },
+    "created_at": "2021-10-18T17:27:40.356Z",
+    "banned": false
+  },
+  {
+    "id": "kh_4142feca042cacfecefd1c6b",
+    "email": "lempi.nicolas39@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": "lempi_nicolas",
+    "first_name": "Lempi",
+    "last_name": null,
+    "password_hash": "$2b$10$mn8BuQFnMXoPCcHYOE4JleVH4Rt6T3ri01Ry7FXAsfteWzFqZvICi",
+    "public_metadata": {
+      "plan": "pro"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_9j7g98uApxsP5V"
+    },
+    "unsafe_metadata": {
+      "theme": "system",
+      "onboarding_done": false
+    },
+    "created_at": "2023-04-16T05:40:16.760Z",
+    "banned": false
+  },
+  {
+    "id": "kh_8ba4a1e8906b12f490bdf86c",
+    "email": "calista.romaguera40@example.com",
+    "email_verified": true,
+    "phone_number": "+14385550101",
+    "phone_verified": true,
+    "username": "calista_romaguera23",
+    "first_name": "Calista",
+    "last_name": "Romaguera",
+    "password_hash": "$2b$10$pOGXh31nmHsEEjfoJQKHEugwCKz/GSN7EUDxUiGy2UYdXWF.v8.ju",
+    "public_metadata": {
+      "plan": "pro"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_yCqa76V6vHwfAz",
+      "signup_source": "google_ads"
+    },
+    "unsafe_metadata": {
+      "theme": "dark",
+      "onboarding_done": true
+    },
+    "created_at": "2021-10-07T14:42:32.654Z",
+    "banned": false
+  },
+  {
+    "id": "kh_4d379d5caa51d398ad330d4f",
+    "email": null,
+    "email_verified": false,
+    "phone_number": "+12125550101",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Jayme",
+    "last_name": "Nader",
+    "password_hash": null,
+    "public_metadata": {
+      "plan": "team",
+      "role": "member"
+    },
+    "private_metadata": {
+      "stripe_customer_id": "cus_wt2M0BaAztMG7r",
+      "signup_source": "google_ads"
+    },
+    "unsafe_metadata": {
+      "theme": "dark",
+      "onboarding_done": true
+    },
+    "created_at": "2025-09-10T16:59:05.207Z",
+    "banned": false
+  },
+  {
+    "id": "kh_2dbcadbcd0beb0ecafcbb34e",
+    "email": null,
+    "email_verified": false,
+    "phone_number": "+16465550101",
+    "phone_verified": true,
+    "username": null,
+    "first_name": "Kasey",
+    "last_name": "Farrell",
+    "password_hash": null,
+    "public_metadata": {
+      "plan": "pro",
+      "role": "viewer"
+    },
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2023-12-19T01:12:35.203Z",
+    "banned": false
+  },
+  {
+    "id": "kh_cbebb1c2c8bcd33bd7a93de5",
+    "email": "joanny.schroeder43@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": "joanny_schroeder",
+    "first_name": "Joanny",
+    "last_name": null,
+    "password_hash": null,
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_fSIxOYbOGG2E7K"
+    },
+    "unsafe_metadata": {
+      "theme": "dark",
+      "onboarding_done": false
+    },
+    "created_at": "2025-04-24T21:04:14.243Z",
+    "banned": false
+  },
+  {
+    "id": "kh_9a5aebe81def7ae677b37d85",
+    "email": "lilliana.swaniawski44@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": "lilliana_swaniawski20",
+    "first_name": "Lilliana",
+    "last_name": "Swaniawski",
+    "password_hash": "$2b$10$OWJitF1GMFwau6guFltEROcyMWZaQZ/Ru9ipCykH1ruxrPi4EJXfa",
+    "public_metadata": {
+      "plan": "team"
+    },
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2021-08-03T19:20:27.484Z",
+    "banned": false
+  },
+  {
+    "id": "kh_55aefa83c5aefde8e2a38ee8",
+    "email": "samson.schiller45@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$eOw28p463Aw1z1/mm3pkTeTlHq5XoqB1rXPMgyuL3Z6Z3Bnilt0aq",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_UmpW3VdSaLU3Tq"
+    },
+    "unsafe_metadata": {
+      "theme": "system",
+      "onboarding_done": true
+    },
+    "created_at": "2022-01-25T21:25:41.980Z",
+    "banned": false
+  },
+  {
+    "id": "kh_1f45caccb1c683ecb97cbea7",
+    "email": "jesus.roob46@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$bYkDx3fVwDOEE9pDNgx78OxXKW9bk.5R0l5crMImcQV8GT.52inSW",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_V3qBc6RaHGW8HW",
+      "signup_source": "referral"
+    },
+    "unsafe_metadata": {
+      "theme": "light",
+      "onboarding_done": true
+    },
+    "created_at": "2022-11-25T08:41:50.806Z",
+    "banned": false
+  },
+  {
+    "id": "kh_b82c3d19f3c9eed5b00cc51b",
+    "email": "ludwig.mraz47@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Ludwig",
+    "last_name": "Mraz",
+    "password_hash": null,
+    "public_metadata": {
+      "plan": "free"
+    },
+    "private_metadata": {},
+    "unsafe_metadata": {},
+    "created_at": "2023-02-17T01:41:47.460Z",
+    "banned": false
+  },
+  {
+    "id": "kh_1befaedd7fdff4ab1e548fa6",
+    "email": "thelma.schowalter48@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Thelma",
+    "last_name": null,
+    "password_hash": "$2b$10$5ubTuCPWwRIaxvxaSGeZgeD87XLVmsOiYV0b1T71BK0o67IuT.r66",
+    "public_metadata": {},
+    "private_metadata": {},
+    "unsafe_metadata": {
+      "theme": "dark"
+    },
+    "created_at": "2025-07-05T22:25:53.680Z",
+    "banned": false
+  },
+  {
+    "id": "kh_4bce8f7a8ecbe04910afb947",
+    "email": "sonja.denesik49@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": null,
+    "last_name": null,
+    "password_hash": "$2b$10$wjfWqhvHRUdToX27c4kYbOxd8bA6tZxny/u8lecFId6TTfIyRyLQm",
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_7pboF6aRJgDw0i"
+    },
+    "unsafe_metadata": {},
+    "created_at": "2025-07-05T17:10:18.540Z",
+    "banned": false
+  },
+  {
+    "id": "kh_d3d6da83cc5d0c9830add985",
+    "email": "fannie.daugherty50@example.com",
+    "email_verified": true,
+    "phone_number": null,
+    "phone_verified": false,
+    "username": null,
+    "first_name": "Fannie",
+    "last_name": "Daugherty",
+    "password_hash": null,
+    "public_metadata": {},
+    "private_metadata": {
+      "stripe_customer_id": "cus_REW6SaClNtvL6W"
+    },
+    "unsafe_metadata": {
+      "theme": "light",
+      "onboarding_done": false
+    },
+    "created_at": "2025-06-04T12:38:21.912Z",
+    "banned": false
+  }
+]

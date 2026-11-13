@@ -1,0 +1,51 @@
+rid,login,alt_contact,nm,cred,vf,xa,xb,born,del
+100001,terence.weissnat1@example.com,,"Weissnat, Terence",bcrypt:$2b$10$IkY/P25Vy3Neig6/dQMjrOJj3ROuBSJuOCalGpqBaI.yMHYjHMUQe,5,"{""tier"":""silver""}",crm=hs_88993;seg=b2c,2023-10-05 10:43:51,0
+100008,jaycee.denesik2@example.com,,,pbkdf2:sha256:100000:hW13dbrVlii2eJGX:Lf1z2eIpG4czeb4W/cz3IP31V+LbnRNk3uG1/3pOGAQ=,5,"{""tier"":""bronze"",""nl"":false}",crm=hs_71894;seg=b2c,2025-07-25 10:56:14,0
+100015,esther.goyette3@example.com,,"Goyette, Esther",bcrypt:$2b$10$ZQK2gVmunwLDIaHg1PUbDeTYfn8IbPQKUYX6gucRxvzdAJbciziSu,5,,crm=hs_34124;src=direct;seg=b2c,2023-02-19 04:50:04,0
+100022,ahmad.hand4@example.com,44-7817-149359,"Hand, Ahmad",pbkdf2:sha256:100000:z9pQ4IFpBVsQgNpL:ZFkn8kizMAq3yHQcYKxlAAnBtj6yPLy9dh+HuvmLLew=,3,"{""tier"":""gold"",""nl"":false}",,2023-07-18 20:16:08,0
+100029,madilyn.pollich5@example.com,,"Pollich, Madilyn",bcrypt:$2b$10$ukl4Hay3FQGpkPKyzNRmfOcosE.dPFRts7AFhqStDBKkbaK2OhYaC,1,"{""tier"":""silver"",""nl"":true}",crm=hs_80491;src=partner;seg=b2c,2022-01-13 15:43:54,0
+100036,rylee.langosh6@example.com,49-1516-5183124,,pbkdf2:sha256:100000:uInPvujCZeQLpMFI:C2egoG18WQiyRXWESk7IfY51cQsxG2fAJsIl72DwxD8=,2,,,2026-05-29 10:24:47,0
+100043,33-6-12-06-42-46,,"Wehner, Florida",,2,,crm=hs_27668,2026-05-19 01:15:56,0
+100050,lillian.turner8@example.com,,"Turner, Lillian",bcrypt:$2b$10$T7T6GjggrOe3uqCbEfT23.PO5FCcqoNPfrZrYV4xnF8/koA102Ali,1,"{""tier"":""gold"",""ui"":""comfy""}",crm=hs_38018,2024-07-23 17:27:51,0
+100057,regan.russel9@example.com,34-646-00-95-59,,pbkdf2:sha256:100000:HdcqqqKiyyKsMQtI:8vAv+++NRmpu0IYi2qndxdYYZoMUhcvQ5OWzcwjYIKk=,3,,,2024-01-02 06:29:15,0
+100064,jacynthe.schmeler10@example.com,,Jacynthe,,1,,crm=hs_76883;src=adwords,2023-09-28 19:10:13,0
+100071,abdul.leannon11@example.com,39-344-507-8119,Abdul,bcrypt:$2b$10$ZNo6LtDVjMEe/7jOanOUJeFGSoYKSGvIejcYEQzSjCC/p1br7nEs6,1,,,2023-05-05 17:32:50,0
+100078,31-6-11458494,,Eunice,pbkdf2:sha256:100000:PzwRPDy5SRxOtiKc:1fEAjCg0WPAOmnnSAtsbcgupzl8gyQzxuMyfdVOpdXU=,2,,crm=hs_21893;seg=edu,2023-11-27 12:16:52,0
+100085,manuel.hermann13@example.com,,"Hermann, Manuel",,1,,crm=hs_64852,2022-02-15 14:50:58,0
+100092,dylan.beahan14@example.com,,"Beahan, Dylan",bcrypt:$2b$10$QFrdLcN8nxPaYm59EcjdCuZMWEY.rILxrlxNgpX35F4W6BN7JBwiu,1,,crm=hs_52737;seg=edu,2024-07-20 07:35:58,0
+100099,kristian.bechtelar15@example.com,46-76-969-08-07,,pbkdf2:sha256:100000:WH2erVlqMlYa1Dqh:wziHJEOOICWxDRgNv+GbEzj3nOU++sJ82C4ipryOa/w=,1,"{""tier"":""gold""}",crm=hs_38076;src=partner,2021-11-23 21:51:18,0
+100106,353-89-954-4880,,"Will, Elisa",,2,"{""tier"":""silver"",""nl"":true}",,2022-10-09 05:35:37,0
+100113,judd.klocko17@example.com,,"Klocko, Judd",,1,"{""tier"":""silver"",""nl"":true}",,2025-06-15 21:50:18,0
+100120,alejandra.bergstrom18@example.com,,"Bergstrom, Alejandra",bcrypt:$2b$10$ggTGGC8J9szkrXaUWYnVkeM3Bcu8uCJrYUYx.XO0oOOlCgrEVNAhe,1,"{""tier"":""bronze""}",,2024-02-16 14:11:27,0
+100127,kade.dare19@example.com,,"Dare, Kade",,1,"{""tier"":""gold"",""ui"":""compact""}",crm=hs_92922;seg=b2b,2026-02-24 16:59:51,0
+100134,matt.gutkowski20@example.com,,,pbkdf2:sha256:100000:uY5yhKhUXK0KkFyE:SEDcyGKaLiu/OKKE76Sp4Ogkh2vkECRMUDUlZYoMI7A=,1,"{""tier"":""bronze"",""nl"":true,""ui"":""compact""}",crm=hs_36780,2021-08-09 06:07:02,0
+100141,larue.beier21@example.com,,"Beier, Larue",bcrypt:$2b$10$wbC9xwBkyFaeSMzYMr/4ruJYgpCVILiDW55egEGUNACmt4rLCSpwu,1,"{""tier"":""gold"",""ui"":""comfy""}",,2026-01-14 01:33:38,0
+100148,sunny.hartmann22@example.com,,,,1,,crm=hs_62463;src=direct;seg=b2b,2023-08-20 10:43:03,0
+100155,javon.powlowski23@example.com,,,pbkdf2:sha256:100000:XR4MywvahUjVkHv3:tJyzwjC/LO6iGzGF35LMxrjTD69/dzv01VZ/ez5Q0QE=,1,,crm=hs_98572;seg=b2b,2021-05-02 11:10:52,0
+100162,mustafa.doyle24@example.com,1-416-555-0104,"Doyle, Mustafa",bcrypt:$2b$10$xGhsCZlmwM49UhVBMGH07O46/HLc6PEhX2wAxRaXoa8TfGUJRJGYm,3,"{""tier"":""silver""}",,2021-08-14 09:26:16,0
+100169,1-647-555-0104,,,pbkdf2:sha256:100000:75q3jPzFKF1fjIab:Ljy4/aJU/CeR3menRWUTbf378Ey5DLmJeyJGF66A98I=,2,"{""tier"":""gold"",""nl"":true}",,2022-11-24 15:39:31,0
+100176,gregoria.west26@example.com,1-437-555-0104,"West, Gregoria",bcrypt:$2b$10$entkbreO35HAMM4CeaVCIONGf9kqOJMhsLWNKmIYZ2GYngJY8dkQC,2,"{""tier"":""gold""}",crm=hs_57772;src=partner;seg=edu,2022-03-26 16:43:09,0
+100183,eunice.denesik27@example.com,,"Denesik, Eunice",pbkdf2:sha256:100000:wro35p6G2UtQLk9F:7fzJMw3Bf/cyFWpfFRyOhm1+CP8/iP0L2CbiDaDWt0E=,1,"{""tier"":""silver"",""nl"":true}",crm=hs_79655;src=adwords,2024-08-10 10:44:49,0
+100190,mavis.davis28@example.com,,"Davis, Mavis",bcrypt:$2b$10$QEXLVNJLtObfXCn/F6HCYOnOFl9B7wl.JvgO2hnVpRPdDjWNrPTdC,1,"{""tier"":""gold"",""ui"":""compact""}",crm=hs_99610;seg=b2b,2021-10-12 10:54:03,0
+100197,oceane.leuschke29@example.com,,,pbkdf2:sha256:100000:y2Gl3vcnWh0usdTq:P0B2juElhE6tvwv157JVQY7WtI4D2MVKa8xtZW4GMWU=,1,"{""tier"":""bronze"",""ui"":""comfy""}",,2021-09-26 14:16:36,0
+100204,lorraine.batz,,"Batz, Lorraine",bcrypt:$2b$10$DdAH3b6ctq/zq2HCcXxq7uW10Dp6ZG8eXGXwPezE/3pp6y9KG6Zx2,0,"{""tier"":""silver"",""nl"":true}",crm=hs_46860,2024-01-24 21:21:47,0
+100211,alexandrine.roob31@example.com,,"Roob, Alexandrine",pbkdf2:sha256:100000:H0R0u6rIWCDlDEPh:qMnMru5QSMaJ6jcWLnrNwaSsej9i3QjbTPOueNV5ZNA=,1,,crm=hs_88306;seg=b2c,2024-12-29 22:32:49,0
+100218,lura.kuhlman32@example.com,,"Kuhlman, Lura",,1,"{""tier"":""bronze"",""nl"":false}",crm=hs_70740;src=adwords;seg=edu,2022-03-31 20:49:45,0
+100225,1-905-555-0104,,"Hermann, Marcelina",,2,"{""tier"":""bronze"",""nl"":true}",crm=hs_33316;src=adwords;seg=b2c,2025-04-15 02:00:44,0
+100232,1-604-555-0104,,"O'Keefe, Karla",,2,"{""tier"":""silver"",""nl"":false}",,2023-03-29 02:45:45,0
+100239,raphael.corwin35@example.com,,Raphael,,1,"{""tier"":""bronze"",""ui"":""comfy""}",crm=hs_84946;src=partner;seg=b2c,2025-08-02 06:17:29,0
+100246,eleonore.wilkinson36@example.com,,"Wilkinson, Eleonore",bcrypt:$2b$10$Z1CR5TQ8HL465xvrNJrkleJ60XltAPLhxC2XhxUBQlMX0g4B0yGYC,1,"{""tier"":""bronze"",""nl"":false,""ui"":""comfy""}",,2024-05-17 09:58:13,0
+100253,eldridge.schmeler37@example.com,,,pbkdf2:sha256:100000:sdyiUexefobgnRBP:QxHDyHIw2Yc8kGRds5jK9jEGhOhTXImzsuETg+0xcJA=,1,,,2024-06-20 07:01:22,0
+100260,lydia.bednar38@example.com,1-778-555-0104,"Bednar, Lydia",bcrypt:$2b$10$l6OxYY.0em0nudJtFxQeseMewwLdCGiWOyQ/m9kxwaw1ncMNfRBjy,2,"{""tier"":""silver""}",crm=hs_39285,2025-10-02 10:44:53,0
+100267,alexander.zemlak,,"Zemlak, Alexander",pbkdf2:sha256:100000:XSmQXbz21KViO9yA:4P9C4/SJi2AHQ4CpyyIk0Uv+415aQMWhg7O1nBDgovg=,0,,,2022-08-15 16:59:03,0
+100274,1-514-555-0104,,,bcrypt:$2b$10$QS45zoxBsKl/.KXP.Je.fuo5ly3kvYZgXxF4OAXDpEDegbBnybHRq,2,"{""tier"":""silver"",""nl"":true,""ui"":""compact""}",crm=hs_80607;src=partner,2023-05-21 09:54:29,0
+100281,estevan.armstrong41@example.com,1-438-555-0104,,pbkdf2:sha256:100000:hsl4tICjjRe4qNId:hqva8rnKME4jBNMcFBRlAYWQq11LOFW6L50O6Y+gMe4=,3,,,2021-03-27 08:40:22,0
+100288,ilene_dare93,,"Dare, Ilene",bcrypt:$2b$10$f4JjfZS77ztKDkMhgEyReudf8YlzKU73tsF3qEtKV.aVtWR7hRg1C,0,"{""tier"":""gold"",""nl"":true}",,2021-01-11 05:54:05,0
+100295,kelton.bednar43@example.com,,,pbkdf2:sha256:100000:8CvGsYl1hRXMSAGb:kSSCnUpkqrR6zuqSbXnV7P/4Kg6IQe/yCCM/PsHpAj8=,1,"{""tier"":""silver""}",,2024-08-30 16:04:54,1
+100302,1-212-555-0104,,,bcrypt:$2b$10$mulNk6btULqyqW9e41FTCeQrLxysLa7s6wISUkh7Q73SRLxWWVXR.,2,"{""tier"":""bronze"",""ui"":""comfy""}",crm=hs_52887;src=partner,2022-07-27 05:05:22,0
+100309,blanche.runolfsson45@example.com,1-646-555-0104,"Runolfsson, Blanche",pbkdf2:sha256:100000:VRhHF3iKTjWzwtmh:3svfwhhc7JXYvpRth0JdbwglVVUUkF4Zft/dIXuDJi0=,3,"{""tier"":""bronze""}",crm=hs_80700;src=partner,2022-09-23 10:31:02,0
+100316,jamaal.corkery46@example.com,,"Corkery, Jamaal",,1,"{""tier"":""silver"",""nl"":false}",,2022-11-28 01:27:06,0
+100323,mathilde.grimes47@example.com,,,,1,"{""tier"":""silver"",""nl"":true}",,2022-11-17 06:26:21,0
+100330,alf.lynch48@example.com,,"Lynch, Alf",bcrypt:$2b$10$nDGPMB8RAHuu/HiW7oOvvONT8XvmepFopQRHjUHepHONEDolahD8G,1,,crm=hs_82083;seg=b2b,2024-10-07 11:19:48,0
+100337,aniyah.mitchell49@example.com,,,pbkdf2:sha256:100000:XlqFncVhN5QUV8Us:Vq7l3ZVaY7C6bSXV5fWrPTr/HqJ6rrCg467xGRSHSI8=,1,"{""tier"":""gold"",""ui"":""comfy""}",,2024-02-13 19:40:26,1
+100344,ali.rohan50@example.com,,,bcrypt:$2b$10$jW4ItI4C6z/GBhSLnoLW4ujvqT3pyoTrtKIdws6tg.z9CrwUSB1qC,1,"{""tier"":""gold""}",,2023-08-07 22:12:46,1

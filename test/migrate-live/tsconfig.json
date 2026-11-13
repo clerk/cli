@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.json",
+  // Ported from migration-test-apps, which compiled without
+  // noUncheckedIndexedAccess. Turning it on here would mean rewriting ~30 lines
+  // of working test code for no test value.
+  "compilerOptions": {
+    "lib": ["ESNext", "DOM"],
+    "noUncheckedIndexedAccess": false
+  },
+  "include": ["**/*.ts"],
+  "exclude": ["node_modules", "data"]
+}
