@@ -26,9 +26,12 @@ types and the payload fields \`--type\`, \`--payload-filter\` and \`--fields\` t
 
 With --json (implied in agent mode), list and get print \`{ data, cursor }\`:
 \`data\` holds the logs as the Backend API returns them, and \`cursor.next\` is what
-to pass to --cursor for the next page (null when there are none). With --follow
-the output is NDJSON instead, one log per line. schema prints the API's schema
-objects as-is. Logs go back as far as your plan's log retention;
+to pass to --cursor for the next page (null when there are none). With
+--grouped, \`data\` holds \`log_group\` items next to the logs outside a group, and
+a group with \`has_more_events\` continues with
+\`clerk logs get <group_id> --cursor <events_cursor>\`. With --follow the output
+is NDJSON instead, one log per line. schema prints the API's schema objects
+as-is. Logs go back as far as your plan's log retention;
 \`cursor.retention_limit_reached\` says a list reached it.`;
 
 export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.env): void {
@@ -234,7 +237,10 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       `Maximum logs to return (1-${GET_MAX_LIMIT}, default 50)`,
       (value) => parseIntegerOption(value, "--limit", { min: 1, max: GET_MAX_LIMIT }),
     )
-    .option("--cursor <cursor>", "Continue from the cursor a previous run printed")
+    .option(
+      "--cursor <cursor>",
+      "Continue from a previous run's cursor.next, or a group's events_cursor",
+    )
     .option("--type <type>", "Only logs of a type; a trailing * matches a prefix (sign_in.*)")
     .option("--user <user-id>", "Only logs where the user is the actor or subject")
     .option(
@@ -276,7 +282,7 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       },
       {
         command: "clerk logs get sia_123 --cursor <cursor> --json",
-        description: "The next page, from a previous cursor.next",
+        description: "The next page, from cursor.next or the group's events_cursor",
       },
       {
         command: "clerk logs get sia_123 --app app_123 --instance prod",
