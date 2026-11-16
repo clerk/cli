@@ -9,7 +9,10 @@ interface HandoffProgress {
   changedFiles: string[];
   signInUIRequested?: boolean;
   /** Native Sign in with Google was requested; the Google Cloud steps only the user can do. */
-  google?: { steps: string[] };
+  google?: {
+    steps: string[];
+    /** Whether Clerk's Google connection was verified. */ verified: boolean;
+  };
 }
 
 // Returned as command output. This is a task description, not an executed agent.
@@ -82,7 +85,7 @@ export function integrationHandoff(
               id: "google-cloud-oauth-clients",
               status: "requires-user-action",
               requiresUserIntent: false,
-              instructions: `Clerk's Google connection is configured by the CLI; the Google Cloud OAuth clients are not, and the Android one can't be verified from here. Ask the user to confirm these steps are done, or walk them through: ${progress.google.steps.join(" ")}`,
+              instructions: `${progress.google.verified ? "Clerk's Google connection is configured by the CLI" : "Clerk's Google connection is not configured yet: the native-google remaining item says what's left, and setup should be rerun with --sign-in-with-google once it's resolved"}; the Google Cloud OAuth clients are not, and the Android one can't be verified from here. Ask the user to confirm these steps are done, or walk them through: ${progress.google.steps.join(" ")}`,
               documentation: [
                 "https://clerk.com/docs/guides/configure/auth-strategies/sign-in-with-google.md",
               ],

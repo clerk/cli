@@ -19,7 +19,7 @@ function expandPath(path: string): string {
 
 /**
  * The secret, or a whole Web client, from a file the user controls: a Google Cloud Console OAuth
- * client JSON download (its `web` or `installed` object), a JSON `{ client_id, client_secret }`,
+ * client JSON download (its `web` object), a JSON `{ client_id, client_secret }`,
  * or the bare secret. `-` reads standard input, so an agent never puts the secret on a command
  * line. Nothing read here is logged.
  */
@@ -44,7 +44,13 @@ export async function readGoogleSecretFile(
       throwUsageError("--google-client-secret-file: the file is not valid JSON.");
     }
     const root = parsed && typeof parsed === "object" ? (parsed as Record<string, unknown>) : {};
-    const client = (root.web ?? root.installed ?? root) as Record<string, unknown>;
+    // Credential Manager's server client ID must be a Web application client; a Desktop client's
+    // download (`installed`) would pass every check here and fail only on device.
+    if (root.installed)
+      throwUsageError(
+        "--google-client-secret-file: that download is a Desktop app client; create a Web application OAuth client in Google Cloud instead.",
+      );
+    const client = (root.web ?? root) as Record<string, unknown>;
     if (typeof client.client_secret !== "string" || !client.client_secret.trim())
       throwUsageError(
         '--google-client-secret-file: expected a Google Cloud OAuth client JSON download (a "web" object) or {"client_id","client_secret"}.',
@@ -77,6 +83,12 @@ export async function googleCredentialsFromFlags(options: {
     : undefined;
   // An empty flag (an unset variable, say) defers to the download's client ID.
   const clientId = options.googleClientId?.trim() || file?.clientId;
+  // Every later check compares only the client ID, so a secret from another client would pass
+  // them all and fail at OAuth time.
+  if (options.googleClientId?.trim() && file?.clientId && file.clientId !== clientId)
+    throwUsageError(
+      "--google-client-id doesn't match the client ID in --google-client-secret-file; pass one or the other.",
+    );
   if (!file)
     throwUsageError(
       "--google-client-id needs the matching secret: pass --google-client-secret-file <path>, or - to read it from standard input.",

@@ -70,6 +70,41 @@ describe("Google Web client credentials", () => {
     );
   });
 
+  test("refuses a Desktop app client download", async () => {
+    await expect(
+      readGoogleSecretFile(
+        await file(
+          JSON.stringify({
+            installed: {
+              client_id: FAKE_GOOGLE_CLIENT_ID,
+              client_secret: FAKE_GOOGLE_CLIENT_SECRET,
+            },
+          }),
+        ),
+      ),
+    ).rejects.toThrow("Desktop app client");
+  });
+
+  test("refuses a --google-client-id that differs from the download's", async () => {
+    const download = await file(
+      JSON.stringify({
+        web: { client_id: FAKE_GOOGLE_CLIENT_ID, client_secret: FAKE_GOOGLE_CLIENT_SECRET },
+      }),
+    );
+    await expect(
+      googleCredentialsFromFlags({
+        googleClientId: "999-other.apps.googleusercontent.com",
+        googleClientSecretFile: download,
+      }),
+    ).rejects.toThrow("doesn't match");
+    expect(
+      await googleCredentialsFromFlags({
+        googleClientId: FAKE_GOOGLE_CLIENT_ID,
+        googleClientSecretFile: download,
+      }),
+    ).toEqual({ clientId: FAKE_GOOGLE_CLIENT_ID, clientSecret: FAKE_GOOGLE_CLIENT_SECRET });
+  });
+
   test("resolves the flags together and refuses half a client", async () => {
     expect(await googleCredentialsFromFlags({})).toBeUndefined();
     const secret = await file(FAKE_GOOGLE_CLIENT_SECRET);

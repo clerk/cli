@@ -59,8 +59,7 @@ describe("Android doctor", () => {
       "Development publishable key": "warn",
       "Native API": "fail",
       "Native registration": "fail",
-      "Google connection": "warn",
-      "Google Web client ID": "warn",
+      "Google connection": "pass",
     });
     expect(report.status).toBe("failed");
     for (const check of report.checks)
@@ -134,6 +133,26 @@ describe("Android doctor", () => {
     ).toBe("fail");
   });
 
+  test("an explicit fingerprint still reports why the debug certificate wasn't read", async () => {
+    const f = await fixture({ application: "custom-initialized", internetPermission: true });
+    f.state.enabled = true;
+    f.state.registrations.push({
+      object: "android_application",
+      id: "androidapp_1",
+      namespace: "android_app",
+      package_name: "com.example.myapp",
+      fingerprints: [RELEASE_FINGERPRINT],
+    });
+    const report = await doctor(
+      { ...options(f.root), fingerprints: [RELEASE_FINGERPRINT] },
+      { api: f.dependencies.api, debugKeystore: keystore("no-keystore") },
+    );
+    const check = report.checks.find((item) => item.name === "Debug signing fingerprint")!;
+    expect(check.status).toBe("warn");
+    expect(check.message).toContain("No debug keystore");
+    expect(report.identity.issues).toEqual([]);
+  });
+
   test("without a linked application the remote checks become one warning", async () => {
     const f = await fixture();
     const report = await doctor(options(f.root, false), {
@@ -152,20 +171,46 @@ describe("Android doctor", () => {
 });
 
 describe("Android doctor: Sign in with Google", () => {
-  test("reports Google off as warnings, with the remedy", async () => {
+  test("Google off passes when nothing requires it", async () => {
     const f = await fixture();
     const google = fakeGoogleAPI({ enabled: false });
     const report = await doctor(options(f.root), { ...f.dependencies, googleAPI: google.api });
-    expect(status(report)["Google connection"]).toBe("warn");
-    expect(status(report)["Google Web client ID"]).toBe("warn");
-    expect(report.checks.find((check) => check.name === "Google connection")?.remedy).toContain(
-      "--sign-in-with-google",
-    );
+    expect(status(report)["Google connection"]).toBe("pass");
+    expect(status(report)["Google Web client ID"]).toBeUndefined();
     expect(status(report)["Google Cloud Android client"]).toBeUndefined();
   });
 
-  test("Google on without a Web client fails that check", async () => {
+  test.each([
+    ["--sign-in-with-google", { signInWithGoogle: true }, {}],
+    ["the UI artifact", {}, { clerk: { product: "ui" as const, version: "1.3.0" } }],
+  ])(
+    "reports Google off as warnings, with the remedy, when %s asks for it",
+    async (_label, extra, fixtureOptions) => {
+      const f = await fixture(fixtureOptions);
+      const google = fakeGoogleAPI({ enabled: false });
+      const report = await doctor(
+        { ...options(f.root), ...extra },
+        { ...f.dependencies, googleAPI: google.api },
+      );
+      expect(status(report)["Google connection"]).toBe("warn");
+      expect(status(report)["Google Web client ID"]).toBe("warn");
+      expect(report.checks.find((check) => check.name === "Google connection")?.remedy).toContain(
+        "--sign-in-with-google",
+      );
+      expect(status(report)["Google Cloud Android client"]).toBeUndefined();
+    },
+  );
+
+  test("Google on shared credentials only warns for an app that doesn't ask for Google", async () => {
     const f = await fixture();
+    const google = fakeGoogleAPI({ enabled: true });
+    const report = await doctor(options(f.root), { ...f.dependencies, googleAPI: google.api });
+    expect(status(report)["Google connection"]).toBe("pass");
+    expect(status(report)["Google Web client ID"]).toBe("warn");
+  });
+
+  test("Google on without a Web client fails that check when the UI artifact is in use", async () => {
+    const f = await fixture({ clerk: { product: "ui", version: "1.3.0" } });
     const google = fakeGoogleAPI({ enabled: true });
     const report = await doctor(options(f.root), { ...f.dependencies, googleAPI: google.api });
     expect(status(report)["Google connection"]).toBe("pass");
