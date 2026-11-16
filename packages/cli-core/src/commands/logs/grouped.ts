@@ -16,6 +16,7 @@ import { log } from "../../lib/log.ts";
 import type { LogFilters } from "./filters.ts";
 import {
   formatLogTime,
+  logColumnHeaders,
   logRowCells,
   pad,
   type Log,
@@ -103,10 +104,13 @@ function formatEventCount(group: LogGroup): string {
  * lists.
  */
 export function moreEventsNote(group: LogGroup): string {
-  // Names `clerk logs get`, so the rest of the group's events are one
-  // copy-paste away.
-  const read = `read them with \`clerk logs get ${group.group_id}\``;
+  // `clerk logs get` with the group's `events_cursor` continues after the
+  // last event shown; without the cursor it would start over from the first.
+  // Event filters aren't in the cursor, so a filtered list says to repeat them.
+  let read = `read them with \`clerk logs get ${group.group_id}`;
+  read += group.events_cursor ? ` --cursor ${group.events_cursor}\`` : "`";
   if (group.matched_event_count !== undefined) {
+    read += " and the same filters";
     const hidden = group.matched_event_count - group.events.length;
     if (hidden > 0) {
       return `${hidden} more matching ${hidden === 1 ? "event" : "events"} not shown; ${read}`;
@@ -116,9 +120,10 @@ export function moreEventsNote(group: LogGroup): string {
 }
 
 /**
- * One row per group (a log outside any group gets a row of its own with no
- * group type or ID), each followed by its events indented two spaces. The group rows
- * align with each other, and so do all the event rows.
+ * One block per group (a log outside any group gets a block of its own with
+ * no group type or ID): the group's row, then its events indented two spaces,
+ * with a blank line between blocks. The group rows align with each other, and
+ * so do all the event rows, under an indented header of their own.
  */
 export function formatGroupedTable(
   items: LogListItem[],
@@ -126,7 +131,7 @@ export function formatGroupedTable(
   now: Date,
 ): string[] {
   const groupRows: string[][] = [GROUP_COLUMN_HEADERS.map((header) => bold(header))];
-  const eventRows: string[][] = [];
+  const eventRows: string[][] = [logColumnHeaders(showPayload).map((header) => bold(header))];
   // Per item: its event rows, and the note when the page left events out.
   const children: Array<{ events: number; note?: string }> = [];
 
@@ -159,11 +164,11 @@ export function formatGroupedTable(
   }
 
   const [header, ...groupLines] = pad(groupRows);
-  const eventLines = eventRows.length > 0 ? pad(eventRows) : [];
-  const lines = [header!];
+  const [eventHeader, ...eventLines] = pad(eventRows);
+  const lines = [header!, `  ${eventHeader!}`];
   let next = 0;
   children.forEach((child, index) => {
-    lines.push(groupLines[index]!);
+    lines.push("", groupLines[index]!);
     for (const line of eventLines.slice(next, next + child.events)) lines.push(`  ${line}`);
     next += child.events;
     if (child.note) lines.push(`  ${dim(child.note)}`);

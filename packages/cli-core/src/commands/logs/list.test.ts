@@ -686,17 +686,24 @@ describe("logs list --grouped", () => {
       /STARTED\s+TYPE\s+GROUP\s+STATUS\s+SUBJECT\s+EVENTS/.test(line),
     );
     expect(header).toBeGreaterThanOrEqual(0);
-    const table = lines.slice(header + 1, header + 11);
-    expect(table[0]).toMatch(/^\S.*sign_in\s+sia_1\s+completed\s+user_123\s+2$/);
-    expect(table[1]).toMatch(/^ {2}\S.*sign_in\.created .*log_g1$/);
-    expect(table[2]).toMatch(/^ {2}\S.*sign_in\.completed .*log_g2$/);
-    expect(table[3]).toMatch(/^\S.*\s-\s+-\s+user_123\s+1$/);
-    expect(table[4]).toMatch(/^ {2}\S.*user\.updated .*log_free$/);
-    expect(table[5]).toMatch(/sign_up\s+sua_1\s+failed\s+user_123\s+1$/);
-    expect(table[6]).toMatch(/^ {2}\S.*sign_up\.created .*log_s1$/);
+    const table = lines.slice(header + 1, header + 15);
+    // The event rows' own header, indented like them.
+    expect(table[0]).toMatch(/^ {2}TIME\s+TYPE\s+ACTOR\s+SUBJECT\s+LOCATION\s+LOG ID$/);
+    // A blank line before each block.
+    expect(table[1]).toBe("");
+    expect(table[2]).toMatch(/^\S.*sign_in\s+sia_1\s+completed\s+user_123\s+2$/);
+    expect(table[3]).toMatch(/^ {2}\S.*sign_in\.created .*log_g1$/);
+    expect(table[4]).toMatch(/^ {2}\S.*sign_in\.completed .*log_g2$/);
+    expect(table[5]).toBe("");
+    expect(table[6]).toMatch(/^\S.*\s-\s+-\s+user_123\s+1$/);
+    expect(table[7]).toMatch(/^ {2}\S.*user\.updated .*log_free$/);
+    expect(table[8]).toBe("");
+    expect(table[9]).toMatch(/sign_up\s+sua_1\s+failed\s+user_123\s+1$/);
+    expect(table[10]).toMatch(/^ {2}\S.*sign_up\.created .*log_s1$/);
+    expect(table[11]).toBe("");
     // A flow that hasn't concluded leaves STATUS empty.
-    expect(table[7]).toMatch(/sign_in\s+sia_2\s+user_123\s+1$/);
-    expect(table[8]).toMatch(/^ {2}\S.*sign_in\.created .*log_p1$/);
+    expect(table[12]).toMatch(/sign_in\s+sia_2\s+user_123\s+1$/);
+    expect(table[13]).toMatch(/^ {2}\S.*sign_in\.created .*log_p1$/);
     expect(captured.err).toContain("3 groups, 1 log outside a group");
     expect(captured.err).toContain("--cursor gcur_next");
   });
@@ -717,14 +724,19 @@ describe("logs list --grouped", () => {
   test.each([
     {
       label: "the matching count when event filters were applied",
-      overrides: { has_more_events: true, event_count: 80, matched_event_count: 53 },
-      note: "  51 more matching events not shown; read them with `clerk logs get sia_1`",
+      overrides: {
+        has_more_events: true,
+        event_count: 80,
+        matched_event_count: 53,
+        events_cursor: "ecur_1",
+      },
+      note: "  51 more matching events not shown; read them with `clerk logs get sia_1 --cursor ecur_1` and the same filters",
       events: "53 of 80",
     },
     {
       label: "no count without event filters",
-      overrides: { has_more_events: true, event_count: 80 },
-      note: "  more events not shown; read them with `clerk logs get sia_1`",
+      overrides: { has_more_events: true, event_count: 80, events_cursor: "ecur_1" },
+      note: "  more events not shown; read them with `clerk logs get sia_1 --cursor ecur_1`",
       events: "80",
     },
   ])("notes the events a group left out, with $label", async ({ overrides, note, events }) => {

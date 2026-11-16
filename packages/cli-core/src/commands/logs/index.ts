@@ -64,7 +64,7 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     )
     .option(
       "--limit <number>",
-      "Maximum logs to return (1-500, default 50; at most 100 with --grouped; with --follow, the backfill)",
+      "Maximum logs to return (1-500, default 50; with --follow, the backfill). With --grouped it counts items, each a flow with its events or a log outside one, up to 100",
       (value) => parseIntegerOption(value, "--limit", { min: 1, max: 500 }),
     )
     .option("--cursor <cursor>", "Continue from the cursor a previous run printed")

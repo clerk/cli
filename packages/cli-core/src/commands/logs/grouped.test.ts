@@ -88,28 +88,36 @@ describe("collectChoice", () => {
 });
 
 describe("moreEventsNote", () => {
+  const events = Array.from({ length: 50 }, (_, i) => ({
+    object: "log" as const,
+    id: `log_${i}`,
+    event_time: i,
+    type: "sign_in.created",
+  }));
+
   test.each([
     {
       label: "matched count",
-      overrides: { matched_event_count: 52 },
-      note: "2 more matching events not shown",
+      overrides: { matched_event_count: 52, events_cursor: "ecur_1" },
+      note: "2 more matching events not shown; read them with `clerk logs get sia_1 --cursor ecur_1` and the same filters",
     },
     {
       label: "one left",
-      overrides: { matched_event_count: 51 },
-      note: "1 more matching event not shown",
+      overrides: { matched_event_count: 51, events_cursor: "ecur_1" },
+      note: "1 more matching event not shown; read them with `clerk logs get sia_1 --cursor ecur_1` and the same filters",
     },
-    { label: "no matched count", overrides: { event_count: 90 }, note: "more events not shown" },
+    {
+      label: "no matched count",
+      overrides: { event_count: 90, events_cursor: "ecur_1" },
+      note: "more events not shown; read them with `clerk logs get sia_1 --cursor ecur_1`",
+    },
+    {
+      label: "no events cursor",
+      overrides: { event_count: 90 },
+      note: "more events not shown; read them with `clerk logs get sia_1`",
+    },
   ])("with $label", ({ overrides, note }) => {
-    const events = Array.from({ length: 50 }, (_, i) => ({
-      object: "log" as const,
-      id: `log_${i}`,
-      event_time: i,
-      type: "sign_in.created",
-    }));
-    expect(moreEventsNote(group({ events, has_more_events: true, ...overrides }))).toBe(
-      `${note}; read them with \`clerk logs get sia_1\``,
-    );
+    expect(moreEventsNote(group({ events, has_more_events: true, ...overrides }))).toBe(note);
   });
 });
 
