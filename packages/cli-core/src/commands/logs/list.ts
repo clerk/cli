@@ -18,7 +18,7 @@ import { closeStatusForError } from "../../lib/signals.ts";
 import { intro, outro, pausedOutro, withSpinner } from "../../lib/spinner.ts";
 import { isAgent } from "../../mode.ts";
 import {
-  formatLogTime,
+  formatLogRange,
   logColumnHeaders,
   logRowCells,
   logsRequest,
@@ -222,8 +222,7 @@ function summary(result: LogsListResult<LogListItem>, count: string): string {
   const parts = [count];
   const { searched_from: from, searched_to: to, next } = result.cursor;
   if (from !== null && to !== null) {
-    const now = new Date();
-    parts.push(`searched ${formatLogTime(from, now)} – ${formatLogTime(to, now)}`);
+    parts.push(`searched ${formatLogRange(from, to)}`);
   }
   if (next) parts.push(`more: re-run with \`--cursor ${next}\``);
   return parts.join(" · ");
@@ -250,7 +249,7 @@ function printHuman(
     const days = result.cursor.retention_days;
     log.warn(
       days
-        ? `Results only go back ${days} days, your plan's log retention.`
+        ? `Results only go back ${days} ${days === 1 ? "day" : "days"}, your plan's log retention.`
         : "Results only go back as far as your plan's log retention.",
     );
   }

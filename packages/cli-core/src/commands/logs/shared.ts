@@ -117,10 +117,30 @@ function twoDigits(value: number): string {
  */
 export function formatLogTime(ms: number, now: Date = new Date()): string {
   const date = new Date(ms);
-  const time = `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}:${twoDigits(date.getSeconds())}`;
-  if (date.toDateString() === now.toDateString()) return time;
+  return date.toDateString() === now.toDateString() ? clockTime(date) : dateTime(date);
+}
+
+function clockTime(date: Date): string {
+  return `${twoDigits(date.getHours())}:${twoDigits(date.getMinutes())}:${twoDigits(date.getSeconds())}`;
+}
+
+function dateTime(date: Date): string {
   const day = `${date.getFullYear()}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())}`;
-  return `${day} ${time}`;
+  return `${day} ${clockTime(date)}`;
+}
+
+/**
+ * A time range as `<from> – <to>`. The date goes on both ends when either
+ * isn't today, so a range that crosses midnight doesn't read like a few
+ * minutes on one day.
+ */
+export function formatLogRange(from: number, to: number, now: Date = new Date()): string {
+  const start = new Date(from);
+  const end = new Date(to);
+  const today = now.toDateString();
+  const format =
+    start.toDateString() === today && end.toDateString() === today ? clockTime : dateTime;
+  return `${format(start)} – ${format(end)}`;
 }
 
 /** Leaves of a (possibly nested) payload as `path=value`, space-separated. */

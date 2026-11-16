@@ -385,18 +385,21 @@ describe("logs list", () => {
     expect(captured.err).not.toContain("--cursor");
   });
 
-  test("warns when the plan's retention cut the results", async () => {
+  test.each([
+    [7, "Results only go back 7 days, your plan's log retention."],
+    [1, "Results only go back 1 day, your plan's log retention."],
+  ])("warns when a %i-day retention cut the results", async (days, warning) => {
     mockBapiRequest.mockResolvedValueOnce(
       page([makeLog("log_1")], {
         next_page_status: "false",
         retention_limit_reached: true,
-        retention_days: 7,
+        retention_days: days,
       }),
     );
 
     await list();
 
-    expect(captured.err).toContain("Results only go back 7 days, your plan's log retention.");
+    expect(captured.err).toContain(warning);
   });
 
   test("propagates API errors from the first request without printing data", async () => {

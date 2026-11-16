@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { formatLogLocation, formatLogTime, pad, type Log } from "./shared.ts";
+import { formatLogLocation, formatLogRange, formatLogTime, pad, type Log } from "./shared.ts";
 
 function makeLog(device: NonNullable<Log["event_context"]>["device"]): Log {
   return {
@@ -22,6 +22,30 @@ describe("formatLogTime", () => {
     expect(formatLogTime(new Date(2026, 10, 8, 23, 59, 59).getTime(), now)).toBe(
       "2026-11-08 23:59:59",
     );
+  });
+});
+
+describe("formatLogRange", () => {
+  const now = new Date(2026, 10, 9, 18, 0, 0);
+  const at = (day: number, hour: number, minute: number) =>
+    new Date(2026, 10, day, hour, minute, 0).getTime();
+
+  test.each([
+    ["only times when both ends are today", at(9, 7, 0), at(9, 17, 55), "07:00:00 – 17:55:00"],
+    [
+      "the date on both ends when the range starts on another day",
+      at(8, 18, 5),
+      at(9, 18, 5),
+      "2026-11-08 18:05:00 – 2026-11-09 18:05:00",
+    ],
+    [
+      "the date on both ends when the whole range is on another day",
+      at(7, 9, 0),
+      at(7, 10, 0),
+      "2026-11-07 09:00:00 – 2026-11-07 10:00:00",
+    ],
+  ])("shows %s", (_name, from, to, expected) => {
+    expect(formatLogRange(from, to, now)).toBe(expected);
   });
 });
 
