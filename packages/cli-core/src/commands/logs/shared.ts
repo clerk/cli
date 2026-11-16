@@ -5,6 +5,7 @@
  */
 
 import { bapiRequest } from "../../lib/bapi.ts";
+import { cyan, dim } from "../../lib/color.ts";
 import type { ApiResponse } from "../../lib/fetch.ts";
 
 /** The BAPI version whose `/v1/logs` response shape the CLI is written against. */
@@ -44,7 +45,36 @@ export type LogListCursor = {
   searched_to?: number;
 };
 
-export type LogListPage = { data: Log[]; cursor?: LogListCursor };
+/**
+ * One event group of the grouped view (`view=grouped`): a sign-in or sign-up
+ * flow, with its first events. The fields the CLI reads; JSON output passes
+ * the rest through.
+ */
+export type LogGroup = {
+  object: "log_group";
+  /** The flow's ID: a sign-in (`sia_`) or sign-up (`sua_`) attempt. */
+  group_id: string;
+  group_type: string;
+  /** When the flow started, Unix milliseconds. Groups sort by it. */
+  started_at: number;
+  event_count: number;
+  /** Present only when event filters were applied. */
+  matched_event_count?: number;
+  /** `completed` or `failed`; null while the flow hasn't concluded. */
+  status: string | null;
+  status_label: string | null;
+  subject: string;
+  first_event: Log | null;
+  /** The group's first events, oldest first (only matching ones under event filters). */
+  events: Log[];
+  has_more_events: boolean;
+  events_cursor: string | null;
+};
+
+/** An item of a grouped page: a group, or a log outside any group. */
+export type LogListItem = Log | LogGroup;
+
+export type LogListPage<T extends LogListItem = Log> = { data: T[]; cursor?: LogListCursor };
 
 export async function logsRequest(
   path: string,
@@ -91,6 +121,50 @@ export function formatLogTime(ms: number, now: Date = new Date()): string {
   if (date.toDateString() === now.toDateString()) return time;
   const day = `${date.getFullYear()}-${twoDigits(date.getMonth() + 1)}-${twoDigits(date.getDate())}`;
   return `${day} ${time}`;
+}
+
+/** Leaves of a (possibly nested) payload as `path=value`, space-separated. */
+export function formatPayload(payload: Record<string, unknown> | undefined): string {
+  const pairs: string[] = [];
+  const walk = (value: unknown, path: string): void => {
+    if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+      for (const [key, child] of Object.entries(value)) walk(child, path ? `${path}.${key}` : key);
+      return;
+    }
+    // Payload strings are end-user input (usernames, email addresses), so
+    // control characters, C1 included, are escaped before reaching the terminal.
+    const text =
+      typeof value === "string"
+        ? value.replace(
+            /\p{Cc}/gu,
+            (char) => `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+          )
+        : JSON.stringify(value);
+    pairs.push(`${path}=${text}`);
+  };
+  walk(payload ?? {}, "");
+  return pairs.join(" ");
+}
+
+/** A log's table cells, in {@link logColumnHeaders} order. */
+export function logRowCells(entry: Log, showPayload: boolean, now: Date): string[] {
+  return [
+    formatLogTime(entry.event_time, now),
+    cyan(entry.type),
+    entry.actor || dim("-"),
+    entry.subject || dim("-"),
+    formatLogLocation(entry) || dim("-"),
+    ...(showPayload ? [formatPayload(entry.payload) || dim("-")] : []),
+    dim(entry.id),
+  ];
+}
+
+/** The log table's column headers, `PAYLOAD` only with `--fields`. */
+export function logColumnHeaders(showPayload: boolean): string[] {
+  const headers = ["TIME", "TYPE", "ACTOR", "SUBJECT", "LOCATION"];
+  if (showPayload) headers.push("PAYLOAD");
+  headers.push("LOG ID");
+  return headers;
 }
 
 /** City and country when the log has them, the IP address otherwise. */
