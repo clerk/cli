@@ -7,6 +7,7 @@ import {
   insertIntoBlock,
   integerLiteral,
   literal,
+  literalDependencies,
   parseCatalog,
   topLevelBlocks,
   usesAccessor,
@@ -67,6 +68,23 @@ describe("Gradle script reads", () => {
       'dependencies {\n    implementation("a:b:1")\n    implementation("androidx',
     );
   });
+
+  test("moves an entry on the brace's line to its own line when inserting before it", () => {
+    const inline = 'dependencies { implementation(project(":lib")) }\n';
+    const [dependencies] = topLevelBlocks(inline, "dependencies");
+    expect(insertIntoBlock(inline, dependencies!, ['implementation("a:b:1")'])).toBe(
+      'dependencies {\n    implementation("a:b:1")\n    implementation(project(":lib")) }\n',
+    );
+  });
+
+  test("sees dependencies whose version is interpolated", () => {
+    const script =
+      'dependencies {\n    implementation("com.clerk:clerk-android-api:$clerkVersion")\n    implementation "androidx.core:core-ktx:${core_version}"\n}\n';
+    expect(literalDependencies(script).map((item) => item.coordinate)).toEqual([
+      "com.clerk:clerk-android-api:$clerkVersion",
+      "androidx.core:core-ktx:${core_version}",
+    ]);
+  });
 });
 
 describe("version catalogs", () => {
@@ -109,6 +127,13 @@ android-application = { id = "com.android.application", version.ref = "agp" }
     const created = appendToCatalogSection('[versions]\nx = "1"\n', "libraries", 'a = "b:c:1"');
     expect(created).toBe('[versions]\nx = "1"\n\n[libraries]\na = "b:c:1"\n');
     expect(appendToCatalogSection("", "versions", 'x = "1"')).toBe('[versions]\nx = "1"\n');
+  });
+
+  test("finds a table header with whitespace inside the brackets", () => {
+    const spaced = '[ versions ]\nagp = "9.2.1"\n\n[libraries]\n';
+    expect(appendToCatalogSection(spaced, "versions", 'clerk = "1.3.0"')).toBe(
+      '[ versions ]\nagp = "9.2.1"\nclerk = "1.3.0"\n\n[libraries]\n',
+    );
   });
 
   test("finds a [versions] value by offset, matching the key as text", () => {

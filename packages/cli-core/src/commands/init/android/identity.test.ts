@@ -1,13 +1,22 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   debugKeystoreNote,
   debugKeystorePath,
+  debugKeystoreReader,
   discoverIdentity,
   keytoolCandidates,
   missingFingerprintsMessage,
   normalizeFingerprints,
 } from "./identity.ts";
 import { DEBUG_FINGERPRINT, RELEASE_FINGERPRINT, keystore } from "./test-helpers.ts";
+
+const roots: string[] = [];
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
+});
 
 describe("fingerprints", () => {
   test("normalizes to uppercase colon-separated SHA-256 and dedupes", () => {
@@ -52,6 +61,92 @@ describe("fingerprints", () => {
       expect(identity.fingerprints).toEqual([]);
       expect(identity.issues[0]).toContain("--android-fingerprint");
       expect(debugKeystoreNote(identity.debug)).toBe(identity.issues[0]);
+    },
+  );
+
+  test("an explicit fingerprint makes an unread keystore no issue", async () => {
+    const identity = await discoverIdentity(
+      { applicationId: "com.example.app", applicationIdSource: "gradle" },
+      [RELEASE_FINGERPRINT],
+      keystore("no-keytool"),
+    );
+    expect(identity.fingerprints).toEqual([RELEASE_FINGERPRINT]);
+    expect(identity.debug.status).toBe("no-keytool");
+    expect(identity.issues).toEqual([]);
+  });
+
+  test("a debug build type with its own signing config leaves the keystore unread", async () => {
+    let read = false;
+    const identity = await discoverIdentity(
+      { applicationId: "com.example.app", applicationIdSource: "gradle", debugSigning: "custom" },
+      undefined,
+      async () => {
+        read = true;
+        return keystore("found")();
+      },
+    );
+    expect(read).toBe(false);
+    expect(identity.debug.status).toBe("custom-signing");
+    expect(identity.fingerprints).toEqual([]);
+    expect(identity.issues[0]).toContain("signing config");
+    expect(identity.issues[0]).toContain("--android-fingerprint");
+    const explicit = await discoverIdentity(
+      { applicationId: "com.example.app", applicationIdSource: "gradle", debugSigning: "custom" },
+      [RELEASE_FINGERPRINT],
+      keystore("found"),
+    );
+    expect(explicit.fingerprints).toEqual([RELEASE_FINGERPRINT]);
+    expect(explicit.issues).toEqual([]);
+  });
+
+  test.skipIf(process.platform === "win32")(
+    "tries every keytool on disk until one reads the keystore",
+    async () => {
+      const dir = await mkdtemp(join(tmpdir(), "clerk-keytool-"));
+      roots.push(dir);
+      const script = async (path: string, body: string) => {
+        await mkdir(join(path, ".."), { recursive: true });
+        await writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+      };
+      await mkdir(join(dir, "home"), { recursive: true });
+      await writeFile(join(dir, "home", "debug.keystore"), "");
+      // macOS's /usr/bin/keytool stub: present, first on PATH, and unable to run.
+      await script(
+        join(dir, "stub", "keytool"),
+        "echo 'Unable to locate a Java Runtime.' >&2\nexit 1",
+      );
+      await script(
+        join(dir, "jdk", "bin", "keytool"),
+        `echo 'Certificate fingerprints:'\necho '\t SHA256: ${DEBUG_FINGERPRINT}'`,
+      );
+      const home = join(dir, "home");
+      const working = await debugKeystoreReader({
+        ANDROID_USER_HOME: home,
+        PATH: join(dir, "stub"),
+        JAVA_HOME: join(dir, "jdk"),
+      })();
+      expect(working).toMatchObject({
+        status: "found",
+        fingerprint: DEBUG_FINGERPRINT,
+        keytool: join(dir, "jdk", "bin", "keytool"),
+      });
+      const stubOnly = await debugKeystoreReader({
+        ANDROID_USER_HOME: home,
+        PATH: join(dir, "stub"),
+        JAVA_HOME: join(dir, "none"),
+        HOME: dir,
+      })();
+      expect(stubOnly).toMatchObject({ status: "failed" });
+      expect(stubOnly.detail).toContain("Java Runtime");
+      expect(
+        await debugKeystoreReader({
+          ANDROID_USER_HOME: home,
+          PATH: join(dir, "none"),
+          HOME: dir,
+        })(),
+      ).toMatchObject({
+        status: process.platform === "darwin" ? expect.any(String) : "no-keytool",
+      });
     },
   );
 

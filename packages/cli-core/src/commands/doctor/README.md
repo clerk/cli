@@ -131,7 +131,7 @@ own remedy:
 | Development publishable key | The key it passes (the `clerk_publishable_key` resource or a string literal) is the linked development instance's; warns when it can't be read. Keys are compared, never printed                                                                                |
 | Native API                  | Native API is enabled on the development instance                                                                                                                                                                                                               |
 | Native registration         | The `applicationId` is registered there. A registration that lacks this machine's debug fingerprint fails with the Dashboard remedy, since the CLI can't update it yet                                                                                          |
-| Debug signing fingerprint   | This machine's debug certificate could be read and is registered (warns when there is no keystore or `keytool` yet)                                                                                                                                             |
+| Debug signing fingerprint   | This machine's debug certificate could be read and is registered (warns when there is no keystore or `keytool` yet, or when the debug build type signs with its own config)                                                                                     |
 
 Without a linked application the four Clerk checks (development publishable key, Native API, registration, and debug signing fingerprint) become one warning.
 

@@ -5,6 +5,7 @@ import { snapshotFile, type FileSnapshot } from "./files.ts";
 import {
   PACKAGE_NAME,
   aliasedPluginIds,
+  blocks,
   catalogAccessor,
   catalogValueOffsets,
   catalogVersion,
@@ -44,6 +45,12 @@ export interface Selection {
   namespace: string;
   applicationId: string;
   applicationIdSource: "gradle" | "gradle-debug" | "explicit";
+  /**
+   * `custom` when the build script configures signing for debug builds (a `signingConfigs`
+   * entry named debug, or `signingConfig` in the debug build type), so the default debug
+   * keystore's certificate isn't the one the installed build carries.
+   */
+  debugSigning: "default" | "custom";
 }
 
 export interface ApplicationClass {
@@ -56,6 +63,8 @@ export interface ApplicationClass {
   source?: FileSnapshot;
   /** Whether `Clerk.initialize` is called: by this setup's recipe, by the project's own code, or not. */
   initialized: "managed" | "custom" | "none";
+  /** The publishable key a custom initialization passes as its one key literal, when it has one. */
+  customKey?: string;
   /** Whether setup can add the initialization after `super.onCreate()`. */
   editable: boolean;
   /** Why it can't be edited, when it can't. */
@@ -149,6 +158,9 @@ function discoverMinSdk(
   catalogSource?: string,
 ): Inspection["minSdk"] {
   const section = maskCode(build.slice(defaultConfig.open, defaultConfig.close));
+  // A second assignment (`minSdk = rootProject.extra["minSdk"] as Int`) is the one Gradle keeps.
+  if ([...section.matchAll(/(?<![\w.])minSdk(?:Version)?\b/g)].length !== 1)
+    return { source: "unknown" };
   const matches = [
     ...section.matchAll(
       /\bminSdk(?:Version)?\s*(?:=\s*)?(\d+|libs\.versions\.([\w.]+)\.get\(\)\.toInt\(\))/g,
@@ -259,6 +271,56 @@ function discoverToolchain(
   };
 }
 
+/**
+ * Whether debug builds sign with the default debug keystore. A `signingConfigs` entry named
+ * `debug` (`debug { … }`, `getByName("debug")`, Groovy `debug { storeFile … }`) or a
+ * `signingConfig` in the debug build type means another certificate, whose fingerprint has to
+ * be passed explicitly.
+ */
+function discoverDebugSigning(
+  build: string,
+  android: { open: number; close: number },
+): Selection["debugSigning"] {
+  const visible = maskCode(build, false);
+  const inside = (block: { open: number; close: number }) =>
+    block.open > android.open && block.close < android.close;
+  for (const block of blocks(build, "signingConfigs").filter(inside))
+    if (
+      /(?<![\w.])(?:debug\s*\{|(?:getByName|named|maybeCreate|create|register)\s*\(\s*["']debug["'])/.test(
+        visible.slice(block.open, block.close),
+      )
+    )
+      return "custom";
+  const masked = maskCode(build);
+  for (const buildTypes of blocks(build, "buildTypes").filter(inside))
+    for (const debug of blocks(build, "debug").filter(
+      (block) => block.open > buildTypes.open && block.close < buildTypes.close,
+    ))
+      if (/\bsigningConfig\b/.test(masked.slice(debug.open, debug.close))) return "custom";
+  return "default";
+}
+
+/**
+ * The one publishable-key literal passed to `Clerk.initialize`, when every call passes the same
+ * one. Keys elsewhere in the file don't count; a computed argument leaves it unknown.
+ */
+function initializeKey(source: string, masked: string): string | undefined {
+  const keys = new Set<string>();
+  for (const call of masked.matchAll(/\bClerk\.initialize\s*\(/g)) {
+    const open = call.index + call[0].length - 1;
+    let depth = 0;
+    let close = open;
+    for (; close < masked.length; close++) {
+      if (masked[close] === "(") depth++;
+      else if (masked[close] === ")" && --depth === 0) break;
+    }
+    if (close >= masked.length) return undefined;
+    const args = maskCode(source.slice(open + 1, close), false);
+    for (const key of args.match(/\bpk_(?:test|live)_[A-Za-z0-9+/=_-]+/g) ?? []) keys.add(key);
+  }
+  return keys.size === 1 ? [...keys][0] : undefined;
+}
+
 /** Comments blanked, offsets kept. */
 export function maskXml(source: string): string {
   return source.replace(/<!--[\s\S]*?-->/g, (comment) => " ".repeat(comment.length));
@@ -327,12 +389,20 @@ async function inspectApplicationClass(
   const masked = maskCode(source.source);
   if (/\bClerk\.initialize\s*\(/.test(masked)) {
     result.initialized = /R\.string\.clerk_publishable_key\b/.test(masked) ? "managed" : "custom";
+    if (result.initialized === "custom") result.customKey = initializeKey(source.source, masked);
     return result;
   }
   const onCreate = [...masked.matchAll(/\boverride\s+fun\s+onCreate\s*\(\s*\)/g)];
   const supers = [...masked.matchAll(/\bsuper\.onCreate\s*\(\s*\)/g)];
   if (onCreate.length !== 1 || supers.length !== 1 || supers[0]!.index < onCreate[0]!.index) {
     result.reason = `${className} needs one onCreate override that calls super.onCreate(); initialize Clerk in it manually.`;
+    return result;
+  }
+  // An expression body (`override fun onCreate() = super.onCreate()`) has no line to add a
+  // statement to: the call needs a block.
+  const signatureEnd = onCreate[0]!.index + onCreate[0]![0].length;
+  if (!/^\s*(?::\s*Unit\s*)?\{/.test(masked.slice(signatureEnd, supers[0]!.index))) {
+    result.reason = `${className}'s onCreate has no block body; initialize Clerk in it manually.`;
     return result;
   }
   const end = supers[0]!.index + supers[0]![0].length;
@@ -414,6 +484,21 @@ export async function inspectAndroidProject(options: InspectOptions): Promise<In
   const applications = [...xml.matchAll(/<application\b[^>]*>/g)];
   if (applications.length !== 1)
     throw unsupported("AndroidManifest.xml needs exactly one application element.");
+  const debugManifest = await optionalSnapshot(
+    root,
+    modulePath(module, "src/debug/AndroidManifest.xml"),
+  );
+  // The merger also drops the main manifest's android:name for tools:node="replace" and
+  // tools:remove="android:name", so those are refused like an overriding name.
+  if (
+    debugManifest &&
+    /<application\b[^>]*\s(?:android:name\s*=|tools:node\s*=\s*["']replace["']|tools:remove\s*=\s*["'][^"']*\bandroid:name\b)/.test(
+      maskXml(debugManifest.source),
+    )
+  )
+    throw unsupported(
+      "src/debug/AndroidManifest.xml sets, replaces, or removes android:name on application, so the debug build may not run the Application class that initializes Clerk.",
+    );
   const internetPermission =
     /<uses-permission\b[^>]*android:name\s*=\s*["']android\.permission\.INTERNET["']/.test(xml);
   const application = await inspectApplicationClass(root, module, namespace, applications[0]![0]);
@@ -427,7 +512,8 @@ export async function inspectAndroidProject(options: InspectOptions): Promise<In
   const managed =
     !!keyResource &&
     keyResource.source.includes(`<!-- ${GENERATED} -->`) &&
-    (keyResource.source.match(/<string\b/g) ?? []).length === 1 &&
+    [...maskXml(keyResource.source).matchAll(/<([A-Za-z][\w:.-]*)/g)].map((m) => m[1]).join() ===
+      "resources,string" &&
     keyMatch !== null;
   if (keyResource && !managed)
     throw unsupported(`${keyResourcePath} exists and wasn't written by clerk init.`);
@@ -452,6 +538,7 @@ export async function inspectAndroidProject(options: InspectOptions): Promise<In
       namespace,
       applicationId,
       applicationIdSource: options.applicationId !== undefined ? "explicit" : discovered.source,
+      debugSigning: discoverDebugSigning(source, android[0]!),
     },
     sdk: options.sdk,
     minimumVersion: options.minimumVersion,

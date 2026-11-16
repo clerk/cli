@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { CLERK_ANDROID_MINIMUM_VERSION } from "./sdk.ts";
 import { inspectAndroidProject } from "./project.ts";
-import { planAndroidSetup } from "./plan.ts";
+import { generatedApplication, kotlinPackage, planAndroidSetup } from "./plan.ts";
 import { createAndroidFixture, FIXTURE_KEY } from "./test-helpers.ts";
 
 const roots: string[] = [];
@@ -253,6 +253,37 @@ describe("Android setup plan", () => {
     );
     expect(manifest).toContain('<application android:name=".ClerkApplication"');
     expect(manifest).toContain('<application android:name=".Old" /> -->');
+  });
+
+  test("spells package segments that are Kotlin keywords with backticks", async () => {
+    expect(kotlinPackage("com.example.object")).toBe("com.example.`object`");
+    expect(kotlinPackage("com.acme.in.app")).toBe("com.acme.`in`.app");
+    expect(kotlinPackage("com.example.myapp")).toBe("com.example.myapp");
+    expect(generatedApplication("com.example.object")).toContain("package com.example.`object`\n");
+    const root = await createAndroidFixture({ application: "custom", internetPermission: true });
+    roots.push(root);
+    const build = join(root, "app/build.gradle.kts");
+    await writeFile(
+      build,
+      (await Bun.file(build).text()).replace('"com.example.myapp"', '"com.example.object"'),
+    );
+    await mkdir(join(root, "app/src/main/java/com/example/object"), { recursive: true });
+    await writeFile(
+      join(root, "app/src/main/java/com/example/object/CustomApp.kt"),
+      (
+        await Bun.file(join(root, "app/src/main/java/com/example/myapp/CustomApp.kt")).text()
+      ).replace("package com.example.myapp", "package com.example.`object`"),
+    );
+    const inspection = await inspectAndroidProject({
+      root,
+      sdk: "core",
+      minimumVersion: CLERK_ANDROID_MINIMUM_VERSION,
+    });
+    const source = content(
+      planAndroidSetup(inspection, FIXTURE_KEY).actions,
+      "app/src/main/java/com/example/object/CustomApp.kt",
+    )!;
+    expect(source).toContain("getString(com.example.`object`.R.string.clerk_publishable_key)");
   });
 
   test("supports Groovy scripts", async () => {

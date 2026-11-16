@@ -25,6 +25,13 @@ describe("SDK dependencies", () => {
       findClerkDependencies("dependencies { implementation(libs.clerk.ui) }", catalog),
     ).toEqual([{ product: "ui", version: "1.2.0", via: "catalog", alias: "clerk-ui" }]);
     expect(findClerkDependencies("dependencies { }", catalog)).toEqual([]);
+    // An interpolated version is still a declaration; its version just can't be read.
+    expect(
+      findClerkDependencies(
+        'dependencies {\n    implementation("com.clerk:clerk-android-api:$clerkVersion")\n}',
+        undefined,
+      ),
+    ).toEqual([{ product: "core", version: undefined, via: "literal" }]);
     expect(sdkInstalled([{ product: "ui", via: "literal" }], "core")).toBe(true);
     expect(sdkInstalled([{ product: "core", via: "literal" }], "ui")).toBe(false);
   });
@@ -95,6 +102,40 @@ describe("SDK dependencies", () => {
     });
     expect(plan.catalog).toBe(catalogSource);
     expect(plan.build).toContain("implementation(libs.auth)");
+  });
+
+  test("reuses a clerk version only Clerk artifacts reference", () => {
+    const catalogSource =
+      '[versions]\nclerk = "1.4.0"\n\n[libraries]\nclerk-android-api = { module = "com.clerk:clerk-android-api", version.ref = "clerk" }\n';
+    const plan = planSdkDependencies({
+      build: "dependencies {\n    implementation(libs.clerk.android.api)\n}\n",
+      catalogSource,
+      sdk: "ui",
+      minimumVersion: "1.3.0",
+      dependencies: [
+        { product: "core", version: "1.4.0", via: "catalog", alias: "clerk-android-api" },
+      ],
+    });
+    expect(plan.catalog).toContain(
+      'clerk-android-ui = { module = "com.clerk:clerk-android-ui", version.ref = "clerk" }',
+    );
+    expect(plan.catalog!.match(/^clerk = /gm)).toHaveLength(1);
+    expect(plan.catalog).toContain('lifecycleViewmodelCompose = "2.10.0"');
+    expect(plan.added[0]).toBe("com.clerk:clerk-android-ui:1.4.0");
+  });
+
+  test("refuses a clerk version another module references", () => {
+    const catalogSource =
+      '[versions]\nclerk = "2.0"\n\n[libraries]\nclerk-sdk = { module = "com.example:clerk-sdk", version.ref = "clerk" }\n';
+    expect(() =>
+      planSdkDependencies({
+        build,
+        catalogSource,
+        sdk: "core",
+        minimumVersion: "1.3.0",
+        dependencies: [],
+      }),
+    ).toThrow('"clerk" version for another module');
   });
 
   test("refuses a catalog that already uses the alias for something else", () => {

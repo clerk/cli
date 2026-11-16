@@ -162,15 +162,42 @@ describe("Android setup workflow", () => {
     await expect(
       prepareSetup(setup(root), { api, debugKeystore: keystore("no-keytool") }),
     ).rejects.toBeInstanceOf(IdentityRequired);
-    // An explicit fingerprint is enough.
-    const preview = await prepareSetup(setup(root, { fingerprints: ["ab".repeat(32)] }), {
-      api,
-      debugKeystore: keystore("no-keytool"),
-    });
+    // An explicit fingerprint is enough, and the unread keystore isn't a step to take.
+    const deps = { api, debugKeystore: keystore("no-keytool") };
+    const preview = await prepareSetup(setup(root, { fingerprints: ["ab".repeat(32)] }), deps);
     expect(preview.identity?.fingerprints).toEqual([DEBUG_FINGERPRINT]);
+    expect(preview.identity?.issues).toEqual([]);
     expect(
       preview.local.postInstructions.some((line) => line.includes("keytool was not found")),
-    ).toBe(true);
+    ).toBe(false);
+    const result = await applySetup(preview, deps);
+    expect(result.status).toBe("requires-build-and-verification");
+    expect(result.handoff.remaining.map((item) => item.id)).not.toContain("debug-fingerprint");
+    expect(result.identity?.fingerprintSources.debugKeystore).toBe("no-keytool");
+  });
+
+  test("a debug build type with its own signing config needs --android-fingerprint", async () => {
+    const root = await fixture();
+    const path = join(root, "app/build.gradle.kts");
+    await writeFile(
+      path,
+      (await readFile(path, "utf8")).replace(
+        "android {",
+        'android {\n    signingConfigs {\n        getByName("debug") {\n            storeFile = file("../keystores/debug.keystore")\n        }\n    }',
+      ),
+    );
+    await Bun.$`git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qam signing`
+      .cwd(root)
+      .quiet();
+    const { api } = fakeNativeAPI();
+    await expect(
+      prepareSetup(setup(root), { api, debugKeystore: keystore() }),
+    ).rejects.toMatchObject({ identity: { debug: { status: "custom-signing" } } });
+    const preview = await prepareSetup(setup(root, { fingerprints: [RELEASE_FINGERPRINT] }), {
+      api,
+      debugKeystore: keystore(),
+    });
+    expect(preview.identity?.fingerprints).toEqual([RELEASE_FINGERPRINT]);
   });
 
   test("an existing registration is reused without a known fingerprint, with a warning", async () => {
@@ -192,6 +219,51 @@ describe("Android setup workflow", () => {
     const result = await applySetup(preview, { api });
     expect(result.status).toBe("manual-steps-required");
     expect(result.handoff.remaining.map((item) => item.id)).toContain("debug-fingerprint");
+  });
+
+  test("an Application initialized with another instance's key leaves the key as a remaining step", async () => {
+    const matching = await fixture({ application: "custom-initialized" });
+    const { api } = fakeNativeAPI();
+    const deps = { api, debugKeystore: keystore() };
+    const ok = await applySetup(await prepareSetup(setup(matching), deps), deps);
+    expect(ok.handoff.remaining.map((item) => item.id)).not.toContain("publishable-key");
+    expect(ok.handoff.completed).toContainEqual({
+      id: "initialize-clerk",
+      detail: "The registered Application subclass initializes Clerk with its own key.",
+    });
+
+    const other = await fixture({ application: "custom-initialized" });
+    const source = join(other, "app/src/main/java/com/example/myapp/CustomApp.kt");
+    await writeFile(
+      source,
+      (await readFile(source, "utf8")).replace(FIXTURE_KEY, "pk_test_b3RoZXIk"),
+    );
+    await Bun.$`git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qam other`
+      .cwd(other)
+      .quiet();
+    const result = await applySetup(await prepareSetup(setup(other), deps), deps);
+    expect(result.status).toBe("manual-steps-required");
+    expect(result.handoff.remaining.map((item) => item.id)).toContain("publishable-key");
+
+    // A key clerk init can't read is left to be confirmed, not reported ready.
+    const computed = await fixture({ application: "custom-initialized" });
+    const computedSource = join(computed, "app/src/main/java/com/example/myapp/CustomApp.kt");
+    await writeFile(
+      computedSource,
+      (await readFile(computedSource, "utf8")).replace(
+        `"${FIXTURE_KEY}"`,
+        "BuildConfig.CLERK_PUBLISHABLE_KEY",
+      ),
+    );
+    await Bun.$`git -c user.email=t@t -c user.name=t -c commit.gpgsign=false commit -qam computed`
+      .cwd(computed)
+      .quiet();
+    const unknown = await applySetup(await prepareSetup(setup(computed), deps), deps);
+    expect(unknown.status).toBe("manual-steps-required");
+    expect(unknown.handoff.remaining).toContainEqual({
+      id: "publishable-key",
+      detail: expect.stringContaining("couldn't read"),
+    });
   });
 
   test("a dry run never touches the API or keytool", async () => {
