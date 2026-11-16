@@ -168,6 +168,7 @@ export async function init(options: InitOptions = {}) {
     ...(androidFlags.length && {
       android: { applicationId: options.androidPackage, flags: androidFlags },
     }),
+    ...(options.prebuiltAuthUi && { nativeFlags: ["--prebuilt-auth-ui"] }),
   };
 
   intro("Setting up Clerk");

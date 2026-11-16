@@ -359,6 +359,27 @@ describe("promptAndBootstrap for native Apple starters", () => {
     });
     expect(spawn).not.toHaveBeenCalled();
   });
+
+  test("--prebuilt-auth-ui stops a web starter picked from the list before anything is generated", async () => {
+    spies.push(spyOn(coordinator, "canSetUpXcode").mockReturnValue(true));
+    spies.push(spyOn(listage, "search").mockResolvedValue("next"));
+    const spawn = spyOn(Bun, "spawn");
+    spies.push(spawn);
+
+    await expect(
+      promptAndBootstrap("/tmp", undefined, {
+        skipConfirm: false,
+        implicitBootstrap: true,
+        nativeFlags: ["--prebuilt-auth-ui"],
+      }),
+    ).rejects.toMatchObject({
+      exitCode: 2,
+      message: expect.stringContaining(
+        "--prebuilt-auth-ui applies only to iOS, macOS, and Android apps",
+      ),
+    });
+    expect(spawn).not.toHaveBeenCalled();
+  });
 });
 
 describe("accountless flags with a native Apple starter", () => {

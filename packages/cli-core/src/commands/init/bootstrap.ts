@@ -245,6 +245,8 @@ export type BootstrapOverrides = {
     applicationId?: string;
     flags: readonly string[];
   };
+  /** Flags any native starter takes (`--prebuilt-auth-ui`), which a web starter can't. */
+  nativeFlags?: readonly string[];
 };
 
 export type BootstrapResult =
@@ -284,6 +286,7 @@ export async function promptAndBootstrap(
     pmOverride,
     nameOverride,
     accountlessFlags = [],
+    nativeFlags = [],
     json,
     apple,
     android,
@@ -353,6 +356,10 @@ export async function promptAndBootstrap(
   if (android?.flags.length)
     throwUsageError(
       `${android.flags.join(", ")} ${android.flags.length === 1 ? "applies" : "apply"} only to Android apps.`,
+    );
+  if (nativeFlags.length)
+    throwUsageError(
+      `${nativeFlags.join(", ")} ${nativeFlags.length === 1 ? "applies" : "apply"} only to iOS, macOS, and Android apps.`,
     );
 
   const { entry } = choice;
