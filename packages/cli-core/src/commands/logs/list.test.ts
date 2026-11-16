@@ -12,8 +12,9 @@ mock.module("../../lib/bapi-command.ts", () => ({
 }));
 
 const mockWithSpinner = mock((_msg: string, fn: () => Promise<unknown>) => fn());
+const mockIntro = mock();
 mock.module("../../lib/spinner.ts", () => ({
-  intro: () => {},
+  intro: (...args: unknown[]) => mockIntro(...args),
   outro: () => {},
   pausedOutro: () => {},
   bar: () => {},
@@ -628,6 +629,15 @@ describe("logs list --grouped", () => {
       await expect(list({ json: true, ...options })).rejects.toThrow(message);
       expect(mockResolveBapiSecretKey).not.toHaveBeenCalled();
       expect(mockBapiRequest).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each(invalidGrouped)(
+    "rejects $label before opening the Listing logs frame",
+    async ({ options, message }) => {
+      mockIntro.mockClear();
+      await expect(list(options)).rejects.toThrow(message);
+      expect(mockIntro).not.toHaveBeenCalled();
     },
   );
 

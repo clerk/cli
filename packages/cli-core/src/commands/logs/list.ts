@@ -258,15 +258,17 @@ function printHuman(
 
 export async function list(options: LogsListOptions = {}): Promise<void> {
   if (options.interval !== undefined) throwUsageError("--interval requires --follow.");
+  // Usage errors come before the "Listing logs" frame, like --follow's, so a
+  // bad flag fails the same way whichever check catches it.
+  const { view, groupFilters } = resolveListView(options);
+  const range = resolveTimeRange(options);
+  const filters = resolveFilters(options);
   const json = Boolean(options.json) || isAgent();
   const shouldWrap = !isInsideGutter() && !json;
   if (shouldWrap) intro("Listing logs");
   let closeStatus: "success" | "failed" | "paused" | undefined;
 
   try {
-    const { view, groupFilters } = resolveListView(options);
-    const range = resolveTimeRange(options);
-    const filters = resolveFilters(options);
     const secretKey = await resolveBapiSecretKey({
       secretKey: options.secretKey,
       app: options.app,
