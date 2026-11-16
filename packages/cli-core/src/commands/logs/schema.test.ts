@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock } from "bun:test";
-import { BapiError, CliError, EXIT_CODE } from "../../lib/errors.ts";
+import { BapiError, CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
 import { useCaptureLog } from "../../test/lib/stubs.ts";
 
 const mockBapiRequest = mock();
@@ -168,6 +168,14 @@ describe("logs schema", () => {
       "The Logs API returned an unexpected response.",
     );
     expect(captured.out).toBe("");
+  });
+
+  test("gives the unexpected-response error a code, so agent mode prints it as JSON", async () => {
+    mockBapiRequest.mockResolvedValueOnce(response(null));
+
+    const error = await schema("sign_in.completed", { json: true }).catch((caught) => caught);
+
+    expect((error as CliError).code).toBe(ERROR_CODE.BAPI_UNEXPECTED_RESPONSE);
   });
 
   test.each([
@@ -538,6 +546,8 @@ describe("logs schema (no event type)", () => {
     expect(error).not.toBeInstanceOf(BapiError);
     expect((error as CliError).message).toContain("can't list event types yet");
     expect((error as CliError).message).toContain("clerk logs schema sign_in.completed");
+    // A code is what makes agent mode print the error as JSON.
+    expect((error as CliError).code).toBe(ERROR_CODE.LOG_TYPES_UNAVAILABLE);
     expect(captured.out).toBe("");
   });
 

@@ -13,7 +13,13 @@
 
 import { resolveBapiSecretKey } from "../../lib/bapi-command.ts";
 import { bold, cyan, dim } from "../../lib/color.ts";
-import { BapiError, CliError, throwUsageError, withApiContext } from "../../lib/errors.ts";
+import {
+  BapiError,
+  CliError,
+  ERROR_CODE,
+  throwUsageError,
+  withApiContext,
+} from "../../lib/errors.ts";
 import type { ApiResponse } from "../../lib/fetch.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { closeStatusForError } from "../../lib/signals.ts";
@@ -48,7 +54,11 @@ export type LogSchemaList = {
   total_count: number;
 };
 
-const UNEXPECTED_RESPONSE = "The Logs API returned an unexpected response.";
+function unexpectedResponse(): CliError {
+  return new CliError("The Logs API returned an unexpected response.", {
+    code: ERROR_CODE.BAPI_UNEXPECTED_RESPONSE,
+  });
+}
 
 const EVENT_TYPE_EXAMPLES = [
   { command: "clerk logs schema", description: "Every event type" },
@@ -238,7 +248,7 @@ function typesRouteMissing(): CliError {
   return new CliError(
     "This Backend API can't list event types yet (GET /v1/logs/types returned 404). " +
       "Pass an event type to see its fields, like `clerk logs schema sign_in.completed`.",
-    { examples: EVENT_TYPE_EXAMPLES.slice(1) },
+    { code: ERROR_CODE.LOG_TYPES_UNAVAILABLE, examples: EVENT_TYPE_EXAMPLES.slice(1) },
   );
 }
 
@@ -254,7 +264,7 @@ async function fetchTypes(secretKey: string): Promise<LogSchemaList> {
   }
   const body = response.body;
   if (!isObject(body) || !Array.isArray(body.data) || !body.data.every(isObject)) {
-    throw new CliError(UNEXPECTED_RESPONSE);
+    throw unexpectedResponse();
   }
   return body as LogSchemaList;
 }
@@ -267,7 +277,7 @@ async function fetchSchema(secretKey: string, type: string): Promise<LogSchema> 
     ),
   );
   const body = response.body;
-  if (!isObject(body)) throw new CliError(UNEXPECTED_RESPONSE);
+  if (!isObject(body)) throw unexpectedResponse();
   return body as LogSchema;
 }
 
@@ -295,7 +305,7 @@ export async function schema(
         log.data(JSON.stringify(result, null, 2));
       } else {
         if (!result.data.every((entry) => isRenderableListEntry(entry))) {
-          throw new CliError(UNEXPECTED_RESPONSE);
+          throw unexpectedResponse();
         }
         printList(result.data);
       }
@@ -304,7 +314,7 @@ export async function schema(
       if (json) {
         log.data(JSON.stringify(result, null, 2));
       } else {
-        if (!isRenderableSchema(result)) throw new CliError(UNEXPECTED_RESPONSE);
+        if (!isRenderableSchema(result)) throw unexpectedResponse();
         printHuman({ ...result, fields: result.fields ?? [] });
       }
     }
