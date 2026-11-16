@@ -307,15 +307,18 @@ export async function applySetup(
             : "The registered Application subclass initializes Clerk with the development publishable key resource."
           : (application.reason ?? "Initialize Clerk in the registered Application subclass."),
     );
-    if (
-      application.customKey !== undefined &&
-      preview.publishableKey !== undefined &&
-      application.customKey !== preview.publishableKey
-    )
-      remaining.push({
-        id: "publishable-key",
-        detail: `${application.className} initializes Clerk with a different publishable key than the linked development instance's. Initialize it with the linked instance's key, or link the application that key belongs to.`,
-      });
+    if (application.initialized === "custom" && preview.publishableKey !== undefined) {
+      if (application.customKey === undefined)
+        remaining.push({
+          id: "publishable-key",
+          detail: `${application.className} initializes Clerk with a key clerk init couldn't read (it isn't one string literal passed to Clerk.initialize). Confirm it is the linked development instance's publishable key.`,
+        });
+      else if (application.customKey !== preview.publishableKey)
+        remaining.push({
+          id: "publishable-key",
+          detail: `${application.className} initializes Clerk with a different publishable key than the linked development instance's. Initialize it with the linked instance's key, or link the application that key belongs to.`,
+        });
+    }
     step(
       "native-registration",
       result.remote === "verified",

@@ -1,6 +1,11 @@
 import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
 import { maskCode } from "./gradle.ts";
-import { describeIdentity, discoverIdentity, readDebugKeystore } from "./identity.ts";
+import {
+  debugKeystoreNote,
+  describeIdentity,
+  discoverIdentity,
+  readDebugKeystore,
+} from "./identity.ts";
 import { auditRemote, nativeAPI, resolveInstance } from "./remote.ts";
 import { CLERK_ANDROID_MIN_SDK, sdkInstalled, type Check } from "./sdk.ts";
 import { KEY_RESOURCE } from "./project.ts";
@@ -179,7 +184,8 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
         message:
           identity.debug.status === "found"
             ? `This machine's debug certificate (${identity.debug.fingerprint}) is registered, so assetlinks.json covers debug builds.`
-            : (identity.issues[0] ?? "The debug certificate fingerprint could not be read."),
+            : (debugKeystoreNote(identity.debug) ??
+              "The debug certificate fingerprint could not be read."),
         remedy:
           identity.debug.status === "found"
             ? undefined

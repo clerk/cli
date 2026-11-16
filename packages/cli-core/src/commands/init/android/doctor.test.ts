@@ -111,6 +111,26 @@ describe("Android doctor", () => {
     ).toBe("fail");
   });
 
+  test("an explicit fingerprint still reports why the debug certificate wasn't read", async () => {
+    const f = await fixture({ application: "custom-initialized", internetPermission: true });
+    f.state.enabled = true;
+    f.state.registrations.push({
+      object: "android_application",
+      id: "androidapp_1",
+      namespace: "android_app",
+      package_name: "com.example.myapp",
+      fingerprints: [RELEASE_FINGERPRINT],
+    });
+    const report = await doctor(
+      { ...options(f.root), fingerprints: [RELEASE_FINGERPRINT] },
+      { api: f.dependencies.api, debugKeystore: keystore("no-keystore") },
+    );
+    const check = report.checks.find((item) => item.name === "Debug signing fingerprint")!;
+    expect(check.status).toBe("warn");
+    expect(check.message).toContain("No debug keystore");
+    expect(report.identity.issues).toEqual([]);
+  });
+
   test("without a linked application the remote checks become one warning", async () => {
     const f = await fixture();
     const report = await doctor(options(f.root, false), {

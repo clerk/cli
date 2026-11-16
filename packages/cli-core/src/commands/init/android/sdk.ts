@@ -64,7 +64,8 @@ export function findClerkDependencies(build: string, catalog?: Catalog): ClerkDe
     const product = productOf(coordinate);
     if (!product) continue;
     const version = coordinate.split(":")[2];
-    found.push({ product, version, via: "literal" });
+    // An interpolated version (`$clerkVersion`) is a declaration whose version can't be read.
+    found.push({ product, version: version?.includes("$") ? undefined : version, via: "literal" });
   }
   if (catalog)
     for (const [alias, library] of Object.entries(catalog.libraries)) {
@@ -187,13 +188,21 @@ export function planSdkDependencies(
   let { build } = input;
   let catalogSource = input.catalogSource;
   const added: string[] = [];
-  const needed: { coordinate: string; version: string; alias: string; versionKey: string }[] = [];
+  const needed: {
+    coordinate: string;
+    version: string;
+    alias: string;
+    versionKey: string;
+    /** Whether a module may share this version key, so an existing entry can be reused. */
+    sharesVersion: (module: string) => boolean;
+  }[] = [];
   if (!sdkInstalled(input.dependencies, input.sdk))
     needed.push({
       coordinate: ARTIFACTS[input.sdk],
       version: input.minimumVersion,
       alias: `${aliases.clerk}-${input.sdk === "ui" ? "ui" : "api"}`,
       versionKey: "clerk",
+      sharesVersion: (module) => (Object.values(ARTIFACTS) as string[]).includes(module),
     });
   const catalog = catalogSource ? parseCatalog(catalogSource) : undefined;
   if (
@@ -212,6 +221,7 @@ export function planSdkDependencies(
       version: LIFECYCLE_VIEWMODEL_COMPOSE_VERSION,
       alias: aliases.lifecycle,
       versionKey: "lifecycleViewmodelCompose",
+      sharesVersion: (module) => module === LIFECYCLE_VIEWMODEL_COMPOSE,
     });
   if (!needed.length) return { build, catalog: catalogSource, added };
   const lines: string[] = [];
@@ -222,26 +232,39 @@ export function planSdkDependencies(
         ([, library]) => library.module === item.coordinate,
       );
       let alias = existing?.[0];
+      let version = existing ? catalogVersion(catalog, existing[1]) : undefined;
       if (!alias) {
-        if (catalog.libraries[item.alias] || catalog.versions[item.versionKey])
+        if (catalog.libraries[item.alias])
           throw unsupported(
-            `gradle/libs.versions.toml already defines "${item.alias}" or a "${item.versionKey}" version for another module.`,
+            `gradle/libs.versions.toml already defines "${item.alias}" for another module.`,
           );
-        catalogSource = appendToCatalogSection(
-          catalogSource,
-          "versions",
-          `${item.versionKey} = "${item.version}"`,
-        );
+        // A version key a sibling artifact already uses (`clerk` after a core setup) is shared
+        // through version.ref; one anything else references belongs to that module.
+        const reusable = sharedVersionKey(catalog, item.versionKey, item.sharesVersion);
+        if (catalog.versions[item.versionKey] !== undefined && !reusable)
+          throw unsupported(
+            `gradle/libs.versions.toml already defines a "${item.versionKey}" version for another module.`,
+          );
+        if (!reusable)
+          catalogSource = appendToCatalogSection(
+            catalogSource,
+            "versions",
+            `${item.versionKey} = "${item.version}"`,
+          );
         catalogSource = appendToCatalogSection(
           catalogSource,
           "libraries",
           `${item.alias} = { module = "${item.coordinate}", version.ref = "${item.versionKey}" }`,
         );
         alias = item.alias;
+        version = reusable ? catalog.versions[item.versionKey] : undefined;
       }
       lines.push(`implementation(${catalogAccessor(alias)})`);
-    } else lines.push(`implementation("${item.coordinate}:${item.version}")`);
-    added.push(`${item.coordinate}:${existing(catalog, item.coordinate) ?? item.version}`);
+      added.push(`${item.coordinate}:${version ?? item.version}`);
+    } else {
+      lines.push(`implementation("${item.coordinate}:${item.version}")`);
+      added.push(`${item.coordinate}:${item.version}`);
+    }
   }
   const dependencies = topLevelBlocks(build, "dependencies");
   if (dependencies.length > 1)
@@ -252,8 +275,18 @@ export function planSdkDependencies(
   return { build, catalog: catalogSource, added };
 }
 
-function existing(catalog: Catalog | undefined, coordinate: string): string | undefined {
-  if (!catalog) return undefined;
-  const library = Object.values(catalog.libraries).find((item) => item.module === coordinate);
-  return library ? catalogVersion(catalog, library) : undefined;
+/** Whether `key` exists in `[versions]` and only modules that may share it reference it. */
+function sharedVersionKey(
+  catalog: Catalog,
+  key: string,
+  sharesVersion: (module: string) => boolean,
+): boolean {
+  if (catalog.versions[key] === undefined) return false;
+  const libraries = Object.values(catalog.libraries).filter((item) => item.versionRef === key);
+  const plugins = Object.values(catalog.plugins).filter((item) => item.versionRef === key);
+  return (
+    libraries.length > 0 &&
+    plugins.length === 0 &&
+    libraries.every((item) => item.module !== undefined && sharesVersion(item.module))
+  );
 }

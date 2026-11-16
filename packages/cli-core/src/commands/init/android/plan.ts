@@ -22,12 +22,52 @@ export function writes(action: FileAction): action is Exclude<FileAction, { type
   return action.type !== "skip";
 }
 
+/** Valid package segments that Kotlin source can't spell without backticks. */
+const KOTLIN_HARD_KEYWORDS = new Set([
+  "as",
+  "break",
+  "class",
+  "continue",
+  "do",
+  "else",
+  "false",
+  "for",
+  "fun",
+  "if",
+  "in",
+  "interface",
+  "is",
+  "null",
+  "object",
+  "package",
+  "return",
+  "super",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "typealias",
+  "typeof",
+  "val",
+  "var",
+  "when",
+  "while",
+]);
+
+/** A package name as Kotlin source: `com.example.object` is `com.example.\`object\``. */
+export function kotlinPackage(name: string): string {
+  return name
+    .split(".")
+    .map((segment) => (KOTLIN_HARD_KEYWORDS.has(segment) ? `\`${segment}\`` : segment))
+    .join(".");
+}
+
 export function keyResourceSource(publishableKey: string): string {
   return `<?xml version="1.0" encoding="utf-8"?>\n<resources>\n    <!-- ${GENERATED} -->\n    <string name="${KEY_RESOURCE}" translatable="false">${publishableKey}</string>\n</resources>\n`;
 }
 
 export function generatedApplication(namespace: string): string {
-  return `package ${namespace}\n\nimport android.app.Application\nimport com.clerk.api.Clerk\n\n// ${GENERATED}\nclass ${GENERATED_APPLICATION} : Application() {\n    override fun onCreate() {\n        super.onCreate()\n        Clerk.initialize(this, publishableKey = getString(R.string.${KEY_RESOURCE}))\n    }\n}\n`;
+  return `package ${kotlinPackage(namespace)}\n\nimport android.app.Application\nimport com.clerk.api.Clerk\n\n// ${GENERATED}\nclass ${GENERATED_APPLICATION} : Application() {\n    override fun onCreate() {\n        super.onCreate()\n        Clerk.initialize(this, publishableKey = getString(R.string.${KEY_RESOURCE}))\n    }\n}\n`;
 }
 
 /**
@@ -116,7 +156,7 @@ export function planAndroidSetup(
         };
   actions.push(sdkAction);
   // Application class.
-  const initCall = `com.clerk.api.Clerk.initialize(this, publishableKey = getString(${selection.namespace}.R.string.${KEY_RESOURCE}))`;
+  const initCall = `com.clerk.api.Clerk.initialize(this, publishableKey = getString(${kotlinPackage(selection.namespace)}.R.string.${KEY_RESOURCE}))`;
   let initializes = application.initialized !== "none";
   // A class that already initializes Clerk may still be missing from the manifest (a generated
   // file whose registration was reverted); registering it is what makes it run.

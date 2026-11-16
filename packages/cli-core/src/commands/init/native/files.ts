@@ -4,6 +4,18 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SetupErrorFactory } from "./types.ts";
 
+/** Environment variables that select a repository, index, or worktree regardless of `cwd`. */
+const REPOSITORY_GIT_VARIABLES = new Set([
+  "GIT_DIR",
+  "GIT_WORK_TREE",
+  "GIT_INDEX_FILE",
+  "GIT_OBJECT_DIRECTORY",
+  "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+  "GIT_COMMON_DIR",
+  "GIT_NAMESPACE",
+  "GIT_PREFIX",
+]);
+
 export interface FileSnapshot {
   path: string;
   source: string;
@@ -110,13 +122,17 @@ export function fileOperations(setupError: SetupErrorFactory) {
   /**
    * Spawns git, or returns undefined when there is no git executable (Bun.spawn throws before the
    * child starts). A machine without Git is still a valid place to edit a project. The environment
-   * is passed explicitly so the lookup follows the current PATH, not the one at startup.
+   * is passed explicitly so the lookup follows the current PATH, not the one at startup, minus the
+   * variables that pin Git to one repository: inherited from a hook of another repository, those
+   * would make every check read that repository instead of the project's.
    */
   function spawnGit(root: string, args: string[], stdout: "pipe" | "ignore") {
     try {
       return Bun.spawn(["git", "--literal-pathspecs", ...args], {
         cwd: root,
-        env: process.env,
+        env: Object.fromEntries(
+          Object.entries(process.env).filter(([name]) => !REPOSITORY_GIT_VARIABLES.has(name)),
+        ),
         stdout,
         stderr: "ignore",
         timeout: 5_000,

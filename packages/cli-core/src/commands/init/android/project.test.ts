@@ -35,6 +35,7 @@ describe("Android project inspection", () => {
       namespace: "com.example.myapp",
       applicationId: "com.example.myapp",
       applicationIdSource: "gradle",
+      debugSigning: "default",
     });
     expect(inspection.minSdk).toMatchObject({ value: 24, source: "literal" });
     expect(inspection.kotlin).toMatchObject({ version: "2.3.21", applied: "yes" });
@@ -238,6 +239,52 @@ describe("Android project inspection", () => {
     },
   );
 
+  test.each([
+    [
+      "a signingConfigs entry for debug",
+      'android {\n    signingConfigs {\n        getByName("debug") {\n            storeFile = file("../keystores/debug.keystore")\n        }\n    }',
+    ],
+    [
+      "a Groovy signingConfigs debug block",
+      "android {\n    signingConfigs {\n        debug {\n            storeFile file('../keystores/debug.keystore')\n        }\n    }",
+    ],
+    [
+      "a signingConfig in the debug build type",
+      'android {\n    buildTypes {\n        debug {\n            signingConfig = signingConfigs.getByName("release")\n        }\n    }',
+    ],
+  ])("reports debug builds signed by %s as custom", async (_label, androidPrefix) => {
+    const root = await fixture();
+    const path = join(root, "app/build.gradle.kts");
+    await writeFile(path, (await Bun.file(path).text()).replace("android {", androidPrefix));
+    expect((await inspect(root)).selection.debugSigning).toBe("custom");
+  });
+
+  test("a release signing config leaves debug signing default", async () => {
+    const root = await fixture();
+    const path = join(root, "app/build.gradle.kts");
+    await writeFile(
+      path,
+      (await Bun.file(path).text()).replace(
+        "android {",
+        'android {\n    signingConfigs {\n        create("release") {\n            storeFile = file("release.keystore")\n        }\n    }\n    buildTypes {\n        release {\n            signingConfig = signingConfigs.getByName("release")\n        }\n    }',
+      ),
+    );
+    expect((await inspect(root)).selection.debugSigning).toBe("default");
+  });
+
+  test("a minSdk assigned twice is unknown, since Gradle keeps the later one", async () => {
+    const root = await fixture();
+    const path = join(root, "app/build.gradle.kts");
+    await writeFile(
+      path,
+      (await Bun.file(path).text()).replace(
+        "minSdk = 24",
+        'minSdk = 21\n        minSdk = rootProject.extra["minSdk"] as Int',
+      ),
+    );
+    expect((await inspect(root)).minSdk).toEqual({ source: "unknown" });
+  });
+
   test("an unreadable minSdk is reported, not refused", async () => {
     const root = await fixture();
     const path = join(root, "app/build.gradle.kts");
@@ -322,19 +369,69 @@ describe("Android project inspection", () => {
     });
   });
 
-  test("reads the one key literal of an Application that initializes Clerk with its own key", async () => {
+  test("reads the key passed to Clerk.initialize, not every key literal in the file", async () => {
     const root = await fixture({ application: "custom-initialized" });
     expect((await inspect(root)).application.customKey).toBe(FIXTURE_KEY);
+    const path = join(root, "app/src/main/java/com/example/myapp/CustomApp.kt");
+    const source = await Bun.file(path).text();
+    // Another instance's key elsewhere in the file doesn't make the call's key ambiguous.
+    await writeFile(
+      path,
+      source.replace("class CustomApp", 'const val OTHER = "pk_test_b3RoZXIk"\n\nclass CustomApp'),
+    );
+    expect((await inspect(root)).application.customKey).toBe(FIXTURE_KEY);
+    // A computed argument leaves the key unknown, whatever literals the file holds.
+    await writeFile(
+      path,
+      source
+        .replace(`publishableKey = "${FIXTURE_KEY}"`, "publishableKey = BuildConfig.CLERK_KEY")
+        .replace("class CustomApp", `const val OTHER = "${FIXTURE_KEY}"\n\nclass CustomApp`),
+    );
+    expect((await inspect(root)).application).toMatchObject({
+      initialized: "custom",
+      customKey: undefined,
+    });
   });
 
-  test("refuses a debug manifest that replaces the Application class", async () => {
+  test.each([
+    ['android:name=".DebugApp" tools:replace="android:name"', "sets"],
+    ['tools:node="replace"', "replaces"],
+    ['tools:remove="android:label,android:name"', "removes"],
+  ])(
+    "refuses a debug manifest whose application %s the Application class (%s)",
+    async (attributes) => {
+      const root = await fixture();
+      await mkdir(join(root, "app/src/debug"), { recursive: true });
+      await writeFile(
+        join(root, "app/src/debug/AndroidManifest.xml"),
+        `<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">\n    <application ${attributes} />\n</manifest>\n`,
+      );
+      await expect(inspect(root)).rejects.toThrow(
+        "src/debug/AndroidManifest.xml sets, replaces, or removes android:name",
+      );
+    },
+  );
+
+  test("accepts a debug manifest that only adds to the application element", async () => {
     const root = await fixture();
     await mkdir(join(root, "app/src/debug"), { recursive: true });
     await writeFile(
       join(root, "app/src/debug/AndroidManifest.xml"),
-      '<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">\n    <application android:name=".DebugApp" tools:replace="android:name" />\n</manifest>\n',
+      '<manifest xmlns:android="http://schemas.android.com/apk/res/android" xmlns:tools="http://schemas.android.com/tools">\n    <application android:usesCleartextTraffic="true" tools:remove="android:label" />\n</manifest>\n',
     );
-    await expect(inspect(root)).rejects.toThrow("src/debug/AndroidManifest.xml sets android:name");
+    expect((await inspect(root)).selection.module).toBe("app");
+  });
+
+  test("leaves an onCreate with an expression body to the handoff", async () => {
+    const root = await fixture({ application: "custom" });
+    await writeFile(
+      join(root, "app/src/main/java/com/example/myapp/CustomApp.kt"),
+      "package com.example.myapp\n\nimport android.app.Application\n\nclass CustomApp : Application() {\n    override fun onCreate() = super.onCreate()\n}\n",
+    );
+    expect((await inspect(root)).application).toMatchObject({
+      editable: false,
+      reason: expect.stringContaining("no block body"),
+    });
   });
 
   test("leaves an Application it can't edit safely to the handoff", async () => {

@@ -186,12 +186,16 @@ export function usesAccessor(build: string, accessor: string): boolean {
   );
 }
 
-/** The literal dependency notation lines (`implementation("group:name:version")`) in the script. */
+/**
+ * The dependency notation lines (`implementation("group:name:version")`) in the script. The
+ * version may be interpolated (`$clerkVersion`, `${clerk_version}`); callers that need a plain
+ * version check for `$`.
+ */
 export function literalDependencies(build: string): { coordinate: string; index: number }[] {
   const masked = maskCode(build, false);
   return [
     ...masked.matchAll(
-      /(?<![\w.])(?:implementation|api|compileOnly|runtimeOnly|debugImplementation|releaseImplementation)\s*\(?\s*["']([^"'$\r\n]+)["']/g,
+      /(?<![\w.])(?:implementation|api|compileOnly|runtimeOnly|debugImplementation|releaseImplementation)\s*\(?\s*["']([^"'\r\n]+)["']/g,
     ),
   ].map((match) => ({ coordinate: match[1]!, index: match.index }));
 }
@@ -201,7 +205,8 @@ export function literalDependencies(build: string): { coordinate: string; index:
  * of the file. A missing table is added at the end.
  */
 export function appendToCatalogSection(source: string, section: string, line: string): string {
-  const header = new RegExp(`^\\[${section}\\][ \\t]*(?:#.*)?$`, "m").exec(source);
+  // TOML allows whitespace inside the brackets (`[ versions ]`), and Bun.TOML parses it.
+  const header = new RegExp(`^\\[[ \\t]*${section}[ \\t]*\\][ \\t]*(?:#.*)?$`, "m").exec(source);
   if (!header) {
     const separator = source.length === 0 || source.endsWith("\n") ? "" : "\n";
     return `${source}${separator}${source.length ? "\n" : ""}[${section}]\n${line}\n`;
@@ -215,12 +220,18 @@ export function appendToCatalogSection(source: string, section: string, line: st
   return `${source.slice(0, insertAt)}\n${line}${source.slice(insertAt)}`;
 }
 
-/** Inserts `text` as the first line inside a block, matching the indentation of its first entry. */
+/**
+ * Inserts `lines` as the first lines inside a block, matching the indentation of its first entry.
+ * An entry on the brace's own line (`dependencies { implementation(…) }`) moves to a line of its
+ * own, since two statements can't share one.
+ */
 export function insertIntoBlock(source: string, block: Block, lines: string[]): string {
   const body = source.slice(block.open + 1, block.close);
   const indent = /\n([ \t]+)\S/.exec(body)?.[1] ?? "    ";
   const insertion = lines.map((line) => `\n${indent}${line}`).join("");
-  return source.slice(0, block.open + 1) + insertion + source.slice(block.open + 1);
+  if (!/^[ \t]*[^\s}]/.test(body))
+    return source.slice(0, block.open + 1) + insertion + source.slice(block.open + 1);
+  return `${source.slice(0, block.open + 1)}${insertion}\n${indent}${body.replace(/^[ \t]+/, "")}${source.slice(block.close)}`;
 }
 
 export interface SettingsScript {

@@ -43,4 +43,23 @@ describe("native file git checks", () => {
     expect(await gitTracked(root, "appA/src/clerk.xml")).toBe(true);
     expect(await gitStatus(root, "appA/src/clerk.xml")).toBe("clean");
   });
+
+  test("ignore an inherited GIT_DIR and GIT_WORK_TREE that point at another repository", async () => {
+    // A hook of `other` running the CLI inherits variables that pin Git to `other`, where the
+    // same path is clean and tracked; the project's own copy is edited.
+    const other = await repoWithTrackedFile("app/src/clerk.xml");
+    const root = await repoWithTrackedFile("app/src/clerk.xml");
+    await writeFile(join(root, "app/src/clerk.xml"), "edited\n");
+    process.env.GIT_DIR = join(other, ".git");
+    process.env.GIT_WORK_TREE = other;
+    try {
+      expect(await gitStatus(root, "app/src/clerk.xml")).toBe("dirty");
+      expect(await gitTracked(root, "app/src/clerk.xml")).toBe(true);
+      await writeFile(join(root, "app/src/untracked.xml"), "new\n");
+      expect(await gitTracked(root, "app/src/untracked.xml")).toBe(false);
+    } finally {
+      delete process.env.GIT_DIR;
+      delete process.env.GIT_WORK_TREE;
+    }
+  });
 });
