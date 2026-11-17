@@ -1,4 +1,4 @@
-import { mkdir, rm } from "node:fs/promises";
+import { chmod, mkdir, rm } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import wrapperJar from "./starter/gradle-wrapper.jar" with { type: "file" };
 import gradlewScript from "./starter/gradlew" with { type: "file" };
@@ -508,7 +508,10 @@ export async function writeAndroidStarter(
     }
     for (const { path, source, mode } of WRAPPER_FILES) {
       await mkdir(join(directory, dirname(path)), { recursive: true });
-      await Bun.write(join(directory, path), Bun.file(source), { mode });
+      await Bun.write(join(directory, path), Bun.file(source));
+      // Set after the copy, and before the initial commit records it: in the compiled CLI the
+      // source is an embedded file, and Bun.write ignores `mode` when copying one.
+      await chmod(join(directory, path), mode);
     }
     if (!(await insideGitRepository(directory))) await initializeRepository(directory);
   } catch (error) {

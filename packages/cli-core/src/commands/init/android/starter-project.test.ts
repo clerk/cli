@@ -96,7 +96,11 @@ describe("writeAndroidStarter", () => {
 
   test("writes the executable wrapper and an initial commit", async () => {
     const dir = await write();
-    expect((await stat(join(dir, "gradlew"))).mode & 0o111).toBeTruthy();
+    expect((await stat(join(dir, "gradlew"))).mode & 0o777).toBe(0o755);
+    expect((await stat(join(dir, "gradlew.bat"))).mode & 0o777).toBe(0o644);
+    // The initial commit records the executable bit, so a clone can run ./gradlew too.
+    const index = await Bun.$`git ls-files -s gradlew`.cwd(dir).quiet().nothrow();
+    expect(index.stdout.toString()).toStartWith("100755 ");
     expect((await stat(join(dir, "gradle/wrapper/gradle-wrapper.jar"))).size).toBeGreaterThan(
       40_000,
     );
