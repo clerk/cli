@@ -6,6 +6,7 @@ import { SelectionNeeded, findApplicationModules } from "./discovery.ts";
 import { keyResourceSource } from "./plan.ts";
 import { inspectAndroidProject } from "./project.ts";
 import { createAndroidFixture, FIXTURE_KEY } from "./test-helpers.ts";
+import { UnsupportedLayout } from "./types.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -331,6 +332,21 @@ describe("Android project inspection", () => {
       (await inspect(root, { chooseModule: async (choices) => choices[1]! })).selection.module,
     ).toBe("wear");
     await expect(inspect(root, { module: "lib" })).rejects.toThrow("com.android.application");
+  });
+
+  test("a module whose application plugin comes from a convention plugin is an unsupported layout", async () => {
+    const root = await fixture();
+    const build = await Bun.file(join(root, "app/build.gradle.kts")).text();
+    await writeFile(
+      join(root, "app/build.gradle.kts"),
+      `plugins {\n    id("myapp.android.application")\n}\n${build.slice(build.indexOf("android {"))}`,
+    );
+    expect(await findApplicationModules(root)).toEqual([]);
+    // Not a selection: there is nothing to choose, and --android-module is refused the same way.
+    const error = await inspect(root).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(UnsupportedLayout);
+    expect((error as UnsupportedLayout).reason).toContain("convention plugin");
+    await expect(inspect(root, { module: "app" })).rejects.toBeInstanceOf(UnsupportedLayout);
   });
 
   test("supports a root module", async () => {

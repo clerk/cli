@@ -17,7 +17,7 @@ test("an inspection failure reports its cause and remedy", async () => {
   const ctx = { getProfile: async () => undefined } as unknown as DoctorContext;
   const [result] = await runAndroidDoctorChecks(ctx, { root });
   expect(result).toMatchObject({ name: "Android project", status: "fail" });
-  expect(result?.message).toContain("none found");
+  expect(result?.message).toContain("No Android application module was found");
   expect(result?.remedy).toContain("--android-module");
 });
 
