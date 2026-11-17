@@ -1,5 +1,27 @@
 import { test, expect, describe, afterEach } from "bun:test";
-import { requireEnvOrFlag, getDarwinTargets } from "./sign-macos.ts";
+import { requireEnvOrFlag, getDarwinTargets, isTransientTimestampError } from "./sign-macos.ts";
+
+describe("isTransientTimestampError", () => {
+  test("matches codesign's missing-timestamp failure", () => {
+    expect(
+      isTransientTimestampError(
+        "dist/artifacts/darwin-arm64/clerk: A timestamp was expected but was not found.",
+      ),
+    ).toBe(true);
+  });
+
+  test("matches the timestamp-service-unavailable failure", () => {
+    expect(isTransientTimestampError("clerk: The timestamp service is not available.")).toBe(true);
+  });
+
+  test("does not match unrelated signing failures", () => {
+    expect(
+      isTransientTimestampError(
+        "Developer ID Application: Clerk: no identity found\nclerk: errSecInternalComponent",
+      ),
+    ).toBe(false);
+  });
+});
 
 describe("requireEnvOrFlag", () => {
   afterEach(() => {
