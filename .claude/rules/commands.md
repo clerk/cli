@@ -24,7 +24,7 @@ When adding or modifying a command, ensure tab-completion stays correct. See `.c
 
 ## Shipping a command behind `CLERK_EXPERIMENTAL`
 
-A command can merge to `main`, and reach `@canary` and releases, before it's ready, behind a name in `CLERK_EXPERIMENTAL`. `src/lib/experimental.ts` holds the gate: `isExperimentEnabled(name)` and `requireExperiment(name)`. `clerk migrate` shipped this way, one slice per PR.
+A command can merge to `main`, and reach `@canary` and releases, before it's ready, behind a name in `CLERK_EXPERIMENTAL`. `src/lib/experimental.ts` holds the gate: `isExperimentEnabled(name)` and `requireExperiment(name)`. `clerk migrate` and `clerk logs` shipped this way, one slice per PR.
 
 To gate a command:
 

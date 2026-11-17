@@ -1,6 +1,5 @@
 import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
-import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
 import { collectOptionValues, parseIntegerOption } from "../../lib/option-parsers.ts";
 import { FILTER_MATCH_CHOICES } from "./filters.ts";
 import { follow } from "./follow.ts";
@@ -34,27 +33,7 @@ is NDJSON instead, one log per line. schema prints the API's schema objects
 as-is. Logs go back as far as your plan's log retention;
 \`cursor.retention_limit_reached\` says a list reached it.`;
 
-export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.env): void {
-  // Experimental until `clerk logs` is ready to ship (Linear project
-  // "Logs: $ clerk logs subcommand"); the gate comes off then. Same stub as
-  // `clerk migrate`: hidden, no subcommands for completion to walk, and it
-  // accepts anything so every invocation reaches the refusal.
-  if (!isExperimentEnabled("logs", env)) {
-    const stub = program
-      .command("logs", { hidden: true })
-      .helpOption(false)
-      .allowUnknownOption()
-      .allowExcessArguments()
-      .argument("[args...]")
-      .action(() => requireExperiment("logs", env));
-    // `clerk help logs` renders help without running the action.
-    stub.helpInformation = () => {
-      requireExperiment("logs", env);
-      return "";
-    };
-    return;
-  }
-
+export function registerLogs(program: Program): void {
   const logsCommand = program
     .command("logs")
     .summary(LOGS_SUMMARY)

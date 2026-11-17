@@ -6,7 +6,7 @@
  * the help's.
  */
 
-import { afterAll, describe, expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import type { Command } from "commander";
 import { createProgram } from "../../cli-program.ts";
 
@@ -14,15 +14,6 @@ const README = await Bun.file(new URL("./README.md", import.meta.url)).text();
 
 const ANSI_ESCAPE_PATTERN = new RegExp(String.raw`\x1b\[[0-9;]*m`, "g");
 const stripAnsi = (value: string): string => value.replace(ANSI_ESCAPE_PATTERN, "");
-
-// Set at load, not in a hook: the example tables below are built from the help
-// at module scope, before any hook runs.
-const saved = process.env.CLERK_EXPERIMENTAL;
-process.env.CLERK_EXPERIMENTAL = "logs";
-afterAll(() => {
-  if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
-  else process.env.CLERK_EXPERIMENTAL = saved;
-});
 
 /** The `logs` command, or one of its subcommands, rendered at 80 columns. */
 function logsCommand(...path: string[]): Command {

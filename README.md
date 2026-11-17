@@ -87,6 +87,7 @@ Commands:
   impersonate|imp  [options] [user]               Impersonate a Clerk user
   init             [options]                      Initialize Clerk in your project
   link             [options]                      Link this project to a Clerk application
+  logs             [options]                      Read your instance's Application Logs
   mcp                                             Manage the Clerk remote MCP server connection for AI editors and CLIs
   migrate                                         Migrate users into Clerk from another auth platform or another Clerk instance
   open                                            Open Clerk resources in your browser
