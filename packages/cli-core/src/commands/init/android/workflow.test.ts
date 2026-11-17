@@ -580,6 +580,44 @@ describe("native Sign in with Google", () => {
     expect(google.state.patches).toEqual([{ enabled: true, authenticatable: true }]);
   });
 
+  test.each([
+    ["enabled", true],
+    ["disabled", false],
+  ])(
+    "refuses a Web client that differs from the one an %s connection already has",
+    async (_, enabled) => {
+      const root = await fixture();
+      const { api } = fakeNativeAPI();
+      const google = fakeGoogleAPI({
+        enabled,
+        client_id: "999999999999-existing.apps.googleusercontent.com",
+        client_secret: "KEEP",
+      });
+      const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+      const error = await prepareSetup(
+        setup(root, { signInWithGoogle: true, googleCredentials }),
+        deps,
+      ).catch((caught: unknown) => caught);
+      expect((error as Error).message).toContain("999999999999-existing");
+      expect((error as Error).message).toContain(FAKE_GOOGLE_CLIENT_ID);
+      expect((error as Error).message).not.toContain(FAKE_GOOGLE_CLIENT_SECRET);
+      expect(google.state.events).toEqual([]);
+    },
+  );
+
+  test("passing the Web client the connection already has is a no-op", async () => {
+    const root = await fixture();
+    const { api } = fakeNativeAPI();
+    const google = fakeGoogleAPI({ enabled: true, client_id: FAKE_GOOGLE_CLIENT_ID });
+    const deps = { api, googleAPI: google.api, debugKeystore: keystore() };
+    const result = await applySetup(
+      await prepareSetup(setup(root, { signInWithGoogle: true, googleCredentials }), deps),
+      deps,
+    );
+    expect(result.google).toBe("verified");
+    expect(google.state.events).toEqual([]);
+  });
+
   test("a satisfied connection is reported and left alone", async () => {
     const root = await fixture();
     const { api } = fakeNativeAPI();

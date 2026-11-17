@@ -240,7 +240,7 @@ function checkProjection(
  * Enables Google for authentication and, when the connection has no custom Web client yet, sets
  * the supplied credentials: a dry run proves the server's merge keeps every other field, then the
  * same `If-Match` write lands, then a final read verifies. A connection that already has a Web
- * client keeps it; the credentials are then ignored.
+ * client keeps it; the workflow refuses different credentials before a plan reaches here.
  */
 export async function applyGoogleConnection(
   plan: GooglePlan,

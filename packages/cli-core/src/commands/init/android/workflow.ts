@@ -198,6 +198,16 @@ export async function prepareSetup(
       throw setupError(
         `The Google connection needs review in Clerk before setup can proceed: ${google.blockers.map((blocker) => blocker.message).join(" ")}`,
       );
+    // An existing Web client is kept, never replaced, so a different one passed here would be
+    // dropped while the run still ended as configured, with Clerk serving the old client ID.
+    if (
+      options.googleCredentials &&
+      google.current?.clientId &&
+      google.current.clientId !== options.googleCredentials.clientId
+    )
+      throw setupError(
+        `Clerk's Google connection already uses the Web client ${google.current.clientId}, not the one passed (${options.googleCredentials.clientId}). clerk init keeps an existing Web client: replace it in the Clerk Dashboard, or rerun without the Google client options to keep it.`,
+      );
     if (
       google.status === "ready" &&
       google.credentials === "required" &&

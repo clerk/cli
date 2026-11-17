@@ -265,7 +265,8 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
               ? undefined
               : `Create a Web application OAuth client in Google Cloud and run clerk init --sign-in-with-google (${GOOGLE_GUIDE}).`,
         });
-      if (enabled)
+      // Only an app that signs in with Google natively needs the Android client, as in init.
+      if (enabled && requested)
         checks.push({
           name: "Google Cloud Android client",
           status: "warn",

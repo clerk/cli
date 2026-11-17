@@ -207,6 +207,9 @@ describe("Android doctor: Sign in with Google", () => {
     const report = await doctor(options(f.root), { ...f.dependencies, googleAPI: google.api });
     expect(status(report)["Google connection"]).toBe("pass");
     expect(status(report)["Google Web client ID"]).toBe("warn");
+    // Google is on by default for development instances; an app that never uses it natively
+    // isn't told to create an Android OAuth client.
+    expect(status(report)["Google Cloud Android client"]).toBeUndefined();
   });
 
   test("Google on without a Web client fails that check when the UI artifact is in use", async () => {
@@ -222,7 +225,7 @@ describe("Android doctor: Sign in with Google", () => {
   });
 
   test("a configured connection passes, with the Android client left as a note", async () => {
-    const f = await fixture();
+    const f = await fixture({ clerk: { product: "ui", version: "1.3.0" } });
     const google = fakeGoogleAPI({
       enabled: true,
       client_id: FAKE_GOOGLE_CLIENT_ID,
