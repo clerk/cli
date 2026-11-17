@@ -14,7 +14,7 @@ export type ChooseModule = (choices: ModuleChoice[]) => Promise<ModuleChoice>;
 export class SelectionNeeded extends CliError {
   constructor(public choices: ModuleChoice[]) {
     super(
-      `Choose an Android application module with --android-module: ${choices.map((choice) => choice.module).join(", ") || "none found"}.`,
+      `Choose an Android application module with --android-module: ${choices.map((choice) => choice.module).join(", ")}.`,
       { code: ERROR_CODE.USAGE_ERROR, exitCode: EXIT_CODE.USAGE },
     );
   }
@@ -112,9 +112,15 @@ export async function selectModule(
     choice = { module, buildPath };
   } else {
     const candidates = await findApplicationModules(root, catalog);
+    // Nothing to choose between, and --android-module would be refused for the same reason, so
+    // this is a layout to hand to the manual steps rather than a selection to ask for.
+    if (!candidates.length)
+      throw unsupported(
+        "No Android application module was found: nothing applies com.android.application directly or through the version catalog (a convention plugin may apply it).",
+      );
     if (candidates.length === 1) choice = candidates[0]!;
     else {
-      if (!choose || !candidates.length) throw new SelectionNeeded(candidates);
+      if (!choose) throw new SelectionNeeded(candidates);
       const picked = await choose(candidates);
       const match = candidates.find((item) => item.module === picked.module);
       if (!match) throw new SelectionNeeded(candidates);
