@@ -195,6 +195,12 @@ export function planSdkDependencies(
     versionKey: string;
     /** Whether a module may share this version key, so an existing entry can be reused. */
     sharesVersion: (module: string) => boolean;
+    /**
+     * Whether a reused catalog version must meet `version`. Nothing else pulls the Clerk SDK in,
+     * so Gradle resolves exactly what the catalog says; lifecycle is also a dependency of the UI
+     * artifact, so Gradle raises an older catalog version to the one the SDK needs.
+     */
+    enforcesMinimum: boolean;
   }[] = [];
   if (!sdkInstalled(input.dependencies, input.sdk))
     needed.push({
@@ -203,6 +209,7 @@ export function planSdkDependencies(
       alias: `${aliases.clerk}-${input.sdk === "ui" ? "ui" : "api"}`,
       versionKey: "clerk",
       sharesVersion: (module) => (Object.values(ARTIFACTS) as string[]).includes(module),
+      enforcesMinimum: true,
     });
   const catalog = catalogSource ? parseCatalog(catalogSource) : undefined;
   if (
@@ -222,6 +229,7 @@ export function planSdkDependencies(
       alias: aliases.lifecycle,
       versionKey: "lifecycleViewmodelCompose",
       sharesVersion: (module) => module === LIFECYCLE_VIEWMODEL_COMPOSE,
+      enforcesMinimum: false,
     });
   if (!needed.length) return { build, catalog: catalogSource, added };
   const lines: string[] = [];
@@ -232,7 +240,10 @@ export function planSdkDependencies(
         ([, library]) => library.module === item.coordinate,
       );
       let alias = existing?.[0];
-      let version = existing ? catalogVersion(catalog, existing[1]) : undefined;
+      // The version Gradle resolves for the accessor: the catalog's when an entry or version key
+      // is reused, the baseline when this plan writes it.
+      let version = existing ? catalogVersion(catalog, existing[1]) : item.version;
+      let reused = existing ? `"${existing[0]}"` : undefined;
       if (!alias) {
         if (catalog.libraries[item.alias])
           throw unsupported(
@@ -257,10 +268,29 @@ export function planSdkDependencies(
           `${item.alias} = { module = "${item.coordinate}", version.ref = "${item.versionKey}" }`,
         );
         alias = item.alias;
-        version = reusable ? catalog.versions[item.versionKey] : undefined;
+        if (reusable) {
+          version = catalog.versions[item.versionKey];
+          reused = `the "${item.versionKey}" version`;
+        }
+      }
+      // An entry the module doesn't use yet can be stale. Wiring it up as it stands would install
+      // a version below the baseline the rest of the setup assumes, or one that can't be read.
+      if (reused && item.enforcesMinimum) {
+        if (!version || !semver.valid(version))
+          throw unsupported(
+            `gradle/libs.versions.toml declares ${item.coordinate} through ${reused} without a plain version; set it to ${item.version} or newer.`,
+          );
+        if (semver.lt(version, item.version))
+          throw unsupported(
+            `gradle/libs.versions.toml declares ${item.coordinate} ${version} through ${reused}, below the ${item.version} baseline; update it to ${item.version} or newer.`,
+          );
       }
       lines.push(`implementation(${catalogAccessor(alias)})`);
-      added.push(`${item.coordinate}:${version ?? item.version}`);
+      added.push(
+        version
+          ? `${item.coordinate}:${version}`
+          : `${item.coordinate} (no version in the catalog)`,
+      );
     } else {
       lines.push(`implementation("${item.coordinate}:${item.version}")`);
       added.push(`${item.coordinate}:${item.version}`);

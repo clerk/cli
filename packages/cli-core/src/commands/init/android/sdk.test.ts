@@ -104,6 +104,66 @@ describe("SDK dependencies", () => {
     expect(plan.build).toContain("implementation(libs.auth)");
   });
 
+  test.each([
+    [
+      "an entry below the baseline",
+      '[libraries]\nclerk-api = { module = "com.clerk:clerk-android-api", version = "1.0.0" }\n',
+      'com.clerk:clerk-android-api 1.0.0 through "clerk-api", below the 1.3.0 baseline',
+    ],
+    [
+      "an entry with no version",
+      '[libraries]\nclerk-api = { module = "com.clerk:clerk-android-api" }\n',
+      'through "clerk-api" without a plain version',
+    ],
+    [
+      "an entry whose version isn't plain",
+      '[libraries]\nclerk-api = { module = "com.clerk:clerk-android-api", version = "1.+" }\n',
+      'through "clerk-api" without a plain version',
+    ],
+  ])("refuses to wire up %s the module doesn't use", (_, catalogSource, message) => {
+    expect(() =>
+      planSdkDependencies({
+        build,
+        catalogSource,
+        sdk: "core",
+        minimumVersion: "1.3.0",
+        dependencies: [],
+      }),
+    ).toThrow(message);
+  });
+
+  test("refuses a shared clerk version below the baseline", () => {
+    // The API entry is declared but unused, so nothing has flagged its version yet.
+    const catalogSource =
+      '[versions]\nclerk = "1.0.0"\n\n[libraries]\nclerk-android-api = { module = "com.clerk:clerk-android-api", version.ref = "clerk" }\n';
+    expect(() =>
+      planSdkDependencies({
+        build,
+        catalogSource,
+        sdk: "ui",
+        minimumVersion: "1.3.0",
+        dependencies: [],
+      }),
+    ).toThrow('com.clerk:clerk-android-ui 1.0.0 through the "clerk" version, below the 1.3.0');
+  });
+
+  test.each([
+    ['version = "2.8.7"', "androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7"],
+    ["", "androidx.lifecycle:lifecycle-viewmodel-compose (no version in the catalog)"],
+  ])("reports the catalog's own lifecycle entry as it is declared (%s)", (version, added) => {
+    // The UI artifact depends on lifecycle itself, so Gradle raises an older entry.
+    const catalogSource = `[libraries]\nlifecycle-compose = { module = "androidx.lifecycle:lifecycle-viewmodel-compose"${version && `, ${version}`} }\n`;
+    const plan = planSdkDependencies({
+      build,
+      catalogSource,
+      sdk: "ui",
+      minimumVersion: "1.3.0",
+      dependencies: [],
+    });
+    expect(plan.build).toContain("implementation(libs.lifecycle.compose)");
+    expect(plan.added).toEqual(["com.clerk:clerk-android-ui:1.3.0", added]);
+  });
+
   test("reuses a clerk version only Clerk artifacts reference", () => {
     const catalogSource =
       '[versions]\nclerk = "1.4.0"\n\n[libraries]\nclerk-android-api = { module = "com.clerk:clerk-android-api", version.ref = "clerk" }\n';
