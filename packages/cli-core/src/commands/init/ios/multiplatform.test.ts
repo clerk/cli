@@ -8,6 +8,7 @@ import { capabilityFixture } from "./capability-test-helpers.ts";
 import { IOS_FIXTURE_IDS as ids } from "./test-helpers.ts";
 import { planAllCapabilities } from "./capabilities.ts";
 import * as coordinator from "./coordinator.ts";
+import * as files from "./files.ts";
 import { runAppleInit } from "./coordinator.ts";
 import { doctor } from "./doctor.ts";
 import { applySetup, describePreview, prepareSetup } from "./workflow.ts";
@@ -778,6 +779,27 @@ test("a shared file that already has Associated Domains is split for a Mac build
         check.message.includes("Associated Domains"),
     ),
   ).toBe(false);
+});
+
+test("an edit to the shared file between two configurations' reads stops planning", async () => {
+  const f = await fixture({ personal: true });
+  await writeFile(join(f.root, "MyApp/MyApp.entitlements"), SHARED_WITH_DOMAIN);
+  const read = files.snapshotFile;
+  let reads = 0;
+  spies.push(
+    spyOn(files, "snapshotFile").mockImplementation(async (root, path) => {
+      const snapshot = await read(root, path);
+      if (path !== "MyApp/MyApp.entitlements" || ++reads === 1) return snapshot;
+      return {
+        ...snapshot,
+        source: snapshot.source.replace("</dict>", "\t<key>x</key>\n\t<true/>\n</dict>"),
+      };
+    }),
+  );
+  await expect(
+    prepareSetup({ ...f.options, signInWithApple: false, personalTeam: true }, f.dependencies),
+  ).rejects.toThrow("The project changed while setup read it");
+  expect(reads).toBeGreaterThan(1);
 });
 
 test("an edit to the shared file after the preview stops setup before the Mac copy is written", async () => {

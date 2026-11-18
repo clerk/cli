@@ -6,6 +6,7 @@ import type { FileAction } from "../frameworks/types.ts";
 import { containedPath, snapshotFile, type FileSnapshot } from "./files.ts";
 import { nativePlatform, type Inspection } from "./xcode.ts";
 import { otherTargetSettings, type Selection } from "./plan.ts";
+import { setupError } from "./types.ts";
 
 const DOMAIN = "com.apple.developer.associated-domains";
 const APPLE = "com.apple.developer.applesignin";
@@ -508,8 +509,12 @@ export async function planAllCapabilities(
     );
     source = plan.projectSource;
     for (const action of plan.actions) actions.set(action.path, action);
-    for (const snapshot of plan.snapshots)
-      if (!snapshots.has(snapshot.path)) snapshots.set(snapshot.path, snapshot);
+    for (const snapshot of plan.snapshots) {
+      const first = snapshots.get(snapshot.path);
+      if (!first) snapshots.set(snapshot.path, snapshot);
+      else if (first.source !== snapshot.source)
+        throw setupError("The project changed while setup read it. Review a fresh plan.", true);
+    }
     plans.push(plan);
   }
   // A Multiplatform target's Mac build that can't sign Associated Domains (a Personal Team) and
