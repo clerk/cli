@@ -55,7 +55,6 @@ function cliEnv() {
     ...process.env,
     CLERK_CONFIG_DIR: configDir,
     CLERK_TELEMETRY_DISABLED: "1",
-    CLERK_EXPERIMENTAL: "logs",
   };
 }
 

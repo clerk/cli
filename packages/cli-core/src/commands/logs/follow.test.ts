@@ -467,6 +467,21 @@ describe("logs --follow", () => {
     expect(printedIds(captured.out)).toEqual(["log_1", "log_2"]);
   });
 
+  test("prints the pages a poll fetched before it repeated its cursor, then exits with the error", async () => {
+    mockBapiRequest
+      .mockResolvedValueOnce(page([makeLog("log_1", T + 1_000)]))
+      .mockResolvedValueOnce(
+        page([makeLog("log_2", T + 2_000)], { next_page_status: "unknown", starting_after: "c" }),
+      )
+      .mockResolvedValueOnce(
+        page([makeLog("log_3", T + 3_000)], { next_page_status: "unknown", starting_after: "c" }),
+      );
+
+    await expect(runFollow({ json: true }, 1)).rejects.toThrow("same cursor twice");
+
+    expect(printedIds(captured.out)).toEqual(["log_1", "log_2", "log_3"]);
+  });
+
   /** A follow whose clock moves forward by every sleep, at an interval no backoff matches. */
   function runWithClock(polls: number) {
     const interval = 5_000;

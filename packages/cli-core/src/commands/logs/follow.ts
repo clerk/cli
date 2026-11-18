@@ -335,9 +335,12 @@ async function poll(
     const next = page.cursor?.starting_after ?? undefined;
     if (page.cursor?.next_page_status === "false" || !next) return { logs };
     if (next === cursor) {
-      throw new CliError("The Logs API returned the same cursor twice, so paging can't continue.", {
-        code: ERROR_CODE.BAPI_UNEXPECTED_RESPONSE,
-      });
+      const error = new CliError(
+        "The Logs API returned the same cursor twice, so paging can't continue.",
+        { code: ERROR_CODE.BAPI_UNEXPECTED_RESPONSE },
+      );
+      if (logs.length > 0) return { logs, error };
+      throw error;
     }
     cursor = next;
   }
