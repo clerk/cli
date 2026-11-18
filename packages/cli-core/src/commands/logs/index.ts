@@ -81,7 +81,8 @@ export function registerLogs(program: Program): void {
     .option(
       "--follow",
       "Keep running and print new logs as they arrive, oldest first, for live debugging " +
-        "(a log more than 5m late may be missed). To export or sync logs, use log drains: " +
+        "(a log more than 10s older than the newest one printed may be missed). " +
+        "To export or sync logs, use log drains: " +
         "https://clerk.com/docs/guides/dashboard/logs/application-logs#export-logs",
     )
     .option(
