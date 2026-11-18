@@ -94,12 +94,12 @@ Read the cumulative branch diff (not just the latest commit), the PR title
 and body if a PR exists (`gh pr view --json title,body 2>/dev/null`), and
 recent commit subjects (`git log origin/main..HEAD --pretty=%s`).
 
-| Intent                                                                                                  | Bump               |
-| ------------------------------------------------------------------------------------------------------- | ------------------ |
-| New user-facing feature, command, or flag                                                               | `minor`            |
-| Bug fix, perf, internal refactor with no behavior change                                                | `patch`            |
-| Breaking change (removed/renamed flag, incompatible behavior, `feat!`/`fix!`, `BREAKING CHANGE` footer) | `major`            |
-| Mixed scope                                                                                             | highest applicable |
+| Intent                                                                                                                            | Bump               |
+| --------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| New user-facing feature, command, or flag                                                                                         | `minor`            |
+| Bug fix, perf, internal refactor with no behavior change                                                                          | `patch`            |
+| Breaking change (removed/renamed flag, incompatible behavior, breaking `--json` change, `feat!`/`fix!`, `BREAKING CHANGE` footer) | `major`            |
+| Mixed scope                                                                                                                       | highest applicable |
 
 **Stop-and-ask gates.** Pause, do not write, and prompt the user when:
 
@@ -107,6 +107,11 @@ recent commit subjects (`git log origin/main..HEAD --pretty=%s`).
 2. Intent is genuinely ambiguous (refactor that may change observable
    behavior; dependency bump with unclear downstream effect).
 3. The branch is a revert without a stated motivation.
+
+A breaking `--json` change removes, renames, or retypes a field, or changes
+the envelope's shape. Adding fields and human-output changes (tables,
+columns, colors) are not breaking. Details: "Output changes" in
+[references/policy.md](references/policy.md).
 
 When the split between `minor` and `patch` is unclear but the change is
 clearly non-breaking, default to `patch` and note the reasoning in the

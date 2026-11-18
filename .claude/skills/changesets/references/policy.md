@@ -72,12 +72,29 @@ Map the PR's dominant intent over the cumulative branch diff, not the
 conventional-commit prefix alone. A `fix:` PR that also adds a new public
 flag is a `minor`.
 
-| Intent                                                   | Bump    | Signal                                                                                |
-| -------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------- |
-| New user-facing feature, command, flag                   | `minor` | `feat:`, new exported API, new CLI surface                                            |
-| Bug fix, perf, internal refactor with no behavior change | `patch` | `fix:`, `perf:`, `refactor:`                                                          |
-| Breaking change                                          | `major` | Removed flag, incompatible CLI behavior, `BREAKING CHANGE` footer, `feat!:` / `fix!:` |
-| Mixed scope                                              | highest | feat plus fix becomes `minor`                                                         |
+| Intent                                                   | Bump    | Signal                                                                                                          |
+| -------------------------------------------------------- | ------- | --------------------------------------------------------------------------------------------------------------- |
+| New user-facing feature, command, flag                   | `minor` | `feat:`, new exported API, new CLI surface                                                                      |
+| Bug fix, perf, internal refactor with no behavior change | `patch` | `fix:`, `perf:`, `refactor:`                                                                                    |
+| Breaking change                                          | `major` | Removed flag, incompatible CLI behavior, breaking `--json` change, `BREAKING CHANGE` footer, `feat!:` / `fix!:` |
+| Mixed scope                                              | highest | feat plus fix becomes `minor`                                                                                   |
+
+### Output changes
+
+`--json` output is a contract for scripts and agents, and most commands print
+it by default in agent mode. Removing, renaming, or retyping a field, or
+changing the shape of the envelope around the items (the `{ data, cursor }`
+of `clerk logs`, the NDJSON lines of `--follow`), is breaking: `major`. Adding
+a field, or list items with a new `object`, is not.
+
+Human output (tables, columns, summaries, notes, colors) is not a contract.
+Changing it, including adding a table column, is `minor` or `patch` by the
+rules above, never `major`.
+
+Objects a command passes through from the Backend API unchanged, such as the
+items in `clerk logs` `data`, follow the API's contract, pinned by the
+`Clerk-API-Version` header the command sends. Bumping that version in a way
+that changes their shape is breaking for the CLI too.
 
 ### Stop-and-ask gates
 
