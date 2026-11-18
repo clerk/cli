@@ -214,12 +214,12 @@ test("the setup preview tells a person at the terminal the Mac side has no passk
   expect(captured.err).toContain("Set up MyApp for iOS and macOS (Debug, Release)");
   expect(captured.err).toContain("Create MyApp/MyApp-macOS.entitlements");
   expect(captured.err).toContain("Associated Domains were left out of the macOS app");
-  expect(captured.err).toContain("visionOS build is left unchanged");
+  expect(captured.err).toContain("visionOS build isn't set up or checked");
   const described = describePreview(preview);
   expect(described.context).toMatchObject({ platforms: ["iphoneos", "macosx"] });
   expect(described.coverage).toMatchObject({ unsupportedPlatforms: ["xros"] });
   expect(preview.local.postInstructions[0]).toContain(
-    "Platforms Clerk doesn't set up, left unchanged: visionOS.",
+    "Platforms Clerk doesn't set up or check: visionOS (they still link the same packages",
   );
 });
 
@@ -305,6 +305,36 @@ test("different Bundle IDs per platform stop setup before any write, and doctor 
   expect(report.checks.find((check) => check.name === "Native identity")?.message).toContain(
     "com.example.MyApp.mac for macOS",
   );
+});
+
+test("a configuration whose platforms build different Bundle IDs stops setup, even when another configuration agrees", async () => {
+  const f = await fixture();
+  const graph = parse(await readFile(f.path, "utf8"));
+  Object.assign((graph.objects![ids.targetDebug] as any).buildSettings, {
+    PRODUCT_BUNDLE_IDENTIFIER: "com.example.MyApp.dev",
+  });
+  Object.assign((graph.objects![ids.targetRelease] as any).buildSettings, {
+    "PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]": "com.example.MyApp.mac",
+  });
+  await writeFile(f.path, build(graph));
+  const before = await readFile(f.path, "utf8");
+  await expect(
+    runAppleInit(
+      {
+        root: f.root,
+        agent: true,
+        json: true,
+        bundleId: "com.example.MyApp.dev",
+        appIdPrefix: "TEAMID1234",
+      },
+      "app_test",
+      f.dependencies,
+    ),
+  ).rejects.toThrow(
+    "This target builds com.example.MyApp for iOS and com.example.MyApp.mac for macOS.",
+  );
+  expect(await readFile(f.path, "utf8")).toBe(before);
+  expect(f.state.events).toEqual([]);
 });
 
 test("doctor checks each configuration on both platforms", async () => {
@@ -417,6 +447,7 @@ test("a Personal Team's shared file that already has Associated Domains is split
   expect(mac).toContain(
     "\t<key>com.apple.security.app-sandbox</key>\n\t<true/>\n\t<key>com.apple.developer.applesignin</key>",
   );
+  expect(mac).toContain("\t<key>com.apple.security.files.user-selected.read-only</key>\n\t<true/>");
   const source = await readFile(f.path, "utf8");
   for (const id of [ids.targetDebug, ids.targetRelease])
     expect(targetSettings(source, id)["CODE_SIGN_ENTITLEMENTS[sdk=macosx*]"]).toBe(
@@ -441,6 +472,12 @@ test("a Personal Team's shared file that already has Associated Domains is split
 
   const after = await doctorChecks(f);
   const warnings = after.filter((check) => check.name.startsWith("Personal Team entitlements:"));
+  expect(warnings.map((check) => check.name)).toEqual([
+    "Personal Team entitlements: Debug (iOS)",
+    "Personal Team entitlements: Debug (macOS)",
+    "Personal Team entitlements: Release (iOS)",
+    "Personal Team entitlements: Release (macOS)",
+  ]);
   expect(warnings.some((check) => check.message.includes("Associated Domains"))).toBe(false);
   expect(warnings.every((check) => check.message.includes("Sign in with Apple"))).toBe(true);
 });

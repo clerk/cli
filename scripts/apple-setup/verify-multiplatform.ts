@@ -258,6 +258,7 @@ async function fullSetup(projectRoot: string, personal: boolean, root: string) {
     root: projectRoot,
     products: "ui",
     minimumVersion: "1.5.8",
+    resolvePackages: true,
   });
   // As clerk init and doctor do, the signing team decides; Xcode's account list says if it's personal.
   const xcodeTeams = [
@@ -320,12 +321,14 @@ async function verifyProject(path: string) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "clerk-multiplatform-project-")));
   try {
     const projectRoot = join(root, basename(resolve(path)));
-    await cp(resolve(path), projectRoot, { recursive: true });
+    // Copy link targets, so writes through a symlinked file stay in the temporary copy.
+    await cp(resolve(path), projectRoot, { recursive: true, dereference: true });
     if (values["shared-entitlements"]) {
       const inspection = await inspectSelectedProject({
         root: projectRoot,
         products: "ui",
         minimumVersion: "1.5.8",
+        resolvePackages: true,
       });
       const { project, targetName } = inspection.input.selection;
       await shareEntitlements(projectRoot, project, targetName, values["existing-domain"]!);

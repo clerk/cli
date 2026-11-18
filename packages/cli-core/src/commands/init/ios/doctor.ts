@@ -134,7 +134,7 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       } catch {
         continue;
       }
-      const key = JSON.stringify([configuration, file]);
+      const key = JSON.stringify([configuration, entitlementsPath(context) ?? file]);
       const group = files.get(key) ?? {
         file,
         configuration,

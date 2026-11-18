@@ -143,7 +143,7 @@ export async function prepareSetup(
       path: inspection.document.path,
       skipReason: sdkCheck.message,
     };
-  local.postInstructions[0] = `Xcode inspected ${inspection.contexts.map((context) => `${context.selection.configuration}/${context.selection.sdk}`).join(", ")} for ${inspection.input.selection.targetName}. Unchecked configurations: ${inspection.uncheckedConfigurations.join(", ") || "none"}. ${inspection.unsupportedPlatforms.length ? `Platforms Clerk doesn't set up, left unchanged: ${unsupportedPlatformsLabel(inspection)}. ` : ""}Other platforms, signing, and source integration remain unverified.`;
+  local.postInstructions[0] = `Xcode inspected ${inspection.contexts.map((context) => `${context.selection.configuration}/${context.selection.sdk}`).join(", ")} for ${inspection.input.selection.targetName}. Unchecked configurations: ${inspection.uncheckedConfigurations.join(", ") || "none"}. ${inspection.unsupportedPlatforms.length ? `Platforms Clerk doesn't set up or check: ${unsupportedPlatformsLabel(inspection)} (they still link the same packages and sign with any entitlements file they share). ` : ""}Other platforms, signing, and source integration remain unverified.`;
   const api = dependencies.api ?? nativeAPI;
   if (options.remote) {
     const conflict = await platformBundleConflict(inspection);

@@ -46,7 +46,7 @@ export function integrationHandoff(
         : "requires-cli-setup-and-source-integration",
     appIntegrationComplete: false,
     summary:
-      "Read the linked documentation before completing pending Swift tasks, using APIs compatible with the installed SDK. Follow only sections relevant to the remaining work. Preserve completed setup and existing app behavior. Then run doctor and make one Debug build. Runtime verification requires an explicit user request.",
+      "Read the linked documentation before completing pending Swift tasks, using APIs compatible with the installed SDK. Follow only sections relevant to the remaining work. Preserve completed setup and existing app behavior. Then run doctor and make one Debug build (one per platform in context.platforms for a Multiplatform target). Runtime verification requires an explicit user request.",
     ...progress,
     context: {
       project: selection.project,
@@ -117,6 +117,6 @@ export function integrationHandoff(
       },
     ],
     completion:
-      "Stop after setup, pending source edits, doctor, and one Debug build (or a reported build blocker). Report completed setup, source edits, the build result, and unresolved setup requirements. When setup and source integration are complete, 'Setup complete; sign-in not tested' is a valid outcome. appIntegrationComplete remains false because the CLI does not verify application behavior; it does not require runtime testing. Release builds and runtime tests are separate, explicitly requested work.",
+      "Stop after setup, pending source edits, doctor, and one Debug build for each platform in context.platforms (or a reported build blocker). Report completed setup, source edits, the build result, and unresolved setup requirements. When setup and source integration are complete, 'Setup complete; sign-in not tested' is a valid outcome. appIntegrationComplete remains false because the CLI does not verify application behavior; it does not require runtime testing. Release builds and runtime tests are separate, explicitly requested work.",
   };
 }

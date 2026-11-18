@@ -508,7 +508,8 @@ export async function planAllCapabilities(
     );
     source = plan.projectSource;
     for (const action of plan.actions) actions.set(action.path, action);
-    for (const snapshot of plan.snapshots) snapshots.set(snapshot.path, snapshot);
+    for (const snapshot of plan.snapshots)
+      if (!snapshots.has(snapshot.path)) snapshots.set(snapshot.path, snapshot);
     plans.push(plan);
   }
   // A Multiplatform target's Mac build that can't sign Associated Domains (a Personal Team) and

@@ -120,7 +120,7 @@ export function printSetupPreview(preview: SetupPreview): void {
     log.warn(`Other configurations need review: ${inspection.uncheckedConfigurations.join(", ")}`);
   if (inspection.unsupportedPlatforms.length)
     log.warn(
-      `Clerk sets up only iOS and macOS, so this target's ${unsupportedPlatformsLabel(inspection)} build is left unchanged.`,
+      `Clerk sets up only iOS and macOS, so this target's ${unsupportedPlatformsLabel(inspection)} build isn't set up or checked; it still links the same packages and signs with any entitlements file it shares with them.`,
     );
   if (!preview.starter?.tasks.length)
     log.info("  Swift integration remains: initialize Clerk and connect your sign-in flow.");

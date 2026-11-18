@@ -87,19 +87,28 @@ export async function discoverBundleIdentifier(
 
 /**
  * Why one Clerk registration can't cover a Multiplatform target: its iOS and macOS builds resolve
- * different Bundle IDs. Undefined for a single-platform target, or when either side has no single one.
+ * different Bundle IDs in the same configuration. Undefined for a single-platform target, or when no
+ * configuration resolves one Bundle ID on each side.
  */
 export async function platformBundleConflict(inspection: Inspection): Promise<string | undefined> {
   if (inspectedPlatforms(inspection).length < 2) return undefined;
-  const side = async (mac: boolean) =>
-    discoverBundleIdentifier({
-      ...inspection,
-      contexts: inspection.contexts.filter(({ selection }) => (selection.sdk === "macosx") === mac),
-    });
-  const [iOS, macOS] = await Promise.all([side(false), side(true)]);
-  return iOS && macOS && !bundleIdentifiersEqual(iOS, macOS)
-    ? `This target builds ${iOS} for iOS and ${macOS} for macOS. Clerk registers one Bundle ID for both platforms of a Multiplatform target, so use the same Bundle ID for both in Xcode, then run this again.`
-    : undefined;
+  const configurations = new Set(
+    inspection.contexts.map(({ selection }) => selection.configuration),
+  );
+  for (const configuration of configurations) {
+    const side = async (mac: boolean) =>
+      discoverBundleIdentifier({
+        ...inspection,
+        contexts: inspection.contexts.filter(
+          ({ selection }) =>
+            selection.configuration === configuration && (selection.sdk === "macosx") === mac,
+        ),
+      });
+    const [iOS, macOS] = await Promise.all([side(false), side(true)]);
+    if (iOS && macOS && !bundleIdentifiersEqual(iOS, macOS))
+      return `This target builds ${iOS} for iOS and ${macOS} for macOS. Clerk registers one Bundle ID for both platforms of a Multiplatform target, so use the same Bundle ID for both in Xcode, then run this again.`;
+  }
+  return undefined;
 }
 
 export async function discoverRemote(
