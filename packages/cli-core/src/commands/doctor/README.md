@@ -116,8 +116,12 @@ native apps configure Clerk in Kotlin, and adds read-only checks from the same e
 project, runs Gradle, or writes to Clerk; `keytool` is the only tool it runs, to read the
 debug certificate. The local checks never block on what setup would refuse to edit: a Kotlin
 version the SDK can't be consumed by is a failing check, not an error. If Clerk can't be
-reached, the local checks still run and a warning says so. Each failing check carries its
-own remedy:
+reached, the local checks still run and a warning says so. A layout the engine doesn't read
+(no module applying `com.android.application` directly, a stale Clerk entry in the version
+catalog, and the others `clerk init` refuses) is one failing `Android project` check that
+gives the reason and points at `clerk init`'s manual steps; `--android-module` is suggested
+only when the project couldn't be found or there are several modules to choose from. Each
+failing check carries its own remedy:
 
 | Check                       | Passes when                                                                                                                                                                                                                                                                                                               |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
