@@ -1,5 +1,6 @@
 import { doctor } from "../init/android/doctor.ts";
 import { CLERK_ANDROID_MINIMUM_VERSION } from "../init/android/coordinator.ts";
+import { ANDROID_QUICKSTART, UnsupportedLayout } from "../init/android/types.ts";
 import type { Dependencies } from "../init/android/workflow.ts";
 import { errorMessage } from "../../lib/errors.ts";
 import { interruptSignal } from "../../lib/signals.ts";
@@ -42,6 +43,17 @@ export async function runAndroidDoctorChecks(
     }
   } catch (error) {
     signal.throwIfAborted();
+    // A layout the engine won't read says what is wrong itself, and another module wouldn't
+    // change it; the module remedy is for a project that couldn't be found or selected.
+    if (error instanceof UnsupportedLayout)
+      return [
+        {
+          name: NAME,
+          status: "fail",
+          message: `The Android project has a layout clerk doesn't inspect: ${error.reason}`,
+          remedy: `Fix what the message names and rerun clerk doctor, or run clerk init, which falls back to the manual setup steps for this layout (${ANDROID_QUICKSTART}).`,
+        },
+      ];
     return [
       {
         name: NAME,
