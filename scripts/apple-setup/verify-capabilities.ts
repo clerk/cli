@@ -39,10 +39,12 @@ async function buildApp(
   root: string,
   format: "pbxproj" | "xcproj",
   platform: "ios" | "macos",
+  synchronized: boolean,
 ): Promise<{ entitlements?: string; bundledEntitlementFiles: string[] }> {
   const developerDir = await compatibleXcode(format === "xcproj" ? 27 : 1);
   const products = join(root, "build");
-  await run(
+  const buildLog = `/tmp/clerk-capability-build-${platform}-${format}${synchronized ? "-synchronized" : ""}.log`;
+  const child = Bun.spawn(
     [
       "xcodebuild",
       "-project",
@@ -62,8 +64,15 @@ async function buildApp(
         : ["CODE_SIGNING_ALLOWED=NO"]),
       "build",
     ],
-    developerDir ? { DEVELOPER_DIR: developerDir } : undefined,
+    {
+      env: developerDir ? { ...process.env, DEVELOPER_DIR: developerDir } : process.env,
+      stdout: Bun.file(buildLog),
+      stderr: Bun.file(`${buildLog}.stderr`),
+      timeout: 600_000,
+    },
   );
+  if ((await child.exited) !== 0)
+    throw new Error(`App build failed: ${buildLog} and ${buildLog}.stderr`);
   const app = join(products, platform === "ios" ? "Debug-iphonesimulator" : "Debug", "MyApp.app");
   const bundledEntitlementFiles = await Array.fromAsync(
     new Bun.Glob("**/*.entitlements").scan({ cwd: app, dot: true }),
@@ -170,7 +179,7 @@ for (const { format, synchronized } of [
         );
         if (next.status !== "satisfied" || next.actions.length)
           throw new Error("Capability setup was not idempotent.");
-        const app = await buildApp(root, format, platform);
+        const app = await buildApp(root, format, platform, synchronized);
         if (
           app.entitlements !== undefined &&
           !app.entitlements.includes("webcredentials:fixture.clerk.accounts.dev")

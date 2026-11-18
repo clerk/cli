@@ -1,5 +1,6 @@
 import { build, parse } from "@bacons/xcode/json";
 import { posix } from "node:path";
+import { pbxprojLocations } from "./target-sources.ts";
 import { applyXCProjValue, parseXCProjSource, xcprojTargets } from "./xcproj.ts";
 import type { Selection, SetupInput } from "./plan.ts";
 
@@ -27,25 +28,11 @@ export function configurationNames(
  * A folder placed outside the project's ordinary relative paths is left out.
  */
 function pbxprojSynchronizedFolders(objects: Record<string, any>, targetId: string): string[] {
-  const parents = new Map<string, string>();
-  for (const [id, object] of Object.entries(objects))
-    for (const child of Array.isArray(object?.children) ? object.children : [])
-      parents.set(child, id);
-  const location = (id: string, depth = 0): string | undefined => {
-    const object = objects[id];
-    if (!object || depth > 64) return undefined;
-    const path = typeof object.path === "string" ? object.path : "";
-    if (object.sourceTree === "SOURCE_ROOT") return path;
-    if (object.sourceTree !== "<group>") return undefined;
-    const parent = parents.get(id);
-    if (!parent) return path;
-    const base = location(parent, depth + 1);
-    return base === undefined ? undefined : posix.join(base, path);
-  };
+  const location = pbxprojLocations(objects, "");
   return ((objects[targetId]?.fileSystemSynchronizedGroups ?? []) as string[])
     .filter((id) => objects[id]?.isa === "PBXFileSystemSynchronizedRootGroup")
     .map((id) => location(id))
-    .filter((path): path is string => path !== undefined);
+    .filter((path): path is string => path !== undefined && !posix.isAbsolute(path));
 }
 
 function xcprojMemberFolders(entries: unknown, targetName: string, base = ""): string[] {
