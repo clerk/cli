@@ -556,11 +556,9 @@ async function scaffoldRoot(ctx: ProjectContext): Promise<FileAction | null> {
     return { type: "skip", path: rootPath, skipReason: "Already has ClerkProvider" };
   }
 
-  let newContent = safeAddImport(content, "@clerk/tanstack-react-start", "ClerkProvider");
-
-  if (newContent.includes("<body")) {
-    newContent = wrapBodyWithProvider(newContent, "ClerkProvider");
-  }
+  const withImport = safeAddImport(content, "@clerk/tanstack-react-start", "ClerkProvider");
+  let newContent = wrapBodyWithProvider(withImport, "ClerkProvider");
+  const wrapped = newContent !== withImport;
 
   if (ctx.isBootstrap) {
     newContent = addBootstrapHeader(
@@ -570,9 +568,11 @@ async function scaffoldRoot(ctx: ProjectContext): Promise<FileAction | null> {
     );
   }
 
-  const description = ctx.isBootstrap
-    ? "Add ClerkProvider, wrap body contents, and add auth header"
-    : "Add ClerkProvider import and wrap body contents";
+  const description = wrapped
+    ? ctx.isBootstrap
+      ? "Add ClerkProvider, wrap body contents, and add auth header"
+      : "Add ClerkProvider import and wrap body contents"
+    : "Add ClerkProvider import (manual wrapping needed)";
 
   return { path: rootPath, type: "modify", content: newContent, description };
 }

@@ -46,17 +46,14 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
     return { type: "skip", path: ctx.layoutPath, skipReason: "Already has ClerkProvider" };
   }
 
-  let newContent = safeAddImport(content, "@clerk/nextjs", "ClerkProvider");
+  const withImport = safeAddImport(content, "@clerk/nextjs", "ClerkProvider");
 
   // TODO: Consider using AST (e.g. ts-morph) for JSX manipulation to enforce
   // modifying the default export. Magicast does not support JSX/TSX.
-  const hasBody = newContent.includes("<body");
+  let newContent = wrapBodyWithProvider(withImport, "ClerkProvider");
+  const wrapped = newContent !== withImport;
 
-  if (hasBody) {
-    newContent = wrapBodyWithProvider(newContent, "ClerkProvider");
-  }
-
-  if (ctx.isBootstrap && hasBody) {
+  if (ctx.isBootstrap && wrapped) {
     newContent = safeAddImport(newContent, "@clerk/nextjs", "Show");
     newContent = safeAddImport(newContent, "@clerk/nextjs", "SignInButton");
     newContent = safeAddImport(newContent, "@clerk/nextjs", "SignUpButton");
@@ -69,7 +66,7 @@ async function scaffoldLayout(ctx: ProjectContext): Promise<FileAction> {
     path: ctx.layoutPath,
     type: "modify",
     content: newContent,
-    description: hasBody
+    description: wrapped
       ? ctx.isBootstrap
         ? "Add ClerkProvider, wrap body contents, and add auth header"
         : "Add ClerkProvider import and wrap body contents"
