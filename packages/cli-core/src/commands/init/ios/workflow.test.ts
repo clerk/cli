@@ -293,6 +293,27 @@ test("an ignored file keeps its backup, since Git can't restore it", async () =>
   expect(result.backups).toEqual([expect.stringContaining("project.pbxproj.clerk-backup-")]);
 });
 
+test("a file whose Git status can't be read keeps its backup", async () => {
+  const f = await fixture();
+  for (const command of [
+    ["git", "init", "--quiet"],
+    ["git", "add", "-A"],
+    ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "--quiet", "-m", "init"],
+    // A config git status rejects but git ls-files ignores: the file is tracked, yet whether it
+    // was clean is unknown, so its backup must survive.
+    ["git", "config", "status.showUntrackedFiles", "bogus"],
+  ]) {
+    const git = Bun.spawn(command, { cwd: f.root, stdout: "ignore", stderr: "ignore" });
+    expect(await git.exited).toBe(0);
+  }
+  const preview = await prepareSetup(f.options, f.dependencies);
+  expect(preview.dirtyFiles).toEqual([]);
+  expect(preview.cleanGitFiles).toEqual([]);
+  const result = await applySetup(preview, f.dependencies);
+  expect(result.local).toBe("updated");
+  expect(result.backups).toEqual([expect.stringContaining("project.pbxproj.clerk-backup-")]);
+});
+
 test("generator-managed projects receive instructions and no project write", async () => {
   const f = await fixture();
   await writeFile(join(f.root, "project.yml"), "name: MyApp\n");

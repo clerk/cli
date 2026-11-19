@@ -247,6 +247,36 @@ test("users create documents -d and --file for raw BAPI request bodies", () => {
   expect(help).toContain("--file");
 });
 
+describe("users --help", () => {
+  const captured = useCaptureLog();
+
+  // People who want to bulk-import users look under `clerk users` first.
+  // `helpInformation()` leaves out text added with `addHelpText`, so render
+  // the whole help screen instead.
+  test("points bulk imports to clerk migrate", () => {
+    const program = createProgram();
+    const users = program.commands.find((command) => command.name() === "users")!;
+    users.outputHelp();
+
+    expect(captured.out.trimEnd()).toEndWith(
+      [
+        "",
+        "To bring users in from another provider (Auth0, Firebase, Supabase, and more),",
+        "use `clerk migrate`.",
+      ].join("\n"),
+    );
+  });
+
+  test("leaves the hint off the subcommands", () => {
+    const program = createProgram();
+    const users = program.commands.find((command) => command.name() === "users")!;
+    const list = users.commands.find((command) => command.name() === "list")!;
+    list.outputHelp();
+
+    expect(captured.out).not.toContain("clerk migrate");
+  });
+});
+
 describe("formatApiBody", () => {
   // --- Single error with meta ---
 

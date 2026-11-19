@@ -1,14 +1,15 @@
-import { createHash } from "node:crypto";
 import * as plapi from "../../../lib/plapi.ts";
 import { bundleIdentifiersEqual } from "../../../lib/apple-native-identity.ts";
+import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import {
-  ApiError,
-  CliError,
-  ERROR_CODE,
-  PlapiError,
-  throwUsageError,
-} from "../../../lib/errors.ts";
-import { decodePublishableKey } from "../../../lib/fapi.ts";
+  idempotencyKey,
+  registerNativeApplication,
+  resolveInstance as resolveNativeInstance,
+  type InstanceEnvironment,
+} from "../native/remote.ts";
+import { setupError } from "./types.ts";
+
+export type { InstanceEnvironment } from "../native/remote.ts";
 
 export type NativeAPI = Pick<
   typeof plapi,
@@ -51,39 +52,12 @@ async function resolveRemote(input: RemoteInput, api: NativeAPI): Promise<Remote
   return { ...input, ...(await resolveInstance(input, api)) };
 }
 
-export type InstanceEnvironment = "development" | "production";
-
 export async function resolveInstance(
   input: Pick<RemoteInput, "applicationId" | "instanceId">,
   api: NativeAPI,
   environment: InstanceEnvironment = "development",
 ) {
-  const application = await api.fetchApplication(input.applicationId, { includeSecretKeys: false });
-  if (application.application_id !== input.applicationId)
-    throw new CliError("Clerk returned a different application; review the linked account.", {
-      code: ERROR_CODE.PLAPI_UNEXPECTED_RESPONSE,
-    });
-  const instances = application.instances.filter(
-    (instance) =>
-      instance.environment_type === environment &&
-      (!input.instanceId || instance.instance_id === input.instanceId),
-  );
-  if (instances.length !== 1 || !instances[0]!.instance_id)
-    throw new CliError(`Select exactly one ${environment} instance for native setup.`, {
-      code: ERROR_CODE.IOS_SETUP_BLOCKED,
-    });
-  const instance = instances[0]!;
-  const decoded = decodePublishableKey(instance.publishable_key);
-  if (decoded.instanceType !== environment)
-    throw new CliError(`Native setup requires a ${environment} publishable key.`, {
-      code: ERROR_CODE.IOS_SETUP_BLOCKED,
-    });
-  return {
-    applicationId: input.applicationId,
-    instanceId: instance.instance_id,
-    publishableKey: instance.publishable_key,
-    frontendHost: decoded.fapiHost,
-  };
+  return resolveNativeInstance(input, api, environment, setupError);
 }
 
 function matchingApplication(
@@ -143,17 +117,6 @@ export async function revalidateRemote(plan: RemotePlan, api: NativeAPI): Promis
   return current;
 }
 
-/** A request whose connection failed: Node's fetch throws TypeError, Bun's an Error with a string code such as ECONNRESET. */
-function lostConnection(error: unknown): boolean {
-  if (error instanceof TypeError) return true;
-  return (
-    error instanceof Error &&
-    !(error instanceof CliError) &&
-    !(error instanceof ApiError) &&
-    typeof (error as NodeJS.ErrnoException).code === "string"
-  );
-}
-
 export async function applyRemote(
   plan: RemotePlan,
   api: NativeAPI,
@@ -163,38 +126,21 @@ export async function applyRemote(
   const { context, actions } = await revalidateRemote(plan, api);
   if (actions.includes("register-application")) {
     const params = { app_id_prefix: context.appIdPrefix, bundle_id: context.bundleIdentifier };
-    // Deterministic, so a rerun within the server's idempotency window replays
-    // the original response instead of creating a second registration.
-    const key = createHash("sha256")
-      .update(JSON.stringify([context.applicationId, context.instanceId, params]))
-      .digest("hex");
-    try {
-      const created = await api.createIOSApplication(
-        context.applicationId,
-        context.instanceId,
-        params,
-        `ios-init-${key}`,
-      );
-      if (!matchingApplication(context, [created]))
-        throw new CliError("Clerk did not confirm the requested native identity; retry setup.", {
+    await registerNativeApplication({
+      create: async () =>
+        api.createIOSApplication(
+          context.applicationId,
+          context.instanceId,
+          params,
+          idempotencyKey("ios-init", [context.applicationId, context.instanceId, params]),
+        ),
+      list: async () => api.listIOSApplications(context.applicationId, context.instanceId),
+      matching: (registrations) => matchingApplication(context, registrations),
+      mismatch: () =>
+        new CliError("Clerk did not confirm the requested native identity; retry setup.", {
           code: ERROR_CODE.IOS_REMOTE_VERIFY_FAILED,
-        });
-    } catch (error) {
-      // A concurrent creator or a lost successful response can leave the row in
-      // place. Reconcile it; never create a second registration.
-      if (
-        !lostConnection(error) &&
-        !(error instanceof PlapiError && (error.status === 422 || error.status >= 500))
-      )
-        throw error;
-      // If the re-read fails too, report the create failure, which says why.
-      const current = await api
-        .listIOSApplications(context.applicationId, context.instanceId)
-        .catch(() => {
-          throw error;
-        });
-      if (!matchingApplication(context, current)) throw error;
-    }
+        }),
+    });
   }
   signal?.throwIfAborted();
   // Enable the instance-wide API only once the registration exists.

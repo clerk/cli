@@ -162,6 +162,8 @@ export const NATIVE_FRAMEWORK_MAP: NativeFrameworkEntry[] = [
     envVar: "CLERK_PUBLISHABLE_KEY",
     envFile: ".env",
     ecosystem: "gradle",
+    supportsDryRun: true,
+    supportsJson: true,
     // AndroidManifest.xml is the unambiguous signal — build.gradle alone would
     // also match non-Android JVM projects (e.g. Spring, Kotlin backends).
     markers: ["app/src/main/AndroidManifest.xml", "src/main/AndroidManifest.xml"],

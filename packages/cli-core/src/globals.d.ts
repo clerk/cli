@@ -16,3 +16,17 @@ declare const CLI_ENV_PROFILES:
       }
     >
   | undefined;
+
+/** Files the Android starter embeds and copies into a new project (Bun's `type: "file"` import). */
+declare module "*/starter/gradle-wrapper.jar" {
+  const path: string;
+  export default path;
+}
+declare module "*/starter/gradlew" {
+  const path: string;
+  export default path;
+}
+declare module "*/starter/gradlew.bat" {
+  const path: string;
+  export default path;
+}
