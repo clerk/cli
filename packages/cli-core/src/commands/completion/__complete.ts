@@ -1,5 +1,7 @@
 import type { CommandUnknownOpts, Option } from "@commander-js/extra-typings";
+import { FEEDBACK_OUTCOME_CHOICES } from "../feedback/feedback.ts";
 import { sources } from "../migrate/sources/registry.ts";
+import { CHECKS, findCheck } from "../security/catalog.ts";
 import { KNOWN_DASHBOARD_PATHS } from "../open/dashboard-paths.ts";
 
 const DIRECTIVE = {
@@ -26,6 +28,16 @@ function noFileComp(completions: Completion[]): CompletionResult {
   return { completions, directive: DIRECTIVE.NO_FILE_COMP };
 }
 
+/** The known values that start with `partial`, from a registry entry. */
+function matching(known: Completion[], partial: string): CompletionResult {
+  const completions = known.filter((c) => c.name.startsWith(partial));
+  // A migrate source can be a path to one you wrote, so the shell still
+  // completes files beside the built-in keys.
+  return known === SOURCE_COMPLETIONS
+    ? { completions, directive: DIRECTIVE.DEFAULT }
+    : noFileComp(completions);
+}
+
 const HTTP_METHOD_COMPLETIONS: Completion[] = [
   { name: "GET", description: "Read resource" },
   { name: "POST", description: "Create resource" },
@@ -34,7 +46,10 @@ const HTTP_METHOD_COMPLETIONS: Completion[] = [
   { name: "DELETE", description: "Delete resource" },
 ];
 
-/** The built-in migrate sources. Kept off `.choices()` so an unknown key gets the source error. */
+/**
+ * The built-in migrate sources. `--source` also takes a path to a source you
+ * wrote, so it cannot use `.choices()`.
+ */
 const SOURCE_COMPLETIONS: Completion[] = sources.map((entry) => ({
   name: entry.key,
   description: entry.label,
@@ -60,11 +75,21 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
     { name: "canary", description: "Latest canary (pre-release) build" },
   ],
   "--source": SOURCE_COMPLETIONS,
+  "--factors": [
+    ...findCheck("mfa")!.decision!.options.map((o) => ({ name: o.value, description: o.label })),
+    { name: "authenticator,backup-code", description: "Authenticator app and backup codes" },
+  ],
   "--for": [
     { name: "orgs", description: "Organizations only" },
     { name: "users", description: "Users only" },
     { name: "orgs,users", description: "Both organizations and users" },
   ],
+  // Kept off `.choices()` so an invalid value gets the handler's usage error
+  // (JSON envelope, exit 2) rather than Commander's plain text and exit 1.
+  "--outcome": FEEDBACK_OUTCOME_CHOICES.map((choice) => ({
+    name: choice.value,
+    description: choice.description,
+  })),
 };
 
 /**
@@ -74,10 +99,12 @@ const KNOWN_OPTION_VALUES: Record<string, Completion[]> = {
  * to root, e.g. "open dashboard".
  */
 const KNOWN_POSITIONAL_COMPLETIONS: Record<string, Completion[]> = {
+  "migrate sources": SOURCE_COMPLETIONS,
   "open dashboard": KNOWN_DASHBOARD_PATHS.map((path) => ({
     name: path,
     description: "Dashboard subpath",
   })),
+  "security fix": CHECKS.map((check) => ({ name: check.id, description: check.title })),
 };
 
 /**
@@ -117,13 +144,15 @@ export function generateCompletions(root: CommandUnknownOpts, args: string[]): C
   }
 
   // Combine subcommands + argument choices + options
+  const argument = completeArguments(command, partial, positionalCount);
   const completions = [
     ...completeSubcommands(command, partial).completions,
-    ...completeArguments(command, partial, positionalCount).completions,
+    ...argument.completions,
     ...completeOptions(command, "", usedOptions).completions,
   ];
 
-  return noFileComp(completions);
+  // The argument decides file completion: on only for one that can be a path.
+  return { completions, directive: argument.directive };
 }
 
 // ── Tree walking ─────────────────────────────────────────────────────────────
@@ -219,11 +248,14 @@ function completeArguments(
   consumedCount: number,
 ): CompletionResult {
   const registeredArgs = cmd.registeredArguments;
-  if (consumedCount >= registeredArgs.length) {
-    return EMPTY_NO_FILE;
-  }
-
-  const arg = registeredArgs[consumedCount];
+  const last = registeredArgs.at(-1);
+  const arg =
+    consumedCount < registeredArgs.length
+      ? registeredArgs[consumedCount]
+      : last?.variadic
+        ? last
+        : undefined;
+  if (!arg) return EMPTY_NO_FILE;
 
   // Prefer strict Commander choices when available.
   if (arg?.argChoices) {
@@ -238,10 +270,10 @@ function completeArguments(
   const path = commandPath(cmd);
   const registered = KNOWN_POSITIONAL_COMPLETIONS[path];
   if (registered) {
-    return noFileComp(registered.filter((c) => c.name.startsWith(partial)));
+    return matching(registered, partial);
   }
 
-  return EMPTY_DEFAULT;
+  return EMPTY_NO_FILE;
 }
 
 function commandPath(cmd: CommandUnknownOpts): string {
@@ -274,7 +306,7 @@ function completeOptionValue(opt: Option, flag: string, partial: string): Comple
   const candidates = resolveOptionValues(opt, flag);
   if (!candidates) return EMPTY_DEFAULT;
 
-  return noFileComp(candidates.filter((c) => c.name.startsWith(partial)));
+  return matching(candidates, partial);
 }
 
 function resolveOptionValues(opt: Option, flag: string): Completion[] | undefined {

@@ -26,7 +26,10 @@ export function normalizeFingerprints(values: readonly string[]): string[] {
 export interface DebugKeystore {
   /** `custom-signing`: the debug build type signs with something other than the default keystore. */
   status: "found" | "no-keystore" | "no-keytool" | "failed" | "custom-signing";
+  /** SHA-256, as Clerk registers it. */
   fingerprint?: string;
+  /** SHA-1, as Google Cloud's Android OAuth client wants it. */
+  sha1?: string;
   keystore: string;
   keytool?: string;
   detail?: string;
@@ -107,6 +110,7 @@ async function runKeytool(
     ]);
     log.debug(`android: ${keytool} -list exited ${code} for ${keystore}`);
     const match = /SHA256:\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31})/.exec(stdout);
+    const sha1 = /SHA1:\s*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){19})/.exec(stdout);
     if (code !== 0 || !match)
       return {
         status: "failed",
@@ -114,7 +118,13 @@ async function runKeytool(
         keytool,
         detail: (stderr || stdout).trim().split("\n").slice(-3).join(" "),
       };
-    return { status: "found", keystore, keytool, fingerprint: match[1]!.toUpperCase() };
+    return {
+      status: "found",
+      keystore,
+      keytool,
+      fingerprint: match[1]!.toUpperCase(),
+      ...(sha1 ? { sha1: sha1[1]!.toUpperCase() } : {}),
+    };
   } catch (error) {
     signal?.throwIfAborted();
     return { status: "failed", keystore, keytool, detail: errorMessage(error) };
@@ -216,6 +226,7 @@ export function describeIdentity(identity: IdentityDiscovery) {
       explicit: identity.explicit,
       debugKeystore: identity.debug.status,
     },
+    ...(identity.debug.sha1 ? { debugSha1: identity.debug.sha1 } : {}),
     issues: identity.issues,
   };
 }

@@ -3,9 +3,10 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { quoteArg } from "../../lib/json-body.ts";
-import { useCaptureLog } from "../../test/lib/stubs.ts";
+import { captureTelemetryPayload, useCaptureLog } from "../../test/lib/stubs.ts";
 import {
   continueRun,
+  patchRun,
   type RunRecord,
   sha256File,
   startRun,
@@ -153,6 +154,7 @@ describe("runs <id>", () => {
       sourceId: "b",
       status: "created",
       clerkId: "user_b",
+      error: "Not added yet: additional email b2@x.dev: Unauthorized request",
       pending: [{ kind: "email", value: "b2@x.dev", verified: true }],
     });
     const record = run.finish();
@@ -162,6 +164,7 @@ describe("runs <id>", () => {
       run: { state: "partial", counts: { creating: 1, pending: 1 } },
       errors: [{ error: "bad gateway (a re-run checks)", count: 1 }],
       unconfirmed: [{ sourceId: "a" }],
+      leftToAttach: [{ sourceId: "b" }],
     });
 
     captured.clear();
@@ -170,6 +173,267 @@ describe("runs <id>", () => {
     expect(err).toContain("1 created, 1 left to attach, 1 not confirmed");
     expect(err).toContain("Not confirmed (Clerk may have created them; a continue checks) (1)");
     expect(err).toContain("1 user: bad gateway (a re-run checks)");
+    // And why each extra is still unattached.
+    expect(err).toContain("Identifiers left to attach (1)");
+    expect(err).toContain("b  Not added yet: additional email b2@x.dev: Unauthorized request");
+  });
+
+  // Imported, so not failed, but without an email or phone Clerk refused once
+  // the user existed: only `users.ndjson` said so before.
+  test("warns about users imported without an email or phone Clerk refused", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({ sourceId: "a", status: "created", clerkId: "user_a" });
+    run.append({
+      sourceId: "a",
+      status: "created",
+      clerkId: "user_a",
+      error: "Failed to add unverified phone +15555550100: That phone number is taken.",
+      refused: ["unverified phone: That phone number is taken."],
+    });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      run: { state: "complete", counts: { created: 1 } },
+      errors: [],
+      warnings: [
+        {
+          warning:
+            "imported without an email or phone Clerk refused: unverified phone: That phone number is taken.",
+          count: 1,
+        },
+      ],
+      importedWithout: [{ sourceId: "a" }],
+    });
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(
+      "1 user: imported without an email or phone Clerk refused: unverified phone: That phone number is taken.",
+    );
+    expect(err).toContain("Imported without an email or phone Clerk refused (1)");
+  });
+
+  // Clerk refused the first phone on the create, retried without it: the
+  // import's summary warned, so `runs <id>` has to as well.
+  test("warns about users imported without their phone", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({
+      sourceId: "a",
+      status: "created",
+      clerkId: "user_a",
+      error: "Failed to add phone +31612345678: Phone numbers from this country are not supported.",
+      phoneRefused: "Phone numbers from this country are not supported.",
+    });
+    const record = run.finish();
+
+    await runs(record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      warnings: [
+        {
+          warning:
+            "imported without their phone: Phone numbers from this country are not supported.",
+          count: 1,
+        },
+      ],
+      importedWithout: [{ sourceId: "a" }],
+    });
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    const err = Bun.stripANSI(captured.err);
+    expect(err).toContain(
+      "1 user: imported without their phone: Phone numbers from this country are not supported.",
+    );
+    expect(err).toContain("Imported without an email or phone Clerk refused (1)");
+  });
+
+  // Undo writes its `deleted` lines to its own run: the import's still end on
+  // `created`, for users that no longer exist.
+  test("warns about nothing once the run is undone in full", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({
+      sourceId: "a",
+      status: "created",
+      clerkId: "user_a",
+      error: "Failed to add unverified phone +15555550100: That phone number is taken.",
+      refused: ["unverified phone: That phone number is taken."],
+    });
+    const record = run.finish();
+    const undo = startRun(runsDir, { kind: "undo", target: TARGET, undoes: record.id });
+    undo.append({ sourceId: "a", status: "deleted", clerkId: "user_a" });
+    undo.finish();
+
+    await runs(record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({ warnings: [], importedWithout: [] });
+
+    captured.clear();
+    await runs(record.id, { runsDir });
+    const err = Bun.stripANSI(captured.err);
+    expect(err).not.toContain("Warnings");
+    expect(err).not.toContain("Imported without");
+  });
+
+  // A partial undo leaves the users it deleted out of the warnings and lists.
+  test("warns about no user a partial undo deleted", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    for (const id of ["a", "b"]) {
+      run.append({
+        sourceId: id,
+        status: "created",
+        clerkId: `user_${id}`,
+        refused: ["unverified phone: That phone number is taken."],
+        pending: [{ kind: "phone", value: "+15555550100", verified: false }],
+      });
+    }
+    const record = run.finish();
+    const undo = startRun(runsDir, { kind: "undo", target: TARGET, undoes: record.id });
+    undo.append({ sourceId: "a", status: "deleted", clerkId: "user_a" });
+    undo.release();
+
+    await runs(record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      warnings: [{ count: 1 }],
+      importedWithout: [{ sourceId: "b" }],
+      leftToAttach: [{ sourceId: "b" }],
+    });
+
+    // The count follows the list.
+    captured.clear();
+    await runs(record.id, { runsDir });
+    expect(Bun.stripANSI(captured.err)).toMatch(/^Result +2 created, 1 left to attach$/m);
+  });
+
+  // Undo finds an in-flight user by the run's marker and deletes it, writing
+  // the delete to its own run. Until it finishes, one it didn't delete may
+  // still be in Clerk. Once it has, none with the marker is left.
+  test("lists no unconfirmed user an undo deleted, and none once it finished", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({ sourceId: "a", status: "creating", error: "bad gateway (a re-run checks)" });
+    run.append({ sourceId: "b", status: "creating", error: "timed out (a re-run checks)" });
+    run.append({
+      sourceId: "c",
+      status: "created",
+      clerkId: "user_c",
+      pending: [{ kind: "phone", value: "+15555550100", verified: false }],
+    });
+    run.release();
+    const undo = startRun(runsDir, { kind: "undo", target: TARGET, undoes: run.record.id });
+    undo.append({ sourceId: "a", clerkId: "user_a", status: "deleted" });
+    undo.release();
+
+    await runs(run.record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      run: { counts: { created: 2, creating: 1, pending: 1 } },
+      unconfirmed: [{ sourceId: "b" }],
+      errors: [{ error: "timed out (a re-run checks)", count: 1 }],
+    });
+
+    captured.clear();
+    await runs(run.record.id, { runsDir });
+    let err = Bun.stripANSI(captured.err);
+    expect(err).toMatch(/^Result +2 created, 1 left to attach, 1 not confirmed$/m);
+    expect(err).not.toContain("bad gateway");
+    expect(err).toContain("Not confirmed (Clerk may have created them; the undo checks) (1)");
+    expect(err).not.toMatch(/^ {2}a\b/m);
+
+    // The listing counts it the same way.
+    captured.clear();
+    await runs(undefined, { runsDir, json: true });
+    const listed = (JSON.parse(captured.out) as { runs: RunRecord[] }).runs;
+    expect(listed.find((record) => record.id === run.record.id)?.counts).toMatchObject({
+      created: 2,
+      creating: 1,
+      pending: 1,
+    });
+
+    // The undo finishes: it deletes c, and looked b up by the marker and found nothing.
+    undo.append({ sourceId: "c", clerkId: "user_c", status: "deleted" });
+    undo.finish();
+    patchRun(runsDir, run.record.id, { status: "undone" });
+    captured.clear();
+    await runs(run.record.id, { runsDir, json: true });
+    expect(JSON.parse(captured.out)).toMatchObject({
+      run: { state: "undone" },
+      unconfirmed: [],
+      errors: [],
+    });
+
+    captured.clear();
+    await runs(run.record.id, { runsDir });
+    err = Bun.stripANSI(captured.err);
+    expect(err).toMatch(/^Result +2 created$/m);
+    expect(err).not.toContain("Not confirmed (");
+    expect(err).not.toContain("timed out");
+
+    captured.clear();
+    await runs(undefined, { runsDir });
+    err = Bun.stripANSI(captured.err);
+    expect(err).not.toContain("not confirmed");
+    expect(err).not.toContain("left to attach");
+  });
+
+  // A finished run's counts come from run.json, not its lines: the same holds.
+  test("counts no unconfirmed user once an undo deleted them all", async () => {
+    fs.writeFileSync(usersFile(), "[]");
+    const run = startRun(runsDir, {
+      kind: "import",
+      target: TARGET,
+      source: "clerk",
+      file: { path: usersFile(), sha256: sha256File(usersFile()) },
+    });
+    run.append({ sourceId: "a", status: "creating", error: "bad gateway (a re-run checks)" });
+    run.finish();
+    const undo = startRun(runsDir, { kind: "undo", target: TARGET, undoes: run.record.id });
+    undo.append({ sourceId: "a", clerkId: "user_a", status: "deleted" });
+    undo.finish();
+    patchRun(runsDir, run.record.id, { status: "undone" });
+
+    await runs(run.record.id, { runsDir, json: true });
+    const view = JSON.parse(captured.out) as {
+      run: RunRecord;
+      unconfirmed: unknown[];
+      errors: unknown[];
+    };
+    expect(view.run.counts).toMatchObject({ created: 1 });
+    expect(view.run.counts).not.toHaveProperty("creating");
+    expect(view.unconfirmed).toEqual([]);
+    expect(view.errors).toEqual([]);
+
+    captured.clear();
+    await runs(undefined, { runsDir });
+    expect(Bun.stripANSI(captured.err)).not.toContain("not confirmed");
   });
 
   // A stopped import's unsent users have no lines: only the count says so.
@@ -406,6 +670,17 @@ describe("runs <id>", () => {
     expect(next[0]).toContain("to retry the users it didn't finish");
   });
 
+  // The record has the custom source's hash, not its path.
+  test("a partial import from a source you wrote names the source file to pass", async () => {
+    const record = partialImport({ source: "acme", sourceHash: "abc123" });
+
+    await runs(record.id, { runsDir, json: true });
+
+    const { next } = JSON.parse(captured.out) as { next: string[] };
+    expect(next[0]).toContain(`clerk migrate import ${quoteArg(usersFile())} --source SOURCE_FILE`);
+    expect(next[0]).toContain("with SOURCE_FILE replaced by the path to the source you wrote");
+  });
+
   test("an unknown ID is a usage error", async () => {
     await expect(runs("nope", { runsDir })).rejects.toThrow(/No run `nope`/);
   });
@@ -414,5 +689,27 @@ describe("runs <id>", () => {
     await expect(runs("nope", { runsDir })).rejects.toThrow(
       `clerk migrate runs --runs-dir ${quoteArg(runsDir)}`,
     );
+  });
+});
+
+describe("telemetry", () => {
+  test("showing one run records its source and instance", async () => {
+    const record = partialImport({ target: { ...TARGET, appId: "app_1" } });
+    const { payload } = await captureTelemetryPayload("migrate runs", () =>
+      runs(record.id, { runsDir }),
+    );
+    expect(payload).toMatchObject({
+      migrate_source: "clerk",
+      instance_id: "ins_1",
+      app_id: "app_1",
+    });
+  });
+
+  test("a run imported through a source you wrote records custom", async () => {
+    const record = partialImport({ sourceHash: "abc123" });
+    const { payload } = await captureTelemetryPayload("migrate runs", () =>
+      runs(record.id, { runsDir }),
+    );
+    expect(payload.migrate_source).toBe("custom");
   });
 });

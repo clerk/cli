@@ -45,7 +45,18 @@ export type User = z.infer<typeof userSchema>;
 export type ImportSummary = {
   totalProcessed: number;
   successful: number;
+  /**
+   * Users the run's earlier attempt created whose remaining identifiers this
+   * one attached, every one of them: none it tried was refused, and none is
+   * left pending. Not in `successful`: they were imported before.
+   */
+  attached: number;
   failed: number;
+  /**
+   * Users whose create got no answer, so Clerk may hold them. Their line stays
+   * `creating`, and a continue looks them up before creating them again.
+   */
+  unconfirmed: number;
   /**
    * Users never sent because a Ctrl-C or the instance's user quota stopped
    * the run first, so they have no line in the run. One whose first create
@@ -63,6 +74,12 @@ export type ImportSummary = {
    * count as imported, so these are warnings, not failures.
    */
   droppedPhones: Map<string, number>;
+  /**
+   * Users created without an extra or unverified email or phone that Clerk
+   * refused once the user existed, by kind and Clerk's reason. Imported, so
+   * warnings too.
+   */
+  droppedIdentifiers: Map<string, number>;
   validationFailed: number;
   errorBreakdown: Map<string, number>;
 };
@@ -124,7 +141,7 @@ export type SourceCarries = { passwords: Carry; mfa: Carry; metadata: Carry };
  * shape.
  *
  * @property transformer - Source field path → Clerk field name.
- * @property carries - What comes across: passwords, MFA and metadata.
+ * @property carries - What comes across: passwords, MFA, and metadata.
  * @property caveats - Anything else worth knowing before importing.
  * @property defaults - Values merged into every user from this platform.
  * @property preTransform - Runs before field mapping.

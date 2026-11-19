@@ -25,7 +25,7 @@ describe("detectAuthLibraries", () => {
     runDetectAuthLibraries({ "next-auth": "5.0.0", next: "15.0.0" });
     const output = captured.out;
     expect(output).toContain("NextAuth");
-    expect(output).toContain("clerk.com/docs/migrations/nextauth");
+    expect(output).toContain("clerk.com/docs/guides/development/migrating/authjs");
   });
 
   test("detects Auth0 via @auth0/nextjs-auth0", () => {

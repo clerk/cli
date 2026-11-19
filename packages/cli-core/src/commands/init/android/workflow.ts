@@ -1,7 +1,8 @@
 import type { FileAction } from "../frameworks/types.ts";
 import { unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { errorMessage } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, errorMessage } from "../../../lib/errors.ts";
+import { isDeepStrictEqual } from "node:util";
 import {
   assertAbsent,
   assertUnchanged,
@@ -24,6 +25,15 @@ import {
   type DebugKeystoreReader,
   type IdentityDiscovery,
 } from "./identity.ts";
+import {
+  applyGoogleConnection,
+  auditGoogleConnection,
+  auditGoogleHealth,
+  googleCloudSteps,
+  type GoogleAPI,
+  type GoogleCredentials,
+  type GooglePlan,
+} from "./native-google.ts";
 import { planAndroidSetup, writes, type AndroidPlan } from "./plan.ts";
 import { planStarter, type StarterPlan } from "./starter.ts";
 import { inspectAndroidProject, type Inspection, type InspectOptions } from "./project.ts";
@@ -60,6 +70,12 @@ export interface SetupOptions extends InspectOptions {
   signInUI?: boolean;
   /** Whether the starter recipe may be planned at all; doctor turns it off. */
   starter?: boolean;
+  /** Configure Clerk's Google connection for native Sign in with Google; false declines. */
+  signInWithGoogle?: boolean;
+  /** The Google Web client, when the connection has none yet. Never reported back. */
+  googleCredentials?: GoogleCredentials;
+  /** Read the Google connection when Sign in with Google wasn't asked for, to warn about it. */
+  checkGoogleConnection?: boolean;
   inspectOnly?: boolean;
   progress?: (message: string) => void;
   /** An inspection of the same project taken earlier (say, before prompting). */
@@ -67,6 +83,7 @@ export interface SetupOptions extends InspectOptions {
 }
 export interface Dependencies {
   api?: NativeAPI;
+  googleAPI?: GoogleAPI;
   /** Reads the debug certificate, instead of running keytool. */
   debugKeystore?: DebugKeystoreReader;
 }
@@ -86,6 +103,33 @@ export interface SetupPreview {
   publishableKey?: string;
   starter?: StarterPlan;
   signInUIRequested: boolean;
+  google?: GooglePlan;
+  googleRequested: boolean;
+  googleWarning?: string;
+  /** Held for apply only; never described or reported. */
+  googleCredentials?: GoogleCredentials;
+  /** What only the user can do in Google Cloud, with this project's values. */
+  googleCloudSteps?: string[];
+}
+
+/** Whether the module uses (or this setup installs) clerk-android-ui, which renders a Google button. */
+export function usesUiArtifact(inspection: Inspection): boolean {
+  return inspection.sdk === "ui" || inspection.dependencies.some((item) => item.product === "ui");
+}
+
+/** Sign in with Google needs the Web client's ID and secret, which only the user has. */
+export class GoogleCredentialsRequired extends CliError {
+  constructor(
+    public plan: GooglePlan,
+    public identity: IdentityDiscovery,
+    public steps: string[],
+    public frontendHost: string,
+  ) {
+    super(
+      "Native Sign in with Google needs the Google Web client ID and secret: pass --google-client-id and --google-client-secret-file (a path, or - for standard input), or rerun clerk init at a terminal to be asked for them.",
+      { code: ERROR_CODE.USAGE_ERROR, exitCode: 2 },
+    );
+  }
 }
 
 /** The files a plan may rewrite, as inspected. */
@@ -138,6 +182,67 @@ export async function prepareSetup(
   // Registering needs a fingerprint: assetlinks.json, which passkeys need, is served from them.
   if (remote?.actions.includes("register-application") && !identity!.fingerprints.length)
     throw new IdentityRequired(identity!);
+  if (options.signInWithGoogle && !remote)
+    throw setupError(
+      "Native Sign in with Google requires an explicitly selected Clerk application.",
+    );
+  const steps =
+    remote && identity
+      ? googleCloudSteps({
+          packageName: identity.applicationId,
+          sha1: identity.debug.sha1,
+          frontendHost: remote.context.frontendHost,
+        })
+      : undefined;
+  let google: GooglePlan | undefined;
+  let googleWarning: string | undefined;
+  if (options.signInWithGoogle && remote && identity) {
+    google = await auditGoogleConnection(
+      { applicationId: remote.context.applicationId, instanceId: remote.context.instanceId },
+      dependencies.googleAPI,
+    );
+    if (google.status === "blocked")
+      throw setupError(
+        `The Google connection needs review in Clerk before setup can proceed: ${google.blockers.map((blocker) => blocker.message).join(" ")}`,
+      );
+    // An existing Web client is kept, never replaced, so a different one passed here would be
+    // dropped while the run still ended as configured, with Clerk serving the old client ID.
+    if (
+      options.googleCredentials &&
+      google.current?.clientId &&
+      google.current.clientId !== options.googleCredentials.clientId
+    )
+      throw setupError(
+        `Clerk's Google connection already uses the Web client ${google.current.clientId}, not the one passed (${options.googleCredentials.clientId}). clerk init keeps an existing Web client: replace it in the Clerk Dashboard, or rerun without the Google client options to keep it.`,
+      );
+    if (
+      google.status === "ready" &&
+      google.credentials === "required" &&
+      !options.googleCredentials
+    )
+      throw new GoogleCredentialsRequired(google, identity, steps!, remote.context.frontendHost);
+  } else if (options.checkGoogleConnection && remote && !options.signInWithGoogle) {
+    try {
+      const healthCheck = await auditGoogleHealth(
+        { applicationId: remote.context.applicationId, instanceId: remote.context.instanceId },
+        dependencies.googleAPI,
+      );
+      // Google on without a Web client is the one state that fails silently on device: the SDK
+      // needs the client ID Clerk serves as the One Tap client ID.
+      if (healthCheck.current?.enabled && healthCheck.credentials === "required")
+        googleWarning =
+          options.signInWithGoogle === false
+            ? "Google is enabled for this Clerk instance but has no Web client ID, and Sign in with Google was declined. Native Google sign-in fails on Android until a Web client is configured; rerun with --sign-in-with-google."
+            : "Google is enabled for this Clerk instance but has no Web client ID. Native Google sign-in fails on Android until a Web client is configured; rerun with --sign-in-with-google.";
+      else if (healthCheck.status === "blocked")
+        googleWarning =
+          "The enabled Google connection needs review in Clerk; rerun with --sign-in-with-google to review its setup.";
+    } catch {
+      options.signal?.throwIfAborted();
+      googleWarning =
+        "Google provider settings could not be checked. Review them in Clerk or rerun setup when account access is restored.";
+    }
+  }
   // An SDK below the baseline is reported, not replaced: the dependency lines and their catalog
   // entries stay out, while the rest of the build-script plan (the minSdk raise) still applies.
   const local = planAndroidSetup(
@@ -190,6 +295,11 @@ export async function prepareSetup(
     publishableKey: instance?.publishableKey,
     starter,
     signInUIRequested: options.signInUI === true,
+    google,
+    googleRequested: options.signInWithGoogle === true,
+    googleWarning,
+    googleCredentials: options.googleCredentials,
+    googleCloudSteps: options.signInWithGoogle ? steps : undefined,
   };
 }
 
@@ -241,6 +351,15 @@ export function describePreview(preview: SetupPreview) {
       : "Manual Dashboard setup",
     remaining:
       "Complete the source-integration handoff in existing app files and build the module. Review any manual steps.",
+    google: preview.google
+      ? {
+          status: preview.google.status,
+          credentials: preview.google.credentials,
+          actions: preview.google.actions,
+          blockers: preview.google.blockers,
+          ...(preview.googleCloudSteps ? { googleCloudSteps: preview.googleCloudSteps } : {}),
+        }
+      : "Not planned",
   };
 }
 
@@ -258,6 +377,7 @@ export interface ApplyResult {
   backups: string[];
   changedFiles: string[];
   recovery?: { restored: string[]; needsReview: string[] };
+  google: "verified" | "manual" | "incomplete";
   handoff: ReturnType<typeof integrationHandoff>;
   /** The native identity registered with Clerk and where its fingerprints came from. */
   identity?: ReturnType<typeof describeIdentity>;
@@ -290,6 +410,7 @@ export async function applySetup(
     backups: [],
     changedFiles: [],
     remote: "manual",
+    google: "manual",
     instructions: preview.local.postInstructions,
     handoff: integrationHandoff(
       preview.inspection.selection,
@@ -361,7 +482,19 @@ export async function applySetup(
           detail:
             "Applied or verified the starter recipe in MainActivity; compilation remains unverified.",
         });
-    const incomplete = [result.local, result.remote].includes("incomplete");
+    if (preview.googleRequested)
+      step(
+        "native-google",
+        result.google === "verified",
+        result.google === "verified"
+          ? "Google is enabled for authentication with a Web client ID; the Android SDK reads it as the One Tap client ID."
+          : "The Google connection is incomplete; review Clerk settings and rerun clerk init --sign-in-with-google.",
+      );
+    // Only the UI artifact renders a Google button; an app on the core artifact may never use
+    // Google, so the Clerk default (Google on shared credentials) is a warning, not a step.
+    if (preview.googleWarning && usesUiArtifact(preview.inspection))
+      remaining.push({ id: "google-provider-review", detail: preview.googleWarning });
+    const incomplete = [result.local, result.remote, result.google].includes("incomplete");
     result.status = incomplete
       ? "incomplete"
       : remaining.length
@@ -381,6 +514,9 @@ export async function applySetup(
         remaining,
         changedFiles: result.changedFiles,
         signInUIRequested: preview.signInUIRequested,
+        ...(preview.googleCloudSteps
+          ? { google: { steps: preview.googleCloudSteps, verified: result.google === "verified" } }
+          : {}),
       },
     );
     return result;
@@ -444,6 +580,51 @@ export async function applySetup(
       if (signal?.aborted) throw error;
       result.remote = "incomplete";
       result.message = `Clerk native registration is incomplete: ${errorMessage(error)} Local edits remain; rerun setup with the same application to reconcile.`;
+    }
+  }
+  // The Google connection is instance-level, so a registration this machine can't complete (a
+  // fingerprint only the Dashboard can add) doesn't hold it back; a failed registration does.
+  if (preview.google && result.remote !== "incomplete") {
+    try {
+      // Native registration may advance the config version, so re-audit and apply only if the
+      // Google connection is still what the user approved.
+      const google = await auditGoogleConnection(preview.google, dependencies.googleAPI);
+      if (
+        google.status !== "satisfied" &&
+        (google.status !== "ready" ||
+          preview.google.status !== "ready" ||
+          google.credentials !== preview.google.credentials ||
+          !isDeepStrictEqual(google.current, preview.google.current))
+      )
+        throw setupError(
+          "The Google connection changed after the preview; rerun clerk init.",
+          true,
+        );
+      await applyGoogleConnection(google, preview.googleCredentials, {
+        api: dependencies.googleAPI,
+        revalidateLocalPreconditions: async () => {
+          signal?.throwIfAborted();
+          for (const snapshot of snapshots) {
+            const action = actions.find((item) => item.path === snapshot.path);
+            if (!action) await assertUnchanged(root, snapshot);
+            else if ((await snapshotFile(root, snapshot.path)).source !== action.content)
+              throw setupError(
+                "Local setup changed before the Google connection was written.",
+                true,
+              );
+          }
+        },
+      });
+      result.google = "verified";
+    } catch (error) {
+      if (signal?.aborted) throw error;
+      result.google = "incomplete";
+      result.message = [
+        result.message,
+        `Sign in with Google was not configured: ${errorMessage(error)}`,
+      ]
+        .filter(Boolean)
+        .join("\n");
     }
   }
   return finish();

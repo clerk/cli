@@ -5,8 +5,8 @@ import path from "node:path";
 import { CliError } from "../../../lib/errors.ts";
 import { loadUsersFromFile, normalizeUserData, transformUsers } from "../lib/transform.ts";
 import type { FirebaseHashConfig, User } from "../types.ts";
-import { getSource, sourceKeys, sources } from "./registry.ts";
 import { isAuthJsVerified } from "./authjs.ts";
+import { getSource, isSourcePath, sourceKeys, sources } from "./registry.ts";
 import { isVerified, toIsoDate } from "./shared.ts";
 
 const FIREBASE_HASH: FirebaseHashConfig = {
@@ -76,6 +76,19 @@ describe("registry", () => {
 
   test("throws for an unregistered key", () => {
     expect(() => getSource("okta")).toThrow(/Source not found/);
+  });
+});
+
+describe("isSourcePath", () => {
+  test.each([["./mine.ts"], ["../up/mine.js"], ["/abs/mine.mjs"], ["mine.ts"], ["dir/mine.js"]])(
+    "%s is a path",
+    (value) => {
+      expect(isSourcePath(value)).toBe(true);
+    },
+  );
+
+  test.each([["clerk"], ["betterauth"], ["okta"]])("%s is a key", (value) => {
+    expect(isSourcePath(value)).toBe(false);
   });
 });
 
@@ -537,6 +550,17 @@ describe("firebase", () => {
     expect(
       one("firebase", { localId: "p1", phoneNumber: "+14165550123" })?.skipReason,
     ).toBeUndefined();
+  });
+
+  // Firebase has no phone-verified field, so nothing routes a phone unverified.
+  test("imports a phone verified", () => {
+    const user = one("firebase", { localId: "p1", phoneNumber: "+14165550123" });
+    expect(user?.phone).toBe("+14165550123");
+    expect(user?.unverifiedPhoneNumbers).toBeUndefined();
+  });
+
+  test("says in its caveats that phones import verified", () => {
+    expect(getSource("firebase").caveats?.join(" ")).toContain("Phones import verified");
   });
 
   const withHash = { ...base, passwordHash: "SGFzaA==", salt: "U2FsdA==" };

@@ -84,6 +84,42 @@ describe("buildCreateUserBody", () => {
     ]);
   });
 
+  // Only the create can make a reserved identifier, so it goes here, after the
+  // verified primary, with a status per address in the same order.
+  test("sends unverified identifiers reserved when asked, in order", () => {
+    const target = user({
+      email: "a@x.dev",
+      unverifiedEmailAddresses: ["c@x.dev"],
+      unverifiedPhoneNumbers: ["+15555550101"],
+    });
+    expect(buildCreateUserBody(target, splitIdentifiers(target), true, true)).toMatchObject({
+      email_address: ["a@x.dev", "c@x.dev"],
+      email_address_identification_status: ["verified", "reserved"],
+      phone_number: ["+15555550101"],
+      phone_number_identification_status: ["reserved"],
+    });
+  });
+
+  test("makes a reserved email the primary when there is no verified one", () => {
+    const target = user({ email: undefined, unverifiedEmailAddresses: ["c@x.dev"] });
+    expect(buildCreateUserBody(target, splitIdentifiers(target), true, true)).toMatchObject({
+      email_address: ["c@x.dev"],
+      email_address_identification_status: ["reserved"],
+    });
+  });
+
+  test("sends no status arrays by default, or with nothing to reserve", () => {
+    const unverified = user({ unverifiedEmailAddresses: ["c@x.dev"] });
+    const body = buildCreateUserBody(unverified, splitIdentifiers(unverified), true);
+    expect(body.email_address).toEqual(["a@x.dev"]);
+    expect(body).not.toHaveProperty("email_address_identification_status");
+
+    const verified = user();
+    expect(
+      buildCreateUserBody(verified, splitIdentifiers(verified), true, true),
+    ).not.toHaveProperty("email_address_identification_status");
+  });
+
   // Allowlists and blocklists police sign-ups; these users already signed up.
   test("skips the instance's sign-up restrictions", () => {
     expect(buildCreateUserBody(user(), splitIdentifiers(user()), true)).toMatchObject({
@@ -333,6 +369,29 @@ describe("importUsers", () => {
     expect(requests.filter((r) => r.url.endsWith("/v1/phone_numbers"))).toHaveLength(1);
   });
 
+  test("creates unverified identifiers reserved rather than attaching them", async () => {
+    stub(() => ok("user_created"));
+
+    await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"], unverifiedEmailAddresses: ["c@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      reserveUnverified: true,
+    });
+
+    expect(requests.find((r) => r.url.endsWith("/v1/users"))?.body).toMatchObject({
+      email_address: ["a@x.dev", "c@x.dev"],
+      email_address_identification_status: ["verified", "reserved"],
+    });
+    expect(
+      requests.filter((r) => r.url.endsWith("/v1/email_addresses")).map((r) => r.body),
+    ).toEqual([
+      { user_id: "user_created", email_address: "b@x.dev", primary: false, verified: true },
+    ]);
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+  });
+
   test("marks a user whose password the source dropped", async () => {
     stub(() => ok("user_created"));
 
@@ -375,6 +434,188 @@ describe("importUsers", () => {
     expect(lines[1]).toMatchObject({ status: "created", clerkId: "user_created" });
     expect(lines[1]?.error).toContain("Failed to add additional email b@x.dev");
     expect(lines[1]).not.toHaveProperty("pending");
+    // Imported without it, which the summary and `runs` report as a warning.
+    expect(lines[1]?.refused).toEqual(["additional email: that email is taken"]);
+    expect([...summary.droppedIdentifiers]).toEqual([["additional email: that email is taken", 1]]);
+  });
+
+  // A key Clerk stopped accepting says nothing about the email itself.
+  test("leaves an attach the key was refused for pending, not refused", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? clerkError(401, "The provided Clerk Secret Key is invalid.")
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
+    expect(lines.at(-1)).not.toHaveProperty("refused");
+    // Why it is still pending, which `runs <id>` shows.
+    expect(lines.at(-1)?.error).toBe(
+      "Not added yet: additional email b@x.dev: The provided Clerk Secret Key is invalid.",
+    );
+    expect(summary.droppedIdentifiers.size).toBe(0);
+  });
+
+  // The continue tries the attach again: its note replaces the earlier one.
+  test("notes a pending attach once across continues", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? clerkError(401, "The provided Clerk Secret Key is invalid.")
+        : ok("user_created"),
+    );
+
+    await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          status: "created",
+          clerkId: "user_found",
+          refused: ["additional email: taken"],
+          error:
+            "Failed to add additional email c@x.dev: taken; Not added yet: additional email b@x.dev: The provided Clerk Secret Key is invalid.",
+          pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.error).toBe(
+      "Failed to add additional email c@x.dev: taken; Not added yet: additional email b@x.dev: The provided Clerk Secret Key is invalid.",
+    );
+  });
+
+  test("leaves an attach pending on a 403 that isn't about the phone", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? clerkError(403, "You are not authorized to perform this request.")
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
+    expect(summary.droppedIdentifiers.size).toBe(0);
+  });
+
+  // A country Clerk doesn't support is about the phone, so it is a refusal.
+  test("counts a 403 for the phone's country as refused", async () => {
+    const country = "Phone numbers from this country (Netherlands) are currently not supported.";
+    stub((url) =>
+      url.endsWith("/v1/phone_numbers")
+        ? new Response(
+            JSON.stringify({
+              errors: [
+                { code: "unsupported_country_code", message: "unsupported", long_message: country },
+              ],
+            }),
+            { status: 403 },
+          )
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev"], unverifiedPhoneNumbers: ["+31612345678"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+    expect([...summary.droppedIdentifiers]).toEqual([[`unverified phone: ${country}`, 1]]);
+  });
+
+  // The instance's allowlist or blocklist is about the email, not the key.
+  test("counts a 403 for an email the instance doesn't allow as refused", async () => {
+    const blocked = "b@x.dev is not allowed to access this application.";
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? new Response(
+            JSON.stringify({
+              errors: [
+                {
+                  code: "not_allowed_access",
+                  message: "Access not allowed.",
+                  long_message: blocked,
+                },
+              ],
+            }),
+            { status: 403 },
+          )
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+    expect(lines.at(-1)?.error).toBe(`Failed to add additional email b@x.dev: ${blocked}`);
+    // Grouped by reason, without the address: one line for every blocked user.
+    expect([...summary.droppedIdentifiers]).toEqual([
+      ["additional email: <email> is not allowed to access this application.", 1],
+    ]);
+  });
+
+  test("counts each user once per reason Clerk refused its identifiers", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? clerkError(422, "that email is taken")
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev", "c@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.refused).toEqual(["additional email: that email is taken"]);
+    expect([...summary.droppedIdentifiers]).toEqual([["additional email: that email is taken", 1]]);
+  });
+
+  test("keeps an earlier refusal when a continue attaches the rest", async () => {
+    stub(() => ok("user_created"));
+
+    const summary = await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          clerkId: "user_created",
+          status: "created",
+          error: "Failed to add additional email b@x.dev: that email is taken",
+          refused: ["additional email: that email is taken"],
+          pending: [{ kind: "phone", value: "+15555550100", verified: false }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.refused).toEqual(["additional email: that email is taken"]);
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+    // Counted by the run that saw the refusal, not again by the continue.
+    expect(summary.droppedIdentifiers.size).toBe(0);
   });
 
   // A Ctrl-C mid-backoff should not wait out the pause, nor send the attach.
@@ -418,6 +659,174 @@ describe("importUsers", () => {
     expect(requests.filter((r) => r.url.endsWith("/v1/email_addresses"))).toHaveLength(2);
     expect(lines.at(-1)).not.toHaveProperty("error");
     expect(lines.at(-1)).not.toHaveProperty("pending");
+  });
+
+  // Rate limited past the retries says nothing about the email: a re-run
+  // attaches it, so it is no refusal.
+  test("keeps an attach pending when its 429 outlasts the retries", async () => {
+    stub((url) =>
+      url.endsWith("/v1/email_addresses")
+        ? clerkError(429, "slow down", { "retry-after": "1" })
+        : ok("user_created"),
+    );
+
+    const summary = await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)).toMatchObject({
+      status: "created",
+      pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+    });
+    expect(lines.at(-1)).not.toHaveProperty("refused");
+    expect(summary.droppedIdentifiers.size).toBe(0);
+  }, 20_000);
+
+  const taken = () =>
+    new Response(
+      JSON.stringify({
+        errors: [
+          {
+            code: "form_identifier_exists",
+            message: "That email address is taken. Please try another.",
+            long_message: "That email address is taken. Please try another.",
+          },
+        ],
+      }),
+      { status: 422 },
+    );
+  const userWith = (emails: string[]) =>
+    new Response(
+      JSON.stringify({
+        id: "user_created",
+        email_addresses: emails.map((email_address) => ({ email_address })),
+      }),
+      { status: 200 },
+    );
+
+  // An earlier attach with no answer landed: the continue's retry finds the
+  // email taken, by this user, and that is no refusal.
+  test("counts an attach as done when the email is taken by this user", async () => {
+    stub((url) => {
+      if (url.endsWith("/v1/email_addresses")) return taken();
+      if (url.endsWith("/v1/users/user_found")) return userWith(["a@x.dev", "B@x.dev"]);
+      return ok("user_created");
+    });
+
+    const summary = await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          status: "created",
+          clerkId: "user_found",
+          pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)).toMatchObject({ status: "created", clerkId: "user_found" });
+    expect(lines.at(-1)).not.toHaveProperty("refused");
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+    expect(summary.droppedIdentifiers.size).toBe(0);
+  });
+
+  // Clerk stores the phone in E.164, whatever the source wrote.
+  test.each([
+    ["+15555550100", "+15555550100", false],
+    ["+1 555-555-0100", "+15555550100", false],
+    ["+15555550100", "+15555550199", true],
+  ])("a taken phone %s, the user holding %s, refused: %s", async (source, held, refused) => {
+    stub((url) => {
+      if (url.endsWith("/v1/phone_numbers")) return taken();
+      if (url.endsWith("/v1/users/user_found")) {
+        return Response.json({
+          id: "user_found",
+          email_addresses: [],
+          phone_numbers: [{ phone_number: held }],
+        });
+      }
+      return ok("user_created");
+    });
+
+    const summary = await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          status: "created",
+          clerkId: "user_found",
+          pending: [{ kind: "phone", value: source, verified: false }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)).not.toHaveProperty("pending");
+    expect(lines.at(-1)?.refused?.length ?? 0).toBe(refused ? 1 : 0);
+    expect(summary.droppedIdentifiers.size).toBe(refused ? 1 : 0);
+  });
+
+  test("counts an attach as refused when someone else holds the email", async () => {
+    stub((url) => {
+      if (url.endsWith("/v1/email_addresses")) return taken();
+      if (url.endsWith("/v1/users/user_found")) return userWith(["a@x.dev"]);
+      return ok("user_created");
+    });
+
+    const summary = await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          status: "created",
+          clerkId: "user_found",
+          pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.refused).toEqual([
+      "additional email: That email address is taken. Please try another.",
+    ]);
+    expect(summary.droppedIdentifiers.size).toBe(1);
+  });
+
+  test("keeps a taken attach pending when the user can't be looked up", async () => {
+    stub((url) => {
+      if (url.endsWith("/v1/email_addresses")) return taken();
+      if (url.endsWith("/v1/users/user_found")) return clerkError(503, "unavailable");
+      return ok("user_created");
+    });
+
+    await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          status: "created",
+          clerkId: "user_found",
+          pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines.at(-1)?.pending).toEqual([{ kind: "email", value: "b@x.dev", verified: true }]);
+    expect(lines.at(-1)).not.toHaveProperty("refused");
   });
 
   test("keeps an attach with no answer pending, for a continued run", async () => {
@@ -509,16 +918,51 @@ describe("importUsers", () => {
       progress: ({ done, ok }) => reported.push({ done, ok }),
     });
 
-    // Created by the run's earlier attempt: the bar and the summary agree.
+    // Done on the bar, but created by the run's earlier attempt: the summary
+    // counts it as attached, not as imported again.
     expect(reported.at(-1)).toEqual({ done: 1, ok: 1 });
-    expect(summary.successful).toBe(1);
+    expect(summary).toMatchObject({ successful: 0, attached: 1 });
+  });
+
+  // One identifier attaches and the other stays pending: the user isn't finished.
+  test("an attach-only user with an identifier still pending is not counted as attached", async () => {
+    // No answer: left pending, with no note to say why.
+    stub((url) =>
+      url.endsWith("/v1/phone_numbers") ? clerkError(503, "unavailable") : ok("idn_1"),
+    );
+    const reported: { done: number; ok: number }[] = [];
+
+    const summary = await importUsers({
+      users: [],
+      attachOnly: [
+        {
+          sourceId: "u1",
+          clerkId: "user_1",
+          status: "created",
+          pending: [
+            { kind: "email", value: "b@x.dev", verified: true },
+            { kind: "phone", value: "+15555550100", verified: false },
+          ],
+        },
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      progress: ({ done, ok }) => reported.push({ done, ok }),
+    });
+
+    expect(summary).toMatchObject({ successful: 0, attached: 0 });
+    expect(reported.at(-1)).toEqual({ done: 1, ok: 0 });
+    expect(lines.at(-1)?.pending).toEqual([
+      { kind: "phone", value: "+15555550100", verified: false },
+    ]);
   });
 
   // The pending phone attaches now, but the email Clerk refused stays refused.
   test("an attach-only user keeps the error its earlier line recorded", async () => {
     stub(() => ok("idn_1"));
 
-    await importUsers({
+    const summary = await importUsers({
       users: [],
       attachOnly: [
         {
@@ -540,6 +984,8 @@ describe("importUsers", () => {
       error: "b@x.dev: That email address is taken.",
     });
     expect(lines.at(-1)?.pending).toBeUndefined();
+    // The earlier refusal was reported then. What was left to attach has now attached.
+    expect(summary.attached).toBe(1);
   });
 
   test("an adopted user is not created again; only its extras attach", async () => {
@@ -556,6 +1002,94 @@ describe("importUsers", () => {
     expect(requests.map((r) => new URL(r.url).pathname)).toEqual(["/v1/email_addresses"]);
     expect(summary.successful).toBe(1);
     expect(lines.at(-1)).toMatchObject({ clerkId: "user_found", status: "created" });
+  });
+
+  // The `creating` line says what the create did, so a continued run that
+  // adopts the user knows what is left to attach.
+  test("marks a creating line reserved only when the create reserved something", async () => {
+    stub(() => ok("user_created"));
+
+    await importUsers({
+      users: [
+        user({ userId: "u1", unverifiedEmailAddresses: ["c@x.dev"] }),
+        user({ userId: "u2", email: "b@x.dev" }),
+      ],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      reserveUnverified: true,
+    });
+
+    expect(allLines.filter((line) => line.status === "creating")).toEqual([
+      { sourceId: "u1", status: "creating", reserved: true },
+      { sourceId: "u2", status: "creating" },
+    ]);
+  });
+
+  // Adopted, the user is not created again, so its create's mode decides what
+  // is still missing, not this run's flag.
+  test("attaches an adopted user's unverified email its create left out, even with the flag", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [user({ unverifiedEmailAddresses: ["c@x.dev"] })],
+      adopted: new Map([["u1", "user_found"]]),
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      reserveUnverified: true,
+    });
+
+    expect(requests.map((r) => r.body)).toEqual([
+      { user_id: "user_found", email_address: "c@x.dev", primary: false, verified: false },
+    ]);
+  });
+
+  test("attaches nothing for an adopted user whose create reserved them, even without the flag", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [user({ unverifiedEmailAddresses: ["c@x.dev"] })],
+      adopted: new Map([["u1", "user_found"]]),
+      adoptedLines: new Map([["u1", { sourceId: "u1", status: "creating", reserved: true }]]),
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(requests).toEqual([]);
+  });
+
+  // The retry that dropped them was cut off before its answer: the reserved
+  // phones it left out are attached, unverified, as they would have been.
+  test("attaches the reserved phones an adopted user's retried create left out", async () => {
+    stub(() => ok("idn_1"));
+
+    await importUsers({
+      users: [
+        user({ unverifiedEmailAddresses: ["c@x.dev"], unverifiedPhoneNumbers: ["+31612345678"] }),
+      ],
+      adopted: new Map([["u1", "user_found"]]),
+      adoptedLines: new Map([
+        [
+          "u1",
+          {
+            sourceId: "u1",
+            status: "creating",
+            reserved: true,
+            pending: [{ kind: "phone", value: "+31612345678", verified: false }],
+          },
+        ],
+      ]),
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    // The email went on the create reserved, so it is not attached again.
+    expect(requests.map((r) => r.body)).toEqual([
+      { user_id: "user_found", phone_number: "+31612345678", primary: false, verified: false },
+    ]);
   });
 
   // Shapes from clerk_go's apierror: the country error carries its own code
@@ -602,6 +1136,326 @@ describe("importUsers", () => {
     expect(lines.at(-1)?.error).toContain(
       `Failed to add phone +31612345678: ${clerkErr.long_message}`,
     );
+    // On the line too, so `runs <id>` warns about it as the summary does.
+    expect(lines.at(-1)).toMatchObject({ status: "created", phoneRefused: clerkErr.long_message });
+  });
+
+  // The retry without the phone went out with no answer: the continue that
+  // adopts the user still knows the phone was lost.
+  test("keeps a refused phone's reason when the user is adopted on a continue", async () => {
+    const reason = "Phone numbers from this country (Netherlands) are currently not supported.";
+    stub((url, attempt) =>
+      url.endsWith("/v1/users")
+        ? attempt === 1
+          ? new Response(
+              JSON.stringify({
+                errors: [{ code: "unsupported_country_code", message: "x", long_message: reason }],
+              }),
+              { status: 403 },
+            )
+          : clerkError(503, "unavailable")
+        : ok("user_created"),
+    );
+
+    await importUsers({
+      users: [user({ phone: "+31612345678" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+    expect(allLines.at(-1)).toMatchObject({ status: "creating", phoneRefused: reason });
+
+    lines = [];
+    stub(() => ok("user_created"));
+    const summary = await importUsers({
+      users: [user({ phone: "+31612345678" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      adopted: new Map([["u1", "user_found"]]),
+      adoptedLines: new Map([["u1", allLines.at(-1)!]]),
+    });
+
+    expect(lines.at(-1)).toMatchObject({
+      status: "created",
+      clerkId: "user_found",
+      phoneRefused: reason,
+      error: `Failed to add phone: ${reason}`,
+    });
+    expect([...summary.droppedPhones]).toEqual([[reason, 1]]);
+  });
+
+  // A stop between the user's two lines keeps the first: it says why too.
+  test("puts a refused phone's note on the user's first line", async () => {
+    stub((url, attempt) =>
+      url.endsWith("/v1/users") && attempt === 1
+        ? new Response(
+            JSON.stringify({
+              errors: [{ code: "unsupported_country_code", message: "x", long_message: "No NL." }],
+            }),
+            { status: 403 },
+          )
+        : ok("user_created"),
+    );
+
+    await importUsers({
+      users: [user({ email: ["a@x.dev", "b@x.dev"], phone: "+31612345678" })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+    });
+
+    expect(lines[0]).toMatchObject({
+      status: "created",
+      phoneRefused: "No NL.",
+      error: "Failed to add phone +31612345678: No NL.",
+      pending: [{ kind: "email", value: "b@x.dev", verified: true }],
+    });
+  });
+
+  test("drops a refused phone's statuses with it", async () => {
+    stub((url, attempt) =>
+      url.endsWith("/v1/users") && attempt === 1
+        ? new Response(
+            JSON.stringify({
+              errors: [
+                {
+                  code: "form_param_format_invalid",
+                  message: "bad phone",
+                  meta: { param_name: "phone_number" },
+                },
+              ],
+            }),
+            { status: 422 },
+          )
+        : ok("user_created"),
+    );
+
+    await importUsers({
+      users: [user({ unverifiedPhoneNumbers: ["+31612345678"] })],
+      secretKey: "sk_test_x",
+      limits: LIMITS,
+      record,
+      reserveUnverified: true,
+    });
+
+    expect(requests[0]?.body).toHaveProperty("phone_number_identification_status");
+    expect(requests[1]?.body).not.toHaveProperty("phone_number");
+    expect(requests[1]?.body).not.toHaveProperty("phone_number_identification_status");
+    expect(lines.at(-1)?.error).toContain("Failed to add phone +31612345678");
+  });
+
+  describe("a refused phone among reserved ones", () => {
+    const refusePhone = (refusals: number) =>
+      stub((url, attempt) =>
+        url.endsWith("/v1/users") && attempt <= refusals
+          ? new Response(
+              JSON.stringify({
+                errors: [
+                  {
+                    code: "form_param_format_invalid",
+                    message: "bad phone",
+                    meta: { param_name: "phone_number" },
+                  },
+                ],
+              }),
+              { status: 422 },
+            )
+          : ok("user_created"),
+      );
+    const withPhones = (fields: Partial<User> = {}) =>
+      user({ phone: "+15555550100", unverifiedPhoneNumbers: ["+31612345678"], ...fields });
+
+    // Any of the phones may be the refused one; the verified one goes alone first.
+    test("keeps the verified phone, dropping only the reserved ones", async () => {
+      refusePhone(1);
+      await importUsers({
+        users: [withPhones()],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(requests[1]?.body).toMatchObject({ phone_number: ["+15555550100"] });
+      expect(requests[1]?.body).not.toHaveProperty("phone_number_identification_status");
+      // Landed, the verified phone alone says the reserved one was refused:
+      // recorded before the retry goes out, so a continue knows it is lost,
+      // not left to attach.
+      const creating = allLines.filter((line) => line.status === "creating");
+      expect(creating[0]).not.toHaveProperty("pending");
+      expect(creating[1]).toMatchObject({ reserved: true, phoneRefused: "bad phone" });
+      expect(creating[1]).not.toHaveProperty("pending");
+      expect(lines.at(-1)?.error).toContain("Failed to add phone +31612345678:");
+      expect(lines.at(-1)?.error).not.toContain("+15555550100");
+    });
+
+    // A continue reads only the latest line: with no answer, it has to keep
+    // what the attempt reserved and left out, or the user is adopted as if
+    // nothing was reserved and the left-out phones are never attached.
+    test("keeps reserved and the left-out phones when the retried create gets no answer", async () => {
+      const left = ["+31612345678", "+31612345679"];
+      stub((url, attempt) =>
+        !url.endsWith("/v1/users")
+          ? ok("idn_1")
+          : attempt === 1
+            ? new Response(
+                JSON.stringify({
+                  errors: [
+                    {
+                      code: "form_param_format_invalid",
+                      message: "bad phone",
+                      meta: { param_name: "phone_number" },
+                    },
+                  ],
+                }),
+                { status: 422 },
+              )
+            : new Response("upstream", { status: 503 }),
+      );
+
+      const summary = await importUsers({
+        users: [withPhones({ unverifiedPhoneNumbers: left })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      // Either reserved phone may be the refused one: both are attached later.
+      expect(summary).toMatchObject({ failed: 0, unconfirmed: 1 });
+      expect(allLines.at(-1)).toMatchObject({
+        status: "creating",
+        reserved: true,
+        pending: left.map((value) => ({ kind: "phone", value, verified: false })),
+        error: expect.stringContaining("a re-run checks"),
+      });
+      expect(allLines.at(-1)).not.toHaveProperty("phoneRefused");
+    });
+
+    // One reserved phone, refused, is lost whichever create landed: a continue
+    // that adopts the user warns about it once and doesn't send it again.
+    test.each([
+      ["with a verified phone", { phone: "+15555550100" }],
+      ["without a verified phone", { phone: undefined }],
+    ])("counts a lone reserved phone as lost once, %s", async (_label, fields) => {
+      stub((url, attempt) =>
+        !url.endsWith("/v1/users")
+          ? ok("idn_1")
+          : attempt === 1
+            ? new Response(
+                JSON.stringify({
+                  errors: [
+                    {
+                      code: "form_param_format_invalid",
+                      message: "bad phone",
+                      meta: { param_name: "phone_number" },
+                    },
+                  ],
+                }),
+                { status: 422 },
+              )
+            : new Response("upstream", { status: 503 }),
+      );
+      const target = withPhones(fields);
+
+      await importUsers({
+        users: [target],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+      const creating = allLines.at(-1)!;
+      expect(creating).toMatchObject({ status: "creating", phoneRefused: "bad phone" });
+      expect(creating).not.toHaveProperty("pending");
+
+      lines = [];
+      requests = [];
+      stub(() => ok("idn_1"));
+      const summary = await importUsers({
+        users: [target],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+        adopted: new Map([["u1", "user_found"]]),
+        adoptedLines: new Map([["u1", creating]]),
+      });
+
+      expect(requests.some((request) => request.url.endsWith("/v1/phone_numbers"))).toBe(false);
+      expect([...summary.droppedPhones]).toEqual([["bad phone", 1]]);
+      expect(summary.droppedIdentifiers.size).toBe(0);
+    });
+
+    test("keeps reserved when a reserved create gets no answer", async () => {
+      stub(() => new Response("upstream", { status: 503 }));
+
+      await importUsers({
+        users: [user({ unverifiedEmailAddresses: ["c@x.dev"] })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(allLines.at(-1)).toMatchObject({ status: "creating", reserved: true });
+      expect(allLines.at(-1)).not.toHaveProperty("pending");
+    });
+
+    test("creates a user with no email on its verified phone", async () => {
+      refusePhone(1);
+      const summary = await importUsers({
+        users: [withPhones({ email: undefined })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(summary).toMatchObject({ successful: 1, failed: 0 });
+    });
+
+    // The first refusal may have been the verified phone's alone.
+    test("drops the verified phone refused alone, and attaches the reserved ones after", async () => {
+      refusePhone(2);
+      await importUsers({
+        users: [withPhones()],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(requests[2]?.body).not.toHaveProperty("phone_number");
+      expect(lines.at(-1)?.error).toContain("Failed to add phone +15555550100:");
+      expect(requests[3]).toMatchObject({
+        url: expect.stringContaining("/v1/phone_numbers"),
+        body: { phone_number: "+31612345678", verified: false },
+      });
+    });
+
+    // Any one of them may be the refused one, so none is lost with it.
+    test("attaches each reserved phone on its own when it can't tell which was refused", async () => {
+      refusePhone(1);
+      await importUsers({
+        users: [withPhones({ unverifiedPhoneNumbers: ["+31612345678", "+31612345679"] })],
+        secretKey: "sk_test_x",
+        limits: LIMITS,
+        record,
+        reserveUnverified: true,
+      });
+
+      expect(requests[1]?.body).toMatchObject({ phone_number: ["+15555550100"] });
+      const attached = requests
+        .filter((request) => request.url.includes("/v1/phone_numbers"))
+        .map((request) => request.body);
+      expect(attached).toEqual([
+        expect.objectContaining({ phone_number: "+31612345678", verified: false }),
+        expect.objectContaining({ phone_number: "+31612345679", verified: false }),
+      ]);
+      expect(lines.at(-1)?.error ?? "").not.toContain("Failed to add phone");
+    });
   });
 
   test("does not retry without the phone when it is the only identifier", async () => {
@@ -740,7 +1594,8 @@ describe("importUsers", () => {
       record,
     });
 
-    expect(summary.failed).toBe(1);
+    // Clerk may hold the user: not a failure until a continue checks.
+    expect(summary).toMatchObject({ failed: 0, unconfirmed: 1 });
     // A second `creating` line, so `runs <id>` can say why.
     expect(allLines.map((line) => line.status)).toEqual(["creating", "creating"]);
     expect(allLines[1]?.error).toContain("a re-run checks");
@@ -757,7 +1612,7 @@ describe("importUsers", () => {
       record,
     });
 
-    expect(summary).toMatchObject({ successful: 0, failed: 1 });
+    expect(summary).toMatchObject({ successful: 0, failed: 0, unconfirmed: 1 });
     expect(allLines).toEqual([
       { sourceId: "u1", status: "creating" },
       {
@@ -909,9 +1764,10 @@ describe("importUsers", () => {
     expect(summary).toMatchObject({ successful: 1, failed: 0 });
     expect(performance.now() - started).toBeGreaterThanOrEqual(900);
     expect(requests.filter((r) => r.url.endsWith("/v1/users"))).toHaveLength(2);
-    expect(lines).toHaveLength(2);
-    expect(lines[1]).toMatchObject({ status: "created", clerkId: "user_ok" });
-    expect(lines[1]?.error).toContain("Rate limit hit (429)");
+    // One line, the retry's note on it: nothing was left to attach.
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatchObject({ status: "created", clerkId: "user_ok" });
+    expect(lines[0]?.error).toContain("Rate limit hit (429)");
   });
 
   // The instance is over its limit for every user, so the others wait too.

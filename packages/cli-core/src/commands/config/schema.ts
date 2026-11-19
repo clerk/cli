@@ -3,7 +3,7 @@ import { CliError, ERROR_CODE, withApiContext } from "../../lib/errors.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { log } from "../../lib/log.ts";
 import { keylessCopy } from "../../lib/copy.ts";
-import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
+import { keyAccess, resolveInstanceTarget } from "../../lib/keyless-target.ts";
 
 interface ConfigSchemaOptions {
   app?: string;
@@ -17,9 +17,12 @@ export async function configSchema(options: ConfigSchemaOptions): Promise<void> 
     // Same shape as config push/put: resolve the target once, branch on kind.
     const target = await resolveInstanceTarget(options);
     if (target.kind === "keyless") {
-      throw new CliError(keylessCopy.schemaNeedsClaimedApplication(), {
-        code: ERROR_CODE.AUTH_REQUIRED,
-      });
+      throw new CliError(
+        keylessCopy.schemaNeedsClaimedApplication(await keyAccess(target.keyless)),
+        {
+          code: ERROR_CODE.AUTH_REQUIRED,
+        },
+      );
     }
 
     const ctx = target.ctx;

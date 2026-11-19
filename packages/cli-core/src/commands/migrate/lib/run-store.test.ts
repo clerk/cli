@@ -19,6 +19,8 @@ import {
   latestUserLines,
   listRuns,
   lockFile,
+  importLockFile,
+  lockImport,
   newRunId,
   patchRun,
   readRun,
@@ -202,6 +204,60 @@ describe("locks and interruptions", () => {
     const run = startRun(runsDir, init);
     expect(runState(runsDir, run.record)).toBe("interrupted");
     expect(() => continueRun(runsDir, run.record)).not.toThrow();
+  });
+
+  // A predictable name in a shared /tmp could be a planted symlink, and a
+  // crashed run's leftover under the same PID would read as a held lock.
+  test("the lock's temporary file has a random name and is created exclusively", () => {
+    const identity = { sha256: "b".repeat(64), instanceId: "ins_tmp" };
+    const write = spyOn(fs, "writeFileSync");
+    try {
+      const release = lockImport(identity);
+      const tmp = write.mock.calls.find(([target]) => String(target).endsWith(".tmp"));
+      expect(tmp?.[2]).toMatchObject({ flag: "wx" });
+      expect(String(tmp?.[0])).toMatch(new RegExp(`\\.${process.pid}\\.[0-9a-f]{16}\\.tmp$`));
+      release();
+    } finally {
+      write.mockRestore();
+    }
+  });
+
+  // A lock created empty and written after reads as stale to a second
+  // process in between, which would remove it and import beside the first.
+  test("a lock is linked into place with its PID already written", () => {
+    const identity = { sha256: "a".repeat(64), instanceId: "ins_lock" };
+    const write = spyOn(fs, "writeFileSync");
+    const link = spyOn(fs, "linkSync");
+    try {
+      const release = lockImport(identity);
+      const lockPaths = write.mock.calls.map(([target]) => String(target));
+      // Where hard links are refused, the fallback below writes the lock itself.
+      if (link.mock.results.every((result) => result.type === "return")) {
+        expect(lockPaths.every((target) => target.endsWith(".tmp"))).toBe(true);
+      }
+      release();
+    } finally {
+      write.mockRestore();
+      link.mockRestore();
+    }
+  });
+
+  test("a filesystem without hard links gets the lock written exclusively", () => {
+    const identity = { sha256: "b".repeat(64), instanceId: "ins_nolink" };
+    const link = spyOn(fs, "linkSync").mockImplementation(() => {
+      throw Object.assign(new Error("not supported"), { code: "EPERM" });
+    });
+    const write = spyOn(fs, "writeFileSync");
+    try {
+      const release = lockImport(identity);
+      const lock = write.mock.calls.find(([target]) => String(target).endsWith(".lock"));
+      expect(lock?.[2]).toMatchObject({ flag: "wx" });
+      expect(fs.readFileSync(importLockFile(identity), "utf-8")).toBe(String(process.pid));
+      release();
+    } finally {
+      write.mockRestore();
+      link.mockRestore();
+    }
   });
 
   test("reads as running while another live process holds the lock", () => {

@@ -8,7 +8,7 @@
  * - The request body is BAPI's snake_case shape directly, so `created_at` and
  *   `legal_accepted_at` stay RFC3339 strings rather than round-tripping
  *   through `Date`.
- * - `banned`, `delete_self_enabled` and the organization limits are all
+ * - `banned`, `delete_self_enabled`, and the organization limits are all
  *   accepted by `POST /v1/users`, so the follow-up `updateUser`/`banUser`
  *   calls the SDK version needed are gone.
  *
@@ -76,22 +76,58 @@ export function splitIdentifiers(user: User): Identifiers {
 }
 
 /**
+ * The values and parallel statuses for one identifier kind on `POST /v1/users`.
+ *
+ * A reserved identifier is unverified, but usable for sign-in and locked to
+ * this user. Only the create can make one, so with `reserve` the unverified
+ * identifiers go here instead of being attached afterwards.
+ */
+function createIdentifiers(
+  verified: string | undefined,
+  unverified: string[],
+  reserve: boolean,
+): { values: string[]; statuses?: string[] } {
+  const values = [...(verified ? [verified] : []), ...(reserve ? unverified : [])];
+  if (!reserve || unverified.length === 0) return { values };
+  return {
+    values,
+    statuses: values.map((_, index) => (verified && index === 0 ? "verified" : "reserved")),
+  };
+}
+
+/**
  * Builds the `POST /v1/users` request body.
  *
  * Optional fields are omitted rather than sent as null so Clerk applies its own
  * defaults for anything the source platform did not record.
+ *
+ * @param reserveUnverified - Create the identifiers the auth platform never verified
+ *   as reserved, in this request, rather than attaching them unverified.
  */
 export function buildCreateUserBody(
   user: User,
   identifiers: Identifiers,
   skipPasswordRequirement: boolean,
+  reserveUnverified = false,
 ): Record<string, unknown> {
-  // The instance's allowlist, blocklist, disposable-email and subaddress rules
+  // The instance's allowlist, blocklist, disposable-email, and subaddress rules
   // police sign-ups. These users already signed up, on the source platform.
   const body: Record<string, unknown> = { external_id: user.userId, skip_restriction_checks: true };
 
-  if (identifiers.primaryEmail) body.email_address = [identifiers.primaryEmail];
-  if (identifiers.primaryPhone) body.phone_number = [identifiers.primaryPhone];
+  const emails = createIdentifiers(
+    identifiers.primaryEmail,
+    identifiers.unverifiedEmails,
+    reserveUnverified,
+  );
+  if (emails.values.length > 0) body.email_address = emails.values;
+  if (emails.statuses) body.email_address_identification_status = emails.statuses;
+  const phones = createIdentifiers(
+    identifiers.primaryPhone,
+    identifiers.unverifiedPhones,
+    reserveUnverified,
+  );
+  if (phones.values.length > 0) body.phone_number = phones.values;
+  if (phones.statuses) body.phone_number_identification_status = phones.statuses;
   if (user.firstName) body.first_name = user.firstName;
   if (user.lastName) body.last_name = user.lastName;
   if (user.username) body.username = user.username;
@@ -135,9 +171,55 @@ type CreateContext = {
   quota: AbortController;
   /** Aborted by a run-store write that failed. Nothing goes out after it. */
   halt: AbortSignal;
-  /** Aborted by a Ctrl-C, the quota or a halt. No create goes out after it. */
+  /** Aborted by a Ctrl-C, the quota, or a halt. No create goes out after it. */
   stop: AbortSignal;
+  /** Unverified identifiers go on the create as reserved, not attached after. */
+  reserveUnverified: boolean;
 };
+
+/**
+ * True when Clerk refused the create for a phone. The country error names no
+ * parameter, only its own code. A phone another user holds also names
+ * `phone_number`, and fails the user.
+ */
+function isPhoneRefusal(error: unknown): error is BapiError {
+  return (
+    error instanceof BapiError &&
+    (error.code === "unsupported_country_code" ||
+      (error.code === "form_param_format_invalid" && error.meta?.param_name === "phone_number"))
+  );
+}
+
+/** True when the user Clerk returned already has this email or phone. */
+function userHolds(user: unknown, kind: PendingIdentifier["kind"], value: string): boolean {
+  const record = (user ?? {}) as {
+    email_addresses?: { email_address?: string }[];
+    phone_numbers?: { phone_number?: string }[];
+  };
+  if (kind === "email") {
+    const wanted = value.trim().toLowerCase();
+    return (record.email_addresses ?? []).some(
+      (entry) => entry.email_address?.toLowerCase() === wanted,
+    );
+  }
+  // Clerk stores phones in E.164; the source may carry spaces, dashes, or parens.
+  const digits = (phone: string) => phone.replace(/\D/g, "");
+  return (record.phone_numbers ?? []).some(
+    (entry) => digits(entry.phone_number ?? "") === digits(value),
+  );
+}
+
+/** The message with the identifier it names replaced by `<email>` or `<phone>`. */
+function withoutValue(message: string, value: string, kind: PendingIdentifier["kind"]): string {
+  const escaped = RegExp.escape(value.trim());
+  return escaped ? message.replace(new RegExp(escaped, "gi"), `<${kind}>`) : message;
+}
+
+/**
+ * Starts the note on an attach left pending for a re-run, which tries it again:
+ * a continue drops the earlier one rather than repeating it.
+ */
+const NOT_ADDED_YET = "Not added yet: ";
 
 /** A request a stop kept from going out: neither a failure nor unknown. */
 class NotSentError extends Error {}
@@ -153,8 +235,19 @@ export function outcomeUnknown(error: unknown): boolean {
   return true;
 }
 
-/** The extra identifiers a user carries, in the order they are attached. */
-export function pendingIdentifiers(identifiers: Identifiers): PendingIdentifier[] {
+/**
+ * The extra identifiers a user carries, in the order they are attached.
+ *
+ * @param reserveUnverified - The unverified ones went on the create as
+ *   reserved, so there is nothing to attach for them.
+ */
+export function pendingIdentifiers(
+  identifiers: Identifiers,
+  reserveUnverified = false,
+): PendingIdentifier[] {
+  if (reserveUnverified) {
+    identifiers = { ...identifiers, unverifiedEmails: [], unverifiedPhones: [] };
+  }
   return [
     ...identifiers.additionalEmails.map((value) => ({
       kind: "email" as const,
@@ -182,14 +275,17 @@ export function pendingIdentifiers(identifiers: Identifiers): PendingIdentifier[
 /**
  * Attaches one extra identifier, backing off on a 429.
  *
- * @returns A note when Clerk refused it, `pending` when nothing says whether
- *   it attached. Never throws: the user itself was already created.
+ * @returns A note and the `refused` reason when Clerk refused the identifier.
+ *   `pending` when nothing says whether it attached, or when the error is
+ *   about the key or the rate limit, not the identifier: then with a note
+ *   saying why, when Clerk gave one. Never throws: the user itself was already
+ *   created.
  */
 async function attachIdentifier(
   ctx: CreateContext,
   clerkUserId: string,
   { kind, value, verified }: PendingIdentifier,
-): Promise<{ note?: string; pending?: boolean }> {
+): Promise<{ note?: string; refused?: string; pending?: boolean }> {
   const path = kind === "email" ? "/v1/email_addresses" : "/v1/phone_numbers";
   const body =
     kind === "email"
@@ -199,28 +295,59 @@ async function attachIdentifier(
   // A Ctrl-C or a halt ends the wait for a slot or a backoff, and the attach is
   // left pending for a re-run. The quota does not: the user exists already.
   const stop = AbortSignal.any([interruptSignal(), ctx.halt]);
-  try {
-    await retryOn429(
+  const send = async (method: "GET" | "POST", requestPath: string, requestBody?: string) =>
+    retryOn429(
       async () =>
         ctx.schedule(
           async () => {
             if (stop.aborted) throw new NotSentError();
             return bapiRequest({
-              method: "POST",
-              path,
+              method,
+              path: requestPath,
               secretKey: ctx.secretKey,
-              body: JSON.stringify(body),
+              body: requestBody,
             });
           },
           { first: true, stop },
         ),
       { signal: stop, onRetry: ({ delaySeconds }) => ctx.schedule.pause(delaySeconds * 1000) },
     );
+  try {
+    await send("POST", path, JSON.stringify(body));
     return {};
   } catch (error) {
     if (error instanceof NotSentError || outcomeUnknown(error)) return { pending: true };
-    const label = `${verified ? "additional" : "unverified"} ${kind} ${value}`;
-    return { note: `Failed to add ${label}: ${(error as Error).message}` };
+    // Taken may mean taken by this user: an earlier attach with no answer, or
+    // one a stopped run never wrote down, landed. Its retry is no refusal.
+    if (error instanceof BapiError && error.code === "form_identifier_exists") {
+      try {
+        const held = await send("GET", `/v1/users/${encodeURIComponent(clerkUserId)}`);
+        if (userHolds(held.body, kind, value)) return {};
+      } catch {
+        // No answer to say it attached: a re-run tries again.
+        return { pending: true };
+      }
+    }
+    // A key Clerk stopped accepting or doesn't permit, or a 429 that outlasted
+    // the retries, says nothing about the email or phone: left pending, a
+    // re-run attaches it. A country Clerk doesn't support, or an email the
+    // instance's allowlist or blocklist refuses, is about the identifier.
+    const aboutTheKey =
+      error instanceof BapiError &&
+      (error.status === 401 ||
+        (error.status === 403 &&
+          error.code !== "unsupported_country_code" &&
+          error.code !== "not_allowed_access"));
+    const kindLabel = `${verified ? "additional" : "unverified"} ${kind}`;
+    const { message } = failureOf(error);
+    if (!(error instanceof BapiError) || aboutTheKey) {
+      return { pending: true, note: `${NOT_ADDED_YET}${kindLabel} ${value}: ${message}` };
+    }
+    return {
+      note: `Failed to add ${kindLabel} ${value}: ${message}`,
+      // Without the value, so users refused for one reason group as one.
+      refused: `${kindLabel}: ${normalizeErrorMessage(withoutValue(message, value, kind))}`,
+    };
   }
 }
 
@@ -228,44 +355,67 @@ async function attachIdentifier(
  * Attaches each identifier. Extra identifiers are best-effort: a duplicate
  * secondary email should not undo a user who was otherwise imported.
  *
- * @returns A note per identifier Clerk refused, and those still pending.
+ * @returns A note per identifier Clerk refused or left pending with a reason,
+ *   why by kind for those refused, and those still pending.
  */
 async function attachAll(
   ctx: CreateContext,
   clerkUserId: string,
   identifiers: PendingIdentifier[],
-): Promise<{ notes: string[]; pending: PendingIdentifier[] }> {
+): Promise<{ notes: string[]; refused: string[]; pending: PendingIdentifier[] }> {
   const results = await Promise.all(
     identifiers.map(async (identifier) => attachIdentifier(ctx, clerkUserId, identifier)),
   );
   return {
     notes: results.flatMap((result) => (result.note ? [result.note] : [])),
+    refused: results.flatMap((result) => (result.refused ? [result.refused] : [])),
     pending: identifiers.filter((_, index) => results[index]?.pending),
   };
 }
+
+/** What a create retried without a refused phone leaves out for good. */
+type PhoneRetry = {
+  /** The phones the user is imported without. */
+  lost: string[];
+  /** Clerk's reason, when any phone is lost. */
+  reason: string | undefined;
+};
+
+type CreatedUser = {
+  clerkUserId: string;
+  notes: string[];
+  /** Reserved phones a refusal kept off the create, to attach one by one. */
+  attachLater?: string[];
+  phoneRefusal?: string;
+};
 
 /**
  * Creates one user, retrying without a phone Clerk refuses.
  *
  * @param sending - Called as each `POST /v1/users` goes out, so the run
  *   records the user only once a create may actually land.
- * @returns The Clerk ID, a note when the phone was dropped, and Clerk's
- *   reason for refusing it.
+ * @returns The Clerk ID, a note when the phone was dropped, Clerk's reason
+ *   for refusing it, and the reserved phones still to attach.
  */
 async function createUser(
   ctx: CreateContext,
   user: User,
   identifiers: Identifiers,
   skipPasswordRequirement: boolean,
-  sending: () => void,
-): Promise<{ clerkUserId: string; notes: string[]; phoneRefusal?: string }> {
+  /**
+   * Called as each attempt goes out, with what it sends and, on a retry
+   * without the phone, the phones the user would be imported without and
+   * Clerk's reason.
+   */
+  sending: (body: Record<string, unknown>, retry?: PhoneRetry) => void,
+): Promise<CreatedUser> {
   // A Ctrl-C or a full instance hands the slot on to queued creates; none
   // of them is sent, and none waits for a paced turn to find that out.
-  const create = async (body: Record<string, unknown>) =>
+  const create = async (body: Record<string, unknown>, retry?: PhoneRetry) =>
     ctx.schedule(
       async () => {
         if (ctx.stop.aborted) throw new NotSentError();
-        sending();
+        sending(body, retry);
         return bapiRequest({
           method: "POST",
           path: "/v1/users",
@@ -276,7 +426,12 @@ async function createUser(
       { stop: ctx.stop },
     );
 
-  const body = buildCreateUserBody(user, identifiers, skipPasswordRequirement);
+  const body = buildCreateUserBody(
+    user,
+    identifiers,
+    skipPasswordRequirement,
+    ctx.reserveUnverified,
+  );
   // The run's marker, with whatever private metadata the source brought:
   // without it a create cut off mid-flight could never be told from a user
   // someone else made with the same external_id. It replaces a marker the
@@ -289,23 +444,60 @@ async function createUser(
   }
   const notes: string[] = [];
   let phoneRefusal: string | undefined;
+  let attachLater: string[] = [];
   let response;
   try {
     response = await create(body);
   } catch (error) {
     // A phone Clerk refuses (a country it does not support, a number that is
     // not E.164) should not cost a user who has an email to be created under.
-    // The country error names no parameter, only its own code. A phone another
-    // user holds also names `phone_number`, and fails the user.
-    const phoneRefused =
-      error instanceof BapiError &&
-      (error.code === "unsupported_country_code" ||
-        (error.code === "form_param_format_invalid" && error.meta?.param_name === "phone_number"));
-    if (!phoneRefused || !identifiers.primaryEmail) throw error;
-    const { phone_number: _dropped, ...withoutPhone } = body;
-    response = await create(withoutPhone);
-    phoneRefusal = error.longMessage ?? error.message;
-    notes.push(`Failed to add phone ${identifiers.primaryPhone}: ${phoneRefusal}`);
+    if (!isPhoneRefusal(error)) throw error;
+    const {
+      phone_number: sent,
+      phone_number_identification_status: statuses,
+      ...withoutPhone
+    } = body;
+    let refusal = error;
+    let dropped = sent as string[];
+    // Which reserved phone was refused is unknown when there are several, or
+    // when the verified one was refused alone: each is attached on its own once
+    // the user exists, unverified, so only a refused one is lost. Worked out
+    // before each retry too, so its line says what a create cut off would lose.
+    const settle = (left: string[], why: BapiError): PhoneRetry & { later: string[] } => {
+      const reservedLeft = left.filter((phone) => phone !== identifiers.primaryPhone);
+      const later = statuses && (why !== error || reservedLeft.length > 1) ? reservedLeft : [];
+      const lost = left.filter((phone) => !later.includes(phone));
+      return {
+        later,
+        lost,
+        reason: lost.length > 0 ? (why.longMessage ?? why.message) : undefined,
+      };
+    };
+    // With reserved phones on the create, any one of them may be the refused
+    // one: the verified phone alone goes first, so it is not lost with them.
+    if (statuses && identifiers.primaryPhone) {
+      const withPrimary = dropped.filter((phone) => phone !== identifiers.primaryPhone);
+      try {
+        response = await create(
+          { ...withoutPhone, phone_number: [identifiers.primaryPhone] },
+          settle(withPrimary, error),
+        );
+        dropped = withPrimary;
+      } catch (retryError) {
+        if (!isPhoneRefusal(retryError)) throw retryError;
+        refusal = retryError;
+      }
+    }
+    if (!response) {
+      if (!body.email_address) throw refusal;
+      response = await create(withoutPhone, settle(dropped, refusal));
+    }
+    const settled = settle(dropped, refusal);
+    attachLater = settled.later;
+    if (settled.reason) {
+      phoneRefusal = settled.reason;
+      notes.push(`Failed to add phone ${settled.lost.join(", ")}: ${phoneRefusal}`);
+    }
   }
 
   // Untracked, the user could never be undone. Thrown, the outcome is unknown,
@@ -314,7 +506,12 @@ async function createUser(
   if (typeof clerkUserId !== "string" || !clerkUserId) {
     throw new Error("Clerk answered POST /v1/users without a user ID");
   }
-  return { clerkUserId, notes, ...(phoneRefusal ? { phoneRefusal } : {}) };
+  return {
+    clerkUserId,
+    notes,
+    attachLater,
+    ...(phoneRefusal ? { phoneRefusal } : {}),
+  };
 }
 
 export type ImportUsersOptions = {
@@ -336,8 +533,20 @@ export type ImportUsersOptions = {
    * not created again; only their extra identifiers are sent.
    */
   adopted?: Map<string, string>;
+  /**
+   * Source ID → the `creating` line of each adopted user's create, which says
+   * how it was made: `reserved` when it reserved the unverified identifiers
+   * (the rest had them attached unverified, whatever this run's
+   * `reserveUnverified` says), `pending` for reserved phones a retry after a
+   * refused phone left out (attached once the user is adopted, unverified, as
+   * they would have been), and `phoneRefused` when the create that landed was
+   * the retry without the first phone.
+   */
+  adoptedLines?: Map<string, UserLine>;
   /** Allow users that carry no password. */
   skipPasswordRequirement?: boolean;
+  /** Create the identifiers the auth platform never verified as reserved. */
+  reserveUnverified?: boolean;
   /** Carried into the summary so the report covers the whole file. */
   validationFailed?: number;
   /** Receives the counts as each user finishes. */
@@ -360,7 +569,9 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     attachOnly = [],
     runId,
     adopted = new Map<string, string>(),
+    adoptedLines = new Map<string, UserLine>(),
     skipPasswordRequirement = true,
+    reserveUnverified = false,
     validationFailed = 0,
     progress: report,
   } = options;
@@ -370,9 +581,11 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   let processed = 0;
   let successful = 0;
   let failed = 0;
+  let unconfirmed = 0;
   let notSent = 0;
   let stopReason: string | undefined;
   const droppedPhones = new Map<string, number>();
+  const droppedIdentifiers = new Map<string, number>();
 
   // A line that cannot be written halts the import: a user created with no
   // record is beyond both `undo` and a re-run. The error is rethrown once
@@ -396,13 +609,17 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     quota,
     halt: halt.signal,
     stop: AbortSignal.any([interruptSignal(), quota.signal, halt.signal]),
+    reserveUnverified,
     runId,
   };
 
   // Attach-only users count towards the bar too: a continue with only those
   // left would otherwise sit at 0/0.
   let attachedUsers = 0;
-  const progress = () => report?.({ done: processed + attachedUsers, ok: successful, failed });
+  // Of those, the ones whose identifiers all attached.
+  let finishedAttaching = 0;
+  const progress = () =>
+    report?.({ done: processed + attachedUsers, ok: successful + finishedAttaching, failed });
 
   const recordFailure = (
     userId: string,
@@ -410,15 +627,22 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
     code: string,
     notes: string[],
     unknown: boolean,
+    attempt?: UserLine,
   ) => {
-    failed++;
+    if (unknown) unconfirmed++;
+    else failed++;
     processed++;
     tallyError(errorBreakdown, message);
     // With no answer, the user stays `creating`: Clerk may hold it, and a
-    // re-run looks it up before creating it again. The line still says why.
+    // re-run looks it up before creating it again. The line still says why,
+    // and keeps what the attempt reserved and left out: a continue reads only
+    // the latest line to adopt the user the way it was created.
     record({
       sourceId: userId,
       status: unknown ? "creating" : "failed",
+      ...(unknown && attempt?.reserved ? { reserved: true } : {}),
+      ...(unknown && attempt?.pending ? { pending: attempt.pending } : {}),
+      ...(unknown && attempt?.phoneRefused ? { phoneRefused: attempt.phoneRefused } : {}),
       error: [message, ...notes].join("; "),
       code,
     });
@@ -428,34 +652,96 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   /**
    * Attaches a created user's extra identifiers. The user is already on record
    * with them `pending`, so a run stopped before they attach can finish them.
+   *
+   * @returns Whether every identifier this attempt tried attached: none
+   *   refused, none pending. `notes` from an earlier attempt don't count.
    */
   const finishUser = async (line: UserLine, toAttach: PendingIdentifier[], notes: string[]) => {
-    const { error: _error, pending: _pending, ...base } = line;
+    const { error: _error, pending: _pending, refused: earlier = [], ...base } = line;
     const attached = await attachAll(ctx, base.clerkId ?? "", toAttach);
     const error = [...notes, ...attached.notes].join("; ");
+    // Imported, but without what Clerk refused: a warning for the summary,
+    // counted once per user and reason. A continue keeps the earlier ones.
+    for (const reason of new Set(attached.refused)) {
+      droppedIdentifiers.set(reason, (droppedIdentifiers.get(reason) ?? 0) + 1);
+    }
+    const refused = [...new Set([...earlier, ...attached.refused])];
     // A second line, which wins as the latest, adds what happened on the way.
-    if (toAttach.length > 0 || error) {
+    // With nothing to attach, the first line already says it all.
+    if (toAttach.length > 0) {
       record({
         ...base,
         ...(error ? { error } : {}),
+        ...(refused.length > 0 ? { refused } : {}),
         ...(attached.pending.length > 0 ? { pending: attached.pending } : {}),
       });
     }
+    return attached.pending.length === 0 && attached.notes.length === 0;
+  };
+
+  /**
+   * A user a stopped run's create made: only its extras are left. When that
+   * create was the retry without a refused phone, the phone is still lost.
+   */
+  const adoptedUser = (clerkUserId: string, sourceId: string): CreatedUser => {
+    const creating = adoptedLines.get(sourceId);
+    const phoneRefusal = creating?.phoneRefused;
+    return {
+      clerkUserId,
+      notes: phoneRefusal ? [`Failed to add phone: ${phoneRefusal}`] : [],
+      attachLater: (creating?.pending ?? [])
+        .filter((entry) => entry.kind === "phone")
+        .map((entry) => entry.value),
+      ...(phoneRefusal ? { phoneRefusal } : {}),
+    };
   };
 
   const processUser = async (user: User): Promise<void> => {
     const retries: string[] = [];
     const identifiers = splitIdentifiers(user);
-    let created: { clerkUserId: string; notes: string[]; phoneRefusal?: string };
+    let created: CreatedUser;
     const adoptedId = adopted.get(user.userId);
+    // What the create did with the unverified identifiers decides what is left
+    // to attach: an adopted user's create may have run in the other mode.
+    const reserved = adoptedId
+      ? adoptedLines.get(user.userId)?.reserved === true
+      : reserveUnverified &&
+        (identifiers.unverifiedEmails.length > 0 || identifiers.unverifiedPhones.length > 0);
     let sent = false;
+    // The `creating` line of the latest attempt, for an unknown outcome to keep.
+    let attempt: UserLine | undefined;
     try {
       created = adoptedId
-        ? { clerkUserId: adoptedId, notes: [] }
+        ? adoptedUser(adoptedId, user.userId)
         : await retryOn429(
             async () =>
-              createUser(ctx, user, identifiers, skipPasswordRequirement, () => {
-                record({ sourceId: user.userId, status: "creating" });
+              createUser(ctx, user, identifiers, skipPasswordRequirement, (body, retry) => {
+                // A retry after a refused phone sends without the reserved
+                // ones. Cut off before its answer, the user would be adopted
+                // as reserved, those phones never attached. One the retry
+                // already counts as lost would only be refused again.
+                const sentPhones = new Set((body.phone_number as string[] | undefined) ?? []);
+                const leftOut = reserved
+                  ? identifiers.unverifiedPhones.filter(
+                      (phone) => !sentPhones.has(phone) && !retry?.lost.includes(phone),
+                    )
+                  : [];
+                attempt = {
+                  sourceId: user.userId,
+                  status: "creating",
+                  ...(reserved ? { reserved: true } : {}),
+                  ...(retry?.reason ? { phoneRefused: normalizeErrorMessage(retry.reason) } : {}),
+                  ...(leftOut.length > 0
+                    ? {
+                        pending: leftOut.map((value) => ({
+                          kind: "phone" as const,
+                          value,
+                          verified: false,
+                        })),
+                      }
+                    : {}),
+                };
+                record(attempt);
                 sent = true;
               }),
             {
@@ -500,25 +786,37 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
         code,
         retries,
         unknown,
+        attempt,
       );
       return;
     }
 
+    const phoneRefused = created.phoneRefusal && normalizeErrorMessage(created.phoneRefusal);
     const line: UserLine = {
       sourceId: user.userId,
       clerkId: created.clerkUserId,
       status: "created",
       ...(user.passwordDropped ? { passwordDropped: true } : {}),
+      ...(phoneRefused ? { phoneRefused } : {}),
     };
     // One line, pending and all: a run stopped between a `created` line and a
     // later `pending` one would read the user as settled, its extras unsent.
-    const toAttach = pendingIdentifiers(identifiers);
-    record(toAttach.length > 0 ? { ...line, pending: toAttach } : line);
-    if (created.phoneRefusal) {
-      const reason = normalizeErrorMessage(created.phoneRefusal);
-      droppedPhones.set(reason, (droppedPhones.get(reason) ?? 0) + 1);
-    }
-    await finishUser(line, toAttach, [...created.notes, ...retries]);
+    const retried = (created.attachLater ?? []).map((value) => ({
+      kind: "phone" as const,
+      value,
+      verified: false,
+    }));
+    const toAttach = [...pendingIdentifiers(identifiers, reserved), ...retried];
+    // Its notes too: a run stopped before the next line would lose them.
+    const notes = [...created.notes, ...retries];
+    const firstNotes = notes.join("; ");
+    record({
+      ...line,
+      ...(firstNotes ? { error: firstNotes } : {}),
+      ...(toAttach.length > 0 ? { pending: toAttach } : {}),
+    });
+    if (phoneRefused) droppedPhones.set(phoneRefused, (droppedPhones.get(phoneRefused) ?? 0) + 1);
+    await finishUser(line, toAttach, notes);
     successful++;
     processed++;
     progress();
@@ -527,10 +825,15 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   progress();
   const attachOnlyUser = async (line: UserLine) => {
     // Its earlier error names identifiers Clerk refused; the new line keeps it.
-    await finishUser(line, line.pending ?? [], line.error ? [line.error] : []);
-    // Created by this run's earlier attempt, as an adopted user was: the bar,
-    // the summary and `result.created` all count it.
-    successful++;
+    // The pending ones are tried again, and noted again if still pending.
+    const earlier = (line.error ?? "")
+      .split("; ")
+      .filter((note) => note && !note.startsWith(NOT_ADDED_YET));
+    if (await finishUser(line, line.pending ?? [], earlier)) {
+      finishedAttaching++;
+    }
+    // Created by this run's earlier attempt: done on the bar, but counted apart
+    // from the users this attempt creates.
     attachedUsers++;
     progress();
   };
@@ -548,10 +851,13 @@ export async function importUsers(options: ImportUsersOptions): Promise<ImportSu
   return {
     totalProcessed: total,
     successful,
+    attached: finishedAttaching,
     failed,
+    unconfirmed,
     notSent,
     ...(stopReason ? { stopReason } : {}),
     droppedPhones,
+    droppedIdentifiers,
     validationFailed,
     errorBreakdown,
   };

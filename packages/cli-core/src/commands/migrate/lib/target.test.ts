@@ -112,6 +112,29 @@ describe("fetchInstanceIdentity", () => {
     });
   });
 
+  // Absent means Clerk did not say (an API that predates the field), which is
+  // not the same as `null`, no limit.
+  test.each([
+    [100, { maxAllowedUsers: 100 }],
+    [null, { maxAllowedUsers: null }],
+    [undefined, {}],
+    ["100", {}],
+    [-1, {}],
+  ])("reads max_allowed_users %p", async (maxAllowedUsers, expected) => {
+    globalThis.fetch = (async () =>
+      Response.json({
+        id: "ins_7",
+        environment_type: "development",
+        ...(maxAllowedUsers === undefined ? {} : { max_allowed_users: maxAllowedUsers }),
+      })) as unknown as typeof fetch;
+
+    expect(await fetchInstanceIdentity("sk_test_x")).toEqual({
+      instanceId: "ins_7",
+      env: "development",
+      ...expected,
+    });
+  });
+
   test("retries a 429 rather than falling back", async () => {
     let calls = 0;
     globalThis.fetch = (async () =>
@@ -137,6 +160,45 @@ describe("fetchInstanceIdentity", () => {
     expect(first.env).toBe("development");
     expect(await fetchInstanceIdentity("sk_test_a")).toEqual(first);
     expect((await fetchInstanceIdentity("sk_test_b")).instanceId).not.toBe(first.instanceId);
+  });
+
+  // A stand-in would send the import's run checks after an instance that
+  // does not matter, with advice that leads back to the same refusal.
+  test("throws Clerk's error for a key Clerk refuses", async () => {
+    globalThis.fetch = (async () =>
+      Response.json(
+        {
+          errors: [
+            {
+              code: "clerk_key_invalid",
+              message: "Secret Key invalid",
+              long_message: "The provided Clerk Secret Key is invalid.",
+            },
+          ],
+        },
+        { status: 401 },
+      )) as unknown as typeof fetch;
+
+    await expect(fetchInstanceIdentity("sk_test_bad", "--secret-key")).rejects.toMatchObject({
+      code: "auth_required",
+      message: expect.stringContaining(
+        "Clerk rejected the secret key from --secret-key (401): The provided Clerk Secret Key is invalid.",
+      ),
+    });
+  });
+
+  // A proxy's page, not Clerk's JSON: its markup says nothing worth printing.
+  test("words a 401 with an HTML body by its status", async () => {
+    globalThis.fetch = (async () =>
+      new Response("<html><body>401 Authorization Required</body></html>", {
+        status: 401,
+      })) as unknown as typeof fetch;
+
+    const error = (await fetchInstanceIdentity("sk_test_bad", "--secret-key").catch(
+      (thrown: unknown) => thrown,
+    )) as Error;
+    expect(error.message).toContain("Clerk returned HTTP 401 with no error details");
+    expect(error.message).not.toContain("<html>");
   });
 });
 

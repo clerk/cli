@@ -12,6 +12,8 @@ import { exportWorkOs } from "./workos.ts";
 import type { DbExportOptions } from "./db-options.ts";
 import { RUNS_DIR_DESCRIPTION, RUNS_DIR_FLAG } from "../lib/run-store.ts";
 import { exportPlatformKeys, exportPlatforms, getExportPlatform } from "./registry.ts";
+import { setTelemetryStage } from "../../../lib/telemetry.ts";
+import { recordMigrateSource } from "../telemetry.ts";
 
 /**
  * Bare `clerk migrate export` — pick a platform, then run its export.
@@ -33,6 +35,7 @@ export async function exportPicker(options: Record<string, unknown> = {}): Promi
     );
   }
 
+  setTelemetryStage("migrate_pick_platform");
   const platform = await select<string>({
     message: "Which platform are you exporting from?",
     choices: exportPlatforms.map((entry) => ({
@@ -46,6 +49,8 @@ export async function exportPicker(options: Record<string, unknown> = {}): Promi
   // Unreachable via the picker; a guard so a registry edit cannot silently
   // produce a choice with nothing behind it.
   if (!entry) throwUsageError(`Unknown export platform "${platform}".`);
+  recordMigrateSource(platform);
+  setTelemetryStage("migrate_export_read");
 
   await entry.run(options);
 }
@@ -74,7 +79,7 @@ const DB_PLATFORMS = [
     key: "authjs",
     summary: "Export users from an Auth.js database",
     envVar: "AUTHJS_DB_URL",
-    dbUrl: "Postgres, MySQL, libsql/Turso or SQLite connection string",
+    dbUrl: "Postgres, MySQL, libsql/Turso, or SQLite connection string",
     example: "mysql://user:password@127.0.0.1:3306/authjs",
     flags: [
       [
@@ -87,7 +92,7 @@ const DB_PLATFORMS = [
     key: "betterauth",
     summary: "Export users from a Better Auth database",
     envVar: "BETTERAUTH_DB_URL",
-    dbUrl: "Postgres, MySQL, libsql/Turso or SQLite connection string",
+    dbUrl: "Postgres, MySQL, libsql/Turso, or SQLite connection string",
     example: "./db.sqlite",
   },
 ] as const;
@@ -96,7 +101,7 @@ const DB_PLATFORMS = [
 export function registerMigrateExport(migrateCommand: Command<[], Record<string, unknown>>): void {
   const exportCommand = migrateCommand
     .command("export")
-    .description("Export users from a source platform, ready for `clerk migrate import`")
+    .description("Export users from an auth platform, ready for `clerk migrate import`")
     .setExamples([
       { command: "clerk migrate export", description: "Pick a platform interactively" },
       {
@@ -124,6 +129,11 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
         `--output must end in .json: the export is one JSON document, and \`clerk migrate import\` reads a file by its extension. Got ${output}.`,
       );
     }
+    // The bare picker records both once a platform is chosen.
+    if (actionCommand !== exportCommand) {
+      recordMigrateSource(actionCommand.name());
+      setTelemetryStage("migrate_export_read");
+    }
   });
 
   exportCommand
@@ -139,7 +149,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
     .setExamples([
       {
         command: "clerk migrate export clerk",
-        description: "Prompts for the source instance and where to save the file",
+        description: "Prompts for the instance to export from",
       },
       {
         command: "clerk migrate export clerk --secret-key sk_live_… --output prod-users.json",
@@ -171,7 +181,7 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       },
       {
         command: "clerk migrate export auth0",
-        description: "Read AUTH0_DOMAIN, AUTH0_CLIENT_ID and AUTH0_CLIENT_SECRET, or prompt",
+        description: "Read AUTH0_DOMAIN, AUTH0_CLIENT_ID, and AUTH0_CLIENT_SECRET, or prompt",
       },
     ])
     .action(async (_opts, cmd) =>
@@ -181,7 +191,10 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
   exportCommand
     .command("firebase")
     .description("Export users from a Firebase project")
-    .option("--service-account <path>", "Path to a service account key JSON file")
+    .option(
+      "--service-account <key>",
+      "Path to the service account key file, not its JSON, which shows in `ps`",
+    )
     .option("-o, --output <path>", "Write the export here instead of the run folder")
     .option("-y, --yes", "Do not prompt: fail on a rejected credential")
     .option(RUNS_DIR_FLAG, RUNS_DIR_DESCRIPTION)

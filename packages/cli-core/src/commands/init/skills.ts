@@ -20,13 +20,10 @@ import type { ProjectContext } from "./frameworks/types.js";
 
 /** Upstream skills from clerk/skills — installed on every project. */
 const DEFAULT_UPSTREAM_SKILLS = [
-  // cli/
   "clerk-cli",
-  // core/
   "clerk-setup",
   "clerk-custom-ui",
   "clerk-backend-api",
-  // features/
   "clerk-orgs",
   "clerk-testing",
   "clerk-webhooks",
@@ -41,8 +38,8 @@ const FRAMEWORK_SKILL_MAP: Record<string, readonly string[]> = {
   nuxt: ["clerk-nuxt-patterns"],
   astro: ["clerk-astro-patterns"],
   "@tanstack/react-start": ["clerk-tanstack-patterns"],
-  // Expo gets the mobile setup skill (mobile/clerk-expo) plus the patterns skill.
-  expo: ["clerk-expo", "clerk-expo-patterns"],
+  // clerk-expo covers both setup and patterns; it absorbed clerk-expo-patterns upstream.
+  expo: ["clerk-expo"],
 };
 
 // Guard against accidental overlap: Set.add() silently deduplicates, masking dead entries.

@@ -237,6 +237,49 @@ describe("rejects", () => {
     );
   });
 
+  // --reserve-unverified puts unverified identifiers on the create, so they
+  // clash there as a primary would; without it they are attached after.
+  test.each([
+    [
+      true,
+      {
+        b: "email is also used by an earlier user in the file, which is kept",
+        c: "email is already used by a user in the instance",
+      },
+    ],
+    [false, {}],
+  ])(
+    "with reserveUnverified %p, unverified emails that clash are duplicates",
+    async (reserveUnverified, expected) => {
+      existing = [{ id: "user_1", email_addresses: [{ email_address: "taken@x.dev" }] }];
+      expect(
+        await reasonsOf({
+          reserveUnverified,
+          users: [
+            user("a", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+            user("b", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+            user("c", { unverifiedEmailAddresses: ["taken@x.dev"] }),
+          ],
+        }),
+      ).toEqual(expected);
+    },
+  );
+
+  // An adopted user's create already ran without reserving, so its unverified
+  // email is attached later, whatever this run's flag says: no clash.
+  test("an adopted user's unverified email counts by its own create's mode", async () => {
+    expect(
+      await reasonsOf({
+        reserveUnverified: true,
+        adoptedSourceIds: new Set(["b"]),
+        users: [
+          user("a", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+          user("b", { unverifiedEmailAddresses: ["shared@x.dev"] }),
+        ],
+      }),
+    ).toEqual({});
+  });
+
   // The source's order decides which duplicate survives, so the dry run says.
   test("a duplicate names the earlier user kept in its place", async () => {
     const checks = await checkImport(
@@ -267,9 +310,35 @@ describe("rejects", () => {
         ],
       }),
     ).toEqual({
-      unverified: "only has an unverified email, and this instance requires an email",
+      unverified:
+        "only has an unverified email, and this instance requires an email (--reserve-unverified imports it reserved: usable for sign-in, though the auth platform never verified it)",
       none: "no email, which this instance requires",
     });
+  });
+
+  // A continue of a run that kept them unverified refuses --reserve-unverified.
+  test("doesn't suggest --reserve-unverified to a continue that refuses it", async () => {
+    expect(
+      await reasonsOf({
+        settings: EMAIL_REQUIRED,
+        reserveLocked: true,
+        users: [user("unverified", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({
+      unverified: "only has an unverified email, and this instance requires an email",
+    });
+  });
+
+  // Reserved is usable for sign-in, so it meets the requirement (checked live
+  // against the E2E test app, which requires an email).
+  test("a reserved email meets an email requirement", async () => {
+    expect(
+      await reasonsOf({
+        settings: EMAIL_REQUIRED,
+        reserveUnverified: true,
+        users: [user("unverified", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({});
   });
 
   test("a password that is not the shape its hasher says", async () => {
@@ -409,6 +478,44 @@ describe("rejects", () => {
     ).toEqual({ neither: "only signs in with Discord, which is not enabled in Clerk" });
   });
 
+  // The create would strip it, so it can't be what saves the user.
+  test("an email Clerk refuses is no way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: settings({
+          email_address: {
+            enabled: true,
+            used_for_first_factor: true,
+            first_factors: ["email_code"],
+          },
+          username: { enabled: true },
+        }),
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: "u@x.test", username: "uname" })],
+      }),
+    ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
+  test("a phone not in E.164 form is no way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: {
+          ...settings({
+            phone_number: {
+              enabled: true,
+              used_for_first_factor: true,
+              first_factors: ["phone_code"],
+            },
+            username: { enabled: true },
+          }),
+          username_settings: { min_length: 4, max_length: 64, allow_numeric_usernames: true },
+        } as unknown as UserSettingsJSON,
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: undefined, username: "12345", phone: "(555) 123-4567" })],
+      }),
+    ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
   test("an unverified email is no way in for a supabase user on a disabled provider", async () => {
     expect(
       await reasonsOf({
@@ -423,6 +530,24 @@ describe("rejects", () => {
         users: [user("u", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
       }),
     ).toEqual({ u: "only signs in with Discord, which is not enabled in Clerk" });
+  });
+
+  // A reserved identifier signs in by code, and is verified the first time.
+  test("a reserved email is a way in for a supabase user on a disabled provider", async () => {
+    expect(
+      await reasonsOf({
+        settings: settings({
+          email_address: {
+            enabled: true,
+            used_for_first_factor: true,
+            first_factors: ["email_link"],
+          },
+        }),
+        reserveUnverified: true,
+        supabaseRows: [{ id: "u", raw_app_meta_data: { providers: ["discord"] } }],
+        users: [user("u", { email: undefined, unverifiedEmailAddresses: ["u@x.dev"] })],
+      }),
+    ).toEqual({});
   });
 
   // Clerk can't turn on a provider it doesn't offer, so none is suggested.
@@ -497,7 +622,13 @@ describe("rejects", () => {
           "over the development instance's 100-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)",
       },
     ]);
-    expect(checks.quota).toEqual({ existing: 98, limit: 100, headroom: 2, over: 1 });
+    expect(checks.quota).toEqual({
+      existing: 98,
+      limit: 100,
+      limitSource: "default",
+      headroom: 2,
+      over: 1,
+    });
   });
 
   // A continued run's adopted users exist already and are never created
@@ -514,7 +645,13 @@ describe("rejects", () => {
     );
     expect(checks.importable.map((entry) => entry.userId)).toEqual(["a", "c"]);
     expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["b"]);
-    expect(checks.quota).toEqual({ existing: 99, limit: 100, headroom: 1, over: 1 });
+    expect(checks.quota).toEqual({
+      existing: 99,
+      limit: 100,
+      limitSource: "default",
+      headroom: 1,
+      over: 1,
+    });
   });
 
   // The checks stop creates; an adopted user needs none, so a reject would
@@ -605,10 +742,60 @@ describe("rejects", () => {
         input({ instanceType: "dev", existingUsers: 98, users: [user("a"), user("b"), user("c")] }),
       );
       expect(checks.rejects).toEqual([]);
-      expect(checks.quota).toEqual({ existing: 98, limit: 500, headroom: 402, over: 0 });
+      expect(checks.quota).toEqual({
+        existing: 98,
+        limit: 500,
+        limitSource: "env",
+        headroom: 402,
+        over: 0,
+      });
     } finally {
       delete process.env.CLERK_MIGRATE_DEV_USER_LIMIT;
     }
+  });
+
+  test("the instance's own limit wins over CLERK_MIGRATE_DEV_USER_LIMIT, and names support", async () => {
+    process.env.CLERK_MIGRATE_DEV_USER_LIMIT = "500";
+    try {
+      const checks = await checkImport(
+        input({
+          instanceType: "dev",
+          maxAllowedUsers: 99,
+          existingUsers: 98,
+          users: [user("a"), user("b")],
+        }),
+      );
+      expect(checks.rejects).toEqual([
+        {
+          sourceId: "b",
+          reason: "over this instance's 99-user limit (contact support to raise it)",
+        },
+      ]);
+      expect(checks.quota).toMatchObject({ limit: 99, limitSource: "instance", headroom: 1 });
+    } finally {
+      delete process.env.CLERK_MIGRATE_DEV_USER_LIMIT;
+    }
+  });
+
+  test("a production instance with a reported limit is held to it", async () => {
+    const checks = await checkImport(
+      input({ instanceType: "prod", maxAllowedUsers: 1, existingUsers: 1, users: [user("a")] }),
+    );
+    expect(checks.rejects).toEqual([
+      {
+        sourceId: "a",
+        reason: "over this instance's 1-user limit (upgrade to a paid plan to remove it)",
+      },
+    ]);
+    expect(checks.quota).toMatchObject({ limit: 1, limitSource: "instance", headroom: 0 });
+  });
+
+  test("a reported null limit checks no quota", async () => {
+    const checks = await checkImport(
+      input({ instanceType: "dev", maxAllowedUsers: null, existingUsers: 500, users: [user("a")] }),
+    );
+    expect(checks.rejects).toEqual([]);
+    expect(checks.quota).toBeUndefined();
   });
 
   // Skipped, not rejected: a reject stops the import without --allow-partial,
@@ -981,6 +1168,114 @@ describe("warnings", () => {
       "1 user has a first name, which this instance does not use: it is stored, and shows only once first names are turned on",
     ]);
     expect(checks.fixes.map((fix) => fix.label)).toEqual(["Enable First name"]);
+  });
+
+  // A rejected user brings no name across, so turning names on helps nobody.
+  test("names no fix for a name only rejected users carry", async () => {
+    const checks = await checkImport(
+      input({
+        settings: bare({
+          email_address: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          password: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          first_name: { enabled: false },
+        }),
+        users: [user("a", { firstName: "Ada" })],
+      }),
+    );
+    expect(checks.rejects).toEqual([
+      { sourceId: "a", reason: "no password, and password is this instance's only way to sign in" },
+    ]);
+    expect(checks.warnings).toEqual([]);
+    expect(checks.fixes).toEqual([]);
+  });
+
+  // A required name rejects the users without one, and making it optional
+  // clears that reject, so the fix counts them.
+  test("still offers to make a required name optional for the users it rejects", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({
+          email_address: { enabled: true },
+          first_name: { enabled: true, required: true },
+        }),
+        users: [user("a"), user("b", { firstName: "Ada" })],
+      }),
+    );
+    expect(checks.rejects).toEqual([
+      { sourceId: "a", reason: "no first name, which this instance requires" },
+    ]);
+    expect(checks.fixes.map((fix) => fix.label)).toEqual(["Make First name optional at sign-up"]);
+  });
+
+  // Turning passwords on keeps a password, but a rejected user brings none.
+  test("names no password fix for a password only rejected users carry", async () => {
+    const checks = await checkImport(
+      input({
+        settings: settings({
+          email_address: { enabled: true },
+          phone_number: { enabled: true, required: true },
+          password: { enabled: false },
+        }),
+        users: [user("a", { password: BCRYPT, passwordHasher: "bcrypt" })],
+      }),
+    );
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["a"]);
+    expect(checks.fixes.map((fix) => fix.label)).toEqual(["Make Phone optional at sign-up"]);
+  });
+
+  // Clerk stores a username with usernames off, so turning them on only keeps
+  // it, and a rejected user brings none across.
+  test("names no username fix for a username only rejected users carry", async () => {
+    const checks = await checkImport(
+      input({
+        settings: bare({
+          email_address: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          password: { enabled: true, used_for_first_factor: false, first_factors: [] },
+          username: { enabled: false },
+        }),
+        users: [user("a", { username: "ada" })],
+      }),
+    );
+    expect(checks.rejects.map((reject) => reject.sourceId)).toEqual(["a"]);
+    expect(checks.fixes).toEqual([]);
+  });
+
+  // Turning authenticator apps on clears the TOTP reject, but the user is
+  // still stopped by something no setting clears, so it imports nobody.
+  test.each([
+    ["a bad hash", { password: "x", passwordHasher: "bcrypt" }],
+    ["a skip reason", { skipReason: "anonymous Better Auth user" }],
+    ["only emails Clerk refuses", { email: "15551234@phone.local" }],
+  ] as const)("names no fix for a user with %s", async (_, fields) => {
+    const checks = await checkImport(
+      input({
+        settings: settings({
+          email_address: { enabled: true },
+          authenticator_app: { enabled: false },
+        }),
+        users: [user("a", { totpSecret: "SECRET", ...fields })],
+      }),
+    );
+    expect(checks.fixes).toEqual([]);
+  });
+
+  // "a" fills the one place left, so its phone still earns a fix. Turning
+  // authenticator apps on would clear the reject of "b", who has no room.
+  test("names no fix for users the user limit leaves out", async () => {
+    const checks = await checkImport(
+      input({
+        maxAllowedUsers: 2,
+        existingUsers: 1,
+        settings: settings({
+          email_address: { enabled: true },
+          phone_number: { enabled: false },
+          authenticator_app: { enabled: false },
+        }),
+        users: [user("a", { phone: "+15555550100" }), user("b", { totpSecret: "SECRET" })],
+      }),
+    );
+    expect(checks.rejects.map((reject) => reject.sourceId).sort()).toEqual(["b"]);
+    expect(checks.fixes.map((fix) => fix.label)).toEqual(["Enable Phone"]);
   });
 
   test("says a password is kept, not dropped, when passwords are off", async () => {

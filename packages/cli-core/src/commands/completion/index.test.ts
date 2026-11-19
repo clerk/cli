@@ -75,6 +75,17 @@ describe("shell script generators", () => {
     expect(generateFish(BINARY)).toContain(`complete -c ${BINARY}`);
   });
 
+  test("fish reads the directive, and turns off files only when the candidates apply", () => {
+    const script = generateFish(BINARY);
+    // An unconditional -f would turn off file completion for every command.
+    expect(script).not.toContain(`complete -c ${BINARY} -f -a`);
+    expect(script).toContain(
+      `complete -c ${BINARY} -n '__${BINARY}_prepare_completions' -f -a '$__${BINARY}_comp_results'`,
+    );
+    // Bit 4 is NO_FILE_COMP.
+    expect(script).toContain("math --scale 0 $directive / 4 % 2");
+  });
+
   test("fish banner instructs users to mkdir ~/.config/fish/completions before writing", () => {
     const script = generateFish(BINARY);
     const mkdirIdx = script.indexOf("mkdir -p ~/.config/fish/completions");

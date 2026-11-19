@@ -7,7 +7,9 @@ import { interruptSignal } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.ts";
 import { stopNativeProgress, withNativeSpinner } from "../native/progress.ts";
 import { SelectionNeeded } from "./discovery.ts";
+import { googleCredentialsFromFlags, promptGoogleCredentials } from "./credentials.ts";
 import { describeIdentity, IdentityRequired } from "./identity.ts";
+import { googleRedirectUri } from "./native-google.ts";
 import { inspectAndroidProject } from "./project.ts";
 import { isUnchangedStarter } from "./starter.ts";
 import { setupInterrupted, type StarterProjectSummary } from "../native/status.ts";
@@ -16,6 +18,7 @@ import { ANDROID_QUICKSTART, type AndroidSdk } from "./types.ts";
 import {
   applySetup,
   describePreview,
+  GoogleCredentialsRequired,
   prepareSetup,
   type ApplyResult,
   type Dependencies,
@@ -74,6 +77,16 @@ export function printSetupPreview(preview: SetupPreview): void {
   }
   if (preview.identity?.debug.status !== "found")
     for (const issue of preview.identity?.issues ?? []) log.warn(issue);
+  if (preview.google) {
+    if (preview.google.status === "satisfied")
+      log.info("  Sign in with Google is already configured in Clerk");
+    for (const action of preview.google.actions) log.info(`  ${action}`);
+  }
+  if (preview.googleCloudSteps) {
+    log.info("  Google Cloud (only you can do this; the CLI can't verify the Android client):");
+    for (const step of preview.googleCloudSteps) log.info(`    • ${step}`);
+  }
+  if (preview.googleWarning) log.warn(preview.googleWarning);
   if (preview.kotlinCheck.status !== "pass") log.warn(preview.kotlinCheck.message);
   if (preview.sdkCheck.status === "fail") log.warn(preview.sdkCheck.message);
   if (preview.dirtyFiles.length) log.info("  Existing edits will be preserved in backups.");
@@ -91,6 +104,7 @@ export function printSetupResult(result: ApplyResult, starter?: StarterProjectSu
     completed.some((item) => item.id === "initialize-clerk") && "Clerk initialized",
     result.remote === "verified" && "native registration verified",
     completed.some((item) => item.id === "optional-sign-in-ui") && "sign-in screen added",
+    result.google === "verified" && "Google sign-in configured",
   ].filter(Boolean);
   if (summary.length) log.success(summary.join(" · "));
   for (const item of result.handoff.remaining) log.warn(item.detail);
@@ -115,6 +129,9 @@ export interface AndroidInitOptions {
   prebuiltAuthUi?: boolean;
   /** The app `clerk init --starter` just created, which needs no confirmation before setup. */
   starterProject?: StarterProjectSummary;
+  signInWithGoogle?: boolean;
+  googleClientId?: string;
+  googleClientSecretFile?: string;
 }
 
 /**
@@ -146,6 +163,8 @@ export async function runAndroidInit(
     minimumVersion: CLERK_ANDROID_MINIMUM_VERSION,
     fingerprints: options.androidFingerprint,
     signInUI: options.prebuiltAuthUi,
+    signInWithGoogle: options.signInWithGoogle,
+    checkGoogleConnection: !options.dryRun,
     inspectOnly: options.dryRun,
     signal,
     chooseModule:
@@ -161,17 +180,30 @@ export async function runAndroidInit(
   try {
     setTelemetryStage("android_inspect");
     if (!applicationId) {
-      const preview = await prepareSetup(setup, dependencies);
-      if (json) report({ mode: "read-only", ...describePreview(preview) }, 2);
+      const preview = await prepareSetup({ ...setup, signInWithGoogle: false }, dependencies);
+      // The Google connection needs the chosen application, so a dry run says it's deferred.
+      if (json)
+        report(
+          {
+            mode: "read-only",
+            ...describePreview(preview),
+            ...(options.signInWithGoogle
+              ? { google: "Requested; planned once a Clerk application is chosen" }
+              : {}),
+          },
+          2,
+        );
       else {
         printSetupPreview(preview);
         log.info(
-          "Run clerk init to choose a Clerk application, write its development key, and register the app.",
+          `Run clerk init to choose a Clerk application, write its development key, and register the app${options.signInWithGoogle ? ", then configure Sign in with Google" : ""}.`,
         );
         await outro("Inspection complete; no setup applied");
       }
       return;
     }
+    // The flags carry the Web client; the secret comes from a file or standard input, never argv.
+    setup.googleCredentials = await googleCredentialsFromFlags(options);
     const inspection = await withNativeSpinner("Inspecting Android project...", async () =>
       inspectAndroidProject(setup),
     );
@@ -217,12 +249,30 @@ export async function runAndroidInit(
           default: newApp != null,
         });
     }
+    if (interactive && setup.signInWithGoogle == null)
+      setup.signInWithGoogle = await confirm({
+        message: "Enable native Sign in with Google?",
+        default: false,
+      });
     if (setup.sdk !== inspection.sdk) setup.inspection = { ...inspection, sdk: setup.sdk };
     setup.remote = { applicationId };
     setTelemetryStage("android_plan");
-    const preview = await withNativeSpinner("Planning setup...", async () =>
-      prepareSetup(setup, dependencies),
-    );
+    let preview: SetupPreview;
+    try {
+      preview = await withNativeSpinner("Planning setup...", async () =>
+        prepareSetup(setup, dependencies),
+      );
+    } catch (error) {
+      // At a terminal, the Web client is asked for once Clerk says the connection has none.
+      if (!(error instanceof GoogleCredentialsRequired) || !interactive) throw error;
+      stopNativeProgress();
+      log.info("\nSign in with Google needs a Google Web client. In Google Cloud Console:");
+      for (const step of error.steps) log.info(`  • ${step}`);
+      setup.googleCredentials = await promptGoogleCredentials();
+      preview = await withNativeSpinner("Planning setup...", async () =>
+        prepareSetup(setup, dependencies),
+      );
+    }
     stopNativeProgress();
     if (!json) printSetupPreview(preview);
     if (interactive && !newApp && !(await confirm({ message: "Apply this setup?", default: true })))
@@ -258,6 +308,24 @@ export async function runAndroidInit(
           question: `Which SHA-256 signing certificate fingerprint should Clerk register for ${error.identity.applicationId}?`,
         },
       });
+    else if (json && !reported && error instanceof GoogleCredentialsRequired)
+      report(
+        {
+          status: "input-required",
+          appIntegrationComplete: false,
+          google: {
+            flag: "--google-client-secret-file",
+            question: `Which Google Web client should Clerk use for Sign in with Google on ${error.identity.applicationId}?`,
+            issue: error.message,
+            packageName: error.identity.applicationId,
+            ...(error.identity.debug.sha1 ? { debugSha1: error.identity.debug.sha1 } : {}),
+            redirectUri: googleRedirectUri(error.frontendHost),
+            steps: error.steps,
+            current: error.plan.current,
+          },
+        },
+        2,
+      );
     else if (json && !reported && error instanceof SelectionNeeded)
       report({
         status: "selection-required",

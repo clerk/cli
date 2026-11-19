@@ -178,12 +178,15 @@ The releaser accepts these flags:
 
 All publishes are idempotent -- the script checks the registry before publishing and skips already-published versions, and a publish that npm rejects because the version already exists counts as done. The check reads the per-version document (`registry.npmjs.org/<name>/<version>`), which the registry CDN does not cache, but npm can still take several minutes to serve a new version back. Before publishing the `clerk` wrapper, the script waits up to two minutes for every platform package to be readable; if one is still unreadable after that, it logs a warning and publishes the wrapper anyway, because npm already accepted every platform publish. If one platform publish fails, the others still run to completion before the job exits, so a re-run only has to publish what is actually missing.
 
+After a stable npm publish succeeds, `dispatch-cli-released` sends `clerk_cli_released` with that version to `clerk/clerk-evals` without waiting for npm's `latest` tag to catch up. Canary and snapshot releases do not send this event. The job uses `CLERK_CLI_DISPATCH_TOKEN`, a dedicated Actions secret with Contents: read and write on only `clerk/clerk-evals`; the default `GITHUB_TOKEN` stays read-only. A dispatch failure triggers its own notification rather than reporting that the stable release failed. The eval receiver waits for the version to become `clerk@latest`, pins a `clerk/skills` SHA, and records both versions with its results; a receiver failure is reported from `clerk-evals`, not from the CLI release workflow.
+
 #### Environment Variables
 
 The releaser script and publish workflow steps use these environment variables:
 
 - `ARTIFACTS_DIR` -- path to directory containing compiled binaries from the build job (defaults to `./dist/artifacts`)
 - `GH_TOKEN` -- GitHub token used by the releaser to create tags and releases (stable only)
+- `CLERK_CLI_DISPATCH_TOKEN` -- dedicated token for the stable release's `clerk/clerk-evals` repository dispatch (not used by npm publishing)
 
 #### npm Authentication
 

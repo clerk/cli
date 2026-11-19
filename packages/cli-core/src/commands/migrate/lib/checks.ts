@@ -33,9 +33,9 @@ import {
   providerLabel,
   toClerkStrategy,
 } from "./clerk-config.ts";
-import { resolveDevUserLimit } from "./instance.ts";
+import { resolveUserLimit, type UserLimitSource } from "./instance.ts";
 import { buildChangePayload, buildSettingChanges } from "./modify-settings.ts";
-import { acceptsIdentifier, buildReadinessReport } from "./readiness.ts";
+import { acceptsIdentifier, buildReadinessReport, type ReadinessItem } from "./readiness.ts";
 import type { ApiScheduler } from "./scheduler.ts";
 import {
   countSocialProviders,
@@ -69,10 +69,15 @@ export type Fix = { label: string; command?: string; url?: string };
 
 const DASHBOARD_URL = "https://dashboard.clerk.com";
 
+/** What a fix command names the app with when the key named none. */
+export const APP_ID_PLACEHOLDER = "APP_ID";
+
 export type Quota = {
   /** Users already in the instance, or `null` when the count could not be read. */
   existing: number | null;
   limit: number;
+  /** Whether Clerk reported the limit, or it is `CLERK_MIGRATE_DEV_USER_LIMIT` or the default. */
+  limitSource: UserLimitSource;
   headroom: number;
   /** Importable users over the headroom. */
   over: number;
@@ -110,8 +115,13 @@ export type CheckInput = {
   /** Another source's reading of each user's social providers, for the readiness check. */
   socialProviders?: (user: User) => string[];
   settings: UserSettingsJSON | null;
-  /** Users already in the instance, for the quota. Development instances only. */
+  /** Users already in the instance, for the quota. Only read when a limit applies. */
   existingUsers?: number | null;
+  /**
+   * `max_allowed_users` from `GET /v1/instance`: `null` for no limit, absent
+   * when Clerk did not say. See {@link resolveUserLimit}.
+   */
+  maxAllowedUsers?: number | null;
   instanceType: "dev" | "prod";
   target: ClerkTarget;
   secretKey: string;
@@ -121,6 +131,18 @@ export type CheckInput = {
    * sending `skip_legal_checks`. Without it they are rejected.
    */
   skipLegalChecks?: boolean;
+  /** Unverified identifiers are created reserved, so they meet a requirement. */
+  reserveUnverified?: boolean;
+  /**
+   * A continue of a run that kept unverified identifiers unverified. It refuses
+   * --reserve-unverified, so the reject reasons don't suggest it.
+   */
+  reserveLocked?: boolean;
+  /**
+   * Source IDs of adopted users whose create reserved their unverified
+   * identifiers: those exist reserved, whatever this run's flag says.
+   */
+  reservedSourceIds?: Set<string>;
   /**
    * Clerk IDs a continued run found behind its own in-flight creates: finding
    * them in the instance is expected.
@@ -129,7 +151,9 @@ export type CheckInput = {
   /**
    * Source IDs of those adopted users. Each already exists in Clerk, so none
    * is rejected: the checks stop creates, and these need none. They count
-   * toward no quota either; the instance's live count has them already.
+   * toward no quota either; the instance's live count has them already. Their
+   * create ran in the mode its `creating` line records, so this run's flag
+   * does not decide what they reserved.
    */
   adoptedSourceIds?: Set<string>;
   spinner?: SpinnerControls;
@@ -187,23 +211,39 @@ export function hashShapeProblem(password: string, hasher: string): string | und
  *
  * An email or phone counts only when it is verified: an unverified one is
  * attached after the user exists, so it cannot satisfy a sign-up requirement.
+ * With `reserveUnverified` it goes on the create as reserved, which does.
+ * `suggestReserve` names that flag in the reason, unless the run refuses it.
  */
 function missingRequiredIdentifier(
   user: User,
   settings: UserSettingsJSON | null,
+  reserveUnverified = false,
+  suggestReserve = true,
 ): string | undefined {
   if (!settings) return undefined;
   const required = (attribute: AttributeName) => isRequired(settings, attribute);
   const identifiers = splitIdentifiers(user);
+  const reserved = (unverified: string[]) => reserveUnverified && unverified.length > 0;
+  const hint = suggestReserve
+    ? " (--reserve-unverified imports it reserved: usable for sign-in, though the auth platform never verified it)"
+    : "";
 
-  if (required("email_address") && !identifiers.primaryEmail) {
+  if (
+    required("email_address") &&
+    !identifiers.primaryEmail &&
+    !reserved(identifiers.unverifiedEmails)
+  ) {
     return identifiers.unverifiedEmails.length > 0
-      ? "only has an unverified email, and this instance requires an email"
+      ? `only has an unverified email, and this instance requires an email${hint}`
       : "no email, which this instance requires";
   }
-  if (required("phone_number") && !identifiers.primaryPhone) {
+  if (
+    required("phone_number") &&
+    !identifiers.primaryPhone &&
+    !reserved(identifiers.unverifiedPhones)
+  ) {
     return identifiers.unverifiedPhones.length > 0
-      ? "only has an unverified phone number, and this instance requires one"
+      ? `only has an unverified phone number, and this instance requires one${hint}`
       : "no phone number, which this instance requires";
   }
   if (required("username") && !hasValue(user.username)) {
@@ -549,7 +589,7 @@ const hasAnyIdentifier = (user: User) =>
 const DUPLICATE_SOURCE_ID = "duplicate source ID in the file";
 
 /**
- * First user in the file to claim each email, phone and source ID.
+ * First user in the file to claim each email, phone, and source ID.
  *
  * Keyed by record, not source ID: two records with one source ID must not
  * share a verdict, or the one kept would be rejected along with its copy.
@@ -560,7 +600,10 @@ const DUPLICATE_SOURCE_ID = "duplicate source ID in the file";
  *
  * @returns Each duplicate's reason, and the earlier user kept in its place.
  */
-function findFileDuplicates(users: User[]): {
+function findFileDuplicates(
+  users: User[],
+  reserves: (user: User) => boolean = () => false,
+): {
   reasons: Map<User, string>;
   keptBy: Map<User, string>;
 } {
@@ -580,9 +623,7 @@ function findFileDuplicates(users: User[]): {
     }
     seenIds.add(user.userId);
 
-    const { primaryEmail, primaryPhone } = splitIdentifiers(user);
-    const ownEmails = primaryEmail ? [primaryEmail] : [];
-    const ownPhones = primaryPhone ? [primaryPhone] : [];
+    const { emails: ownEmails, phones: ownPhones } = sentIdentifiers(user, reserves(user));
 
     const emailOwner = ownEmails.map((email) => emails.get(email.toLowerCase())).find(Boolean);
     const phoneOwner = ownPhones.map((phone) => phones.get(phoneKey(phone))).find(Boolean);
@@ -614,8 +655,38 @@ function findFileDuplicates(users: User[]): {
 }
 
 /**
- * Users the instance already holds, found by source ID, primary email,
- * primary phone or username.
+ * Whether a user's unverified identifiers are (or will be) created reserved:
+ * an adopted user's by what its create recorded, everyone else's by this
+ * run's flag.
+ */
+function reservesFor(input: CheckInput): (user: User) => boolean {
+  return (user) =>
+    input.adoptedSourceIds?.has(user.userId)
+      ? Boolean(input.reservedSourceIds?.has(user.userId))
+      : Boolean(input.reserveUnverified);
+}
+
+/**
+ * The emails and phones `POST /v1/users` sends for a user: the verified
+ * primary, plus the unverified ones when they are created reserved.
+ */
+function sentIdentifiers(user: User, reserveUnverified: boolean) {
+  const { primaryEmail, primaryPhone, unverifiedEmails, unverifiedPhones } = splitIdentifiers(user);
+  return {
+    emails: [
+      ...(primaryEmail ? [primaryEmail] : []),
+      ...(reserveUnverified ? unverifiedEmails : []),
+    ],
+    phones: [
+      ...(primaryPhone ? [primaryPhone] : []),
+      ...(reserveUnverified ? unverifiedPhones : []),
+    ],
+  };
+}
+
+/**
+ * Users the instance already holds, found by source ID, the emails and phones
+ * the create sends, or username.
  *
  * Only what `POST /v1/users` itself carries is looked up: an extra email that
  * collides is attached after the user exists, fails on its own, and is noted
@@ -631,10 +702,10 @@ async function findInstanceDuplicates(
   const byUsername = new Map<string, string>();
 
   for (const user of users) {
-    const identifiers = splitIdentifiers(user);
+    const sent = sentIdentifiers(user, reservesFor(input)(user));
     byExternalId.set(user.userId, user.userId);
-    if (identifiers.primaryEmail) byEmail.set(identifiers.primaryEmail.toLowerCase(), user.userId);
-    if (identifiers.primaryPhone) byPhone.set(phoneKey(identifiers.primaryPhone), user.userId);
+    for (const email of sent.emails) byEmail.set(email.toLowerCase(), user.userId);
+    for (const phone of sent.phones) byPhone.set(phoneKey(phone), user.userId);
     if (typeof user.username === "string" && user.username) {
       byUsername.set(user.username.toLowerCase(), user.userId);
     }
@@ -710,16 +781,21 @@ function findDisabledProviderRejects(input: CheckInput): Map<string, string> {
 
   const { excludedIds } = findUsersWithOnlyDisabledProviders(input.supabaseRows, disabled);
   // A disabled provider only strands a user with no other way in: a verified
-  // email or phone the instance signs in with by code or link still works.
+  // or reserved email or phone the instance signs in with by code or link
+  // still works.
   const strategies = firstFactorStrategies(input.settings);
   const usersById = new Map(input.users.map((user) => [user.userId, user]));
+  const reserves = reservesFor(input);
   const canSignInOtherwise = (id: string) => {
     const user = usersById.get(id);
     if (!user) return false;
-    const { primaryEmail, primaryPhone } = splitIdentifiers(user);
+    // An email Clerk refuses, or a phone not in E.164 form with numeric
+    // usernames on, is stripped before the create, so it is no way in.
+    const sent = dropLoosePhones(dropRefusedEmails(user).user, input.settings).user;
+    const { emails, phones } = sentIdentifiers(sent, reserves(user));
     return (
-      (Boolean(primaryEmail) && (strategies.has("email_code") || strategies.has("email_link"))) ||
-      (Boolean(primaryPhone) && strategies.has("phone_code"))
+      (emails.length > 0 && (strategies.has("email_code") || strategies.has("email_link"))) ||
+      (phones.length > 0 && strategies.has("phone_code"))
     );
   };
   // Each reject names only that user's own providers.
@@ -850,8 +926,13 @@ function quoteJson(payload: unknown): string {
  *
  * These are offers, not corrections: an instance that requires an email is
  * configured as its owner intended, and fixing the export may be the answer.
+ *
+ * @param users - Everyone a fix could clear a reject for.
+ * @param importable - The users the import sends: a name, username or
+ *   password only rejected users carry isn't brought across, so a fix that
+ *   keeps it helps nobody.
  */
-function buildFixes(input: CheckInput, users: User[]): Fix[] {
+function buildFixes(input: CheckInput, users: User[], importable: User[]): Fix[] {
   if (!input.settings || users.length === 0) return [];
 
   const report = buildReadinessReport({
@@ -862,11 +943,29 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
 
   // An unverified email does not satisfy a required one, so a file of only
   // unverified addresses flags the requirement even when every user has one.
-  const unverifiedOnly = users.some((user) => {
-    const identifiers = splitIdentifiers(user);
-    return !identifiers.primaryEmail && identifiers.unverifiedEmails.length > 0;
-  });
-  const flagged = report.blocking.slice();
+  // Created reserved, it does, and making email optional fixes nothing.
+  const unverifiedOnly =
+    !input.reserveUnverified &&
+    users.some((user) => {
+      const identifiers = splitIdentifiers(user);
+      return !identifiers.primaryEmail && identifiers.unverifiedEmails.length > 0;
+    });
+  // A name, username or password row that isn't a reject only keeps data:
+  // what a rejected user carries isn't brought across, so only the users the
+  // import sends count for it. A row that rejects (a required name) counts
+  // everyone.
+  // ponytail: turning usernames on can be the first of two fixes for a
+  // refused numeric username; counting that case needs the username fixes'
+  // own rules here.
+  const keepsData = (item: ReadinessItem) =>
+    item.consequence !== "rejects" &&
+    (item.section === "model" || item.section === "auth" || item.key === "username");
+  const kept = new Set(
+    buildReadinessReport({ analysis: analyzeFields(importable), settings: input.settings })
+      .blocking.filter(keepsData)
+      .map((item) => item.key),
+  );
+  const flagged = report.blocking.filter((item) => !keepsData(item) || kept.has(item.key));
   if (
     unverifiedOnly &&
     isRequired(input.settings, "email_address") &&
@@ -888,7 +987,7 @@ function buildFixes(input: CheckInput, users: User[]): Fix[] {
   // be read as a redirect.
   const { appId, instanceId } = input.target;
   const named = isClerkInstanceId(instanceId);
-  const flags = ` --app ${appId ?? "APP_ID"} --instance ${instanceId}`;
+  const flags = ` --app ${appId ?? APP_ID_PLACEHOLDER} --instance ${instanceId}`;
   const settings = input.settings;
   const mfa = MFA_SETTINGS.filter(
     ({ field, attribute }) =>
@@ -1037,6 +1136,11 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
   const refusedUsernames = new Set<string>();
   const loosePhoneUsers = new Set<string>();
   const loosePhones = loosePhoneCount(input.users, input.settings);
+  // Users no setting would let in, who earn no fix: a duplicate, one whose own
+  // record stops it, or one the user limit leaves out. A record is checked
+  // apart from the reason shown, since a fix for that one would not import a
+  // user the next one still stops.
+  const unfixable = new Set<User>();
   for (const original of input.users) {
     const named = dropRefusedNames(original);
     if (named.dropped) refusedNames.add(original.userId);
@@ -1056,6 +1160,9 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       user.password && user.passwordHasher
         ? hashShapeProblem(user.password, user.passwordHasher)
         : undefined;
+    if (!adopted(original) && (original.skipReason || refusedOnly || hashProblem))
+      unfixable.add(original);
+    const reserve = reservesFor(input)(user);
     const reason = adopted(original)
       ? undefined
       : (original.skipReason ??
@@ -1068,11 +1175,11 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
           : undefined) ??
         // A required phone the file has, but only in a form Clerk refuses here.
         (phoned.dropped &&
-        missingRequiredIdentifier(user, input.settings) &&
-        !missingRequiredIdentifier(emailed, input.settings)
+        missingRequiredIdentifier(user, input.settings, reserve) &&
+        !missingRequiredIdentifier(emailed, input.settings, reserve)
           ? "its phones aren't in E.164 form, and this instance requires a phone number (numeric usernames are on)"
           : undefined) ??
-        missingRequiredIdentifier(user, input.settings) ??
+        missingRequiredIdentifier(user, input.settings, reserve, !input.reserveLocked) ??
         // Stripping the identifiers the instance has off can leave nothing to
         // sign in with; Clerk would still create the user.
         (!hasAnyIdentifier(sent)
@@ -1102,15 +1209,13 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     }
   }
 
-  // No setting would let a duplicate in, so none earns a fix.
-  const duplicates = new Set<User>();
-  // An adopted user already holds its email, phone and username in Clerk, so
+  // An adopted user already holds its email, phone, and username in Clerk, so
   // it claims them first, wherever it sits in the file: a fresh record sharing
   // one is the create Clerk would refuse, and is not kept in its place.
-  const { reasons: fileDuplicates, keptBy } = findFileDuplicates([
-    ...passed.filter(adopted),
-    ...passed.filter((user) => !adopted(user)),
-  ]);
+  const { reasons: fileDuplicates, keptBy } = findFileDuplicates(
+    [...passed.filter(adopted), ...passed.filter((user) => !adopted(user))],
+    reservesFor(input),
+  );
   let candidates: User[] = [];
   for (const user of passed) {
     const kept = keptBy.get(user);
@@ -1122,7 +1227,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         keptSourceId: holder,
         inFile: true,
       });
-      duplicates.add(originals.get(user) ?? user);
+      unfixable.add(originals.get(user) ?? user);
       continue;
     }
     // An adopted user is in Clerk already, so an earlier record sharing its
@@ -1137,7 +1242,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
         ...(kept ? { keptSourceId: kept } : {}),
         inFile: true,
       });
-      duplicates.add(originals.get(user) ?? user);
+      unfixable.add(originals.get(user) ?? user);
     } else candidates.push(user);
   }
 
@@ -1150,35 +1255,47 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     const reason = adopted(user) ? undefined : instanceDuplicates.get(user.userId);
     if (reason) {
       rejects.push({ sourceId: user.userId, reason });
-      duplicates.add(originals.get(user) ?? user);
+      unfixable.add(originals.get(user) ?? user);
     } else unique.push(user);
   }
   candidates = unique;
 
-  // The limit is a development-instance default, not a number the API serves,
-  // so it is checked against the live count and the importable users alone.
-  // An instance Clerk has raised sets CLERK_MIGRATE_DEV_USER_LIMIT.
+  // Checked against the live count and the importable users alone. The limit
+  // is Clerk's own when it reported one; otherwise a development instance
+  // falls back to CLERK_MIGRATE_DEV_USER_LIMIT, then the default.
   let quota: Quota | undefined;
-  if (input.instanceType === "dev") {
-    const limit = resolveDevUserLimit();
+  const userLimit = resolveUserLimit(input.maxAllowedUsers, input.instanceType);
+  if (userLimit) {
+    const { limit, source: limitSource } = userLimit;
     // An adopted user is in the instance's count already, and is never
     // created: only the new users take headroom, in file order.
     const headroom = Math.max(0, limit - (input.existingUsers ?? 0));
     const fresh = candidates.filter((user) => !adopted(user));
     const over = Math.max(0, fresh.length - headroom);
-    quota = { existing: input.existingUsers ?? null, limit, headroom, over };
+    quota = { existing: input.existingUsers ?? null, limit, limitSource, headroom, over };
+    // Once the users that fit fill the room left, no setting lets another
+    // new user in.
+    if (fresh.length >= headroom) {
+      const fits = new Set(fresh.slice(0, headroom).map((user) => originals.get(user) ?? user));
+      for (const user of input.users) if (!adopted(user) && !fits.has(user)) unfixable.add(user);
+    }
     if (over > 0) {
+      // Clerk's own refusal names the same fix: a paid plan in production.
+      const reason =
+        limitSource !== "instance"
+          ? `over the development instance's ${limit}-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)`
+          : input.instanceType === "prod"
+            ? `over this instance's ${limit}-user limit (upgrade to a paid plan to remove it)`
+            : `over this instance's ${limit}-user limit (contact support to raise it)`;
       const past = new Set(fresh.slice(headroom));
-      for (const user of past) {
-        rejects.push({
-          sourceId: user.userId,
-          reason: `over the development instance's ${limit}-user limit (raised by Clerk? set CLERK_MIGRATE_DEV_USER_LIMIT)`,
-        });
-      }
+      for (const user of past) rejects.push({ sourceId: user.userId, reason });
       candidates = candidates.filter((user) => !past.has(user));
     }
   }
 
+  // The users the import sends, with the fields a disabled setting strips put
+  // back, so the warnings and fixes can name what would be lost.
+  const unstrippedImportable = candidates.map((user) => unstripped.get(user) ?? user);
   return {
     total: input.users.length + input.failures.length,
     importable: candidates.map((user) =>
@@ -1189,10 +1306,7 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
     skipped,
     skippedReasons: countReasons(skipped),
     warnings: [
-      ...buildWarnings(
-        input,
-        candidates.map((user) => unstripped.get(user) ?? user),
-      ),
+      ...buildWarnings(input, unstrippedImportable),
       ...placeholderWarning(candidates.filter((user) => placeholderEmails.has(user.userId)).length),
       ...refusedNameWarning(candidates.filter((user) => refusedNames.has(user.userId)).length),
       ...refusedUsernameWarning(
@@ -1206,13 +1320,14 @@ export async function checkImport(input: CheckInput): Promise<ImportChecks> {
       // An unknown count is checked as zero; say so rather than imply it fit.
       ...(quota && quota.existing === null
         ? [
-            `Could not read how many users this development instance holds, so the ${quota.limit}-user limit was checked as if it were empty`,
+            `Could not read how many users this instance holds, so the ${quota.limit}-user limit was checked as if it were empty`,
           ]
         : []),
     ],
     fixes: buildFixes(
       input,
-      input.users.filter((user) => !duplicates.has(user)),
+      input.users.filter((user) => !unfixable.has(user)),
+      unstrippedImportable,
     ),
     ...(quota ? { quota } : {}),
     settingsUnavailable: input.settings === null,

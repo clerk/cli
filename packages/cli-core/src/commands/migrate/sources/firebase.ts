@@ -64,12 +64,17 @@ const firebaseSource = {
     mfa: { level: "no", note: "Firebase exports no MFA enrolments. Users enrol again in Clerk." },
     metadata: { level: "no", note: "Custom claims are not exported." },
   },
+  caveats: [
+    "Phones import verified: Firebase has no phone-verified field, because a user confirms a number by SMS and an admin vouches for one set through the Admin SDK.",
+  ],
   transformer: {
     localId: "userId",
     email: "email",
     emailVerified: "emailVerified",
     passwordHash: "passwordHash",
     passwordSalt: "salt",
+    // Verified, as Clerk treats a phone an admin adds: Firebase has no
+    // phone-verified field, and nothing here routes it unverified.
     phoneNumber: "phone",
     displayName: "name",
     disabled: "banned",

@@ -17,6 +17,7 @@ import {
   ensureMachineUuid,
   getTelemetryDisabled,
   markTelemetryNoticeShown,
+  peekMachineUuid,
   resolveProfile,
 } from "./config.ts";
 import {
@@ -33,7 +34,7 @@ import { getCurrentEnvName } from "./environment.ts";
 import { ApiError, CliError, EXIT_CODE, UserAbortError } from "./errors.ts";
 import { loggedFetch } from "./fetch.ts";
 import { log } from "./log.ts";
-import { getMode } from "../mode.ts";
+import { getMode, type Mode } from "../mode.ts";
 import { CURRENT_VERSION, IS_DEV_BUILD } from "./version.ts";
 
 /**
@@ -113,8 +114,40 @@ export type TelemetryStage =
   | "domain_pending"
   | "oauth_pending"
   | "complete"
+  // `clerk migrate import`. `already_imported`, `dry_run` and
+  // `nothing_to_import` are terminal branches; a partial import still ends at
+  // `done`, and its `outcome` says so.
+  | "migrate_source"
+  | "migrate_target_setup"
+  | "migrate_input"
+  | "migrate_target"
+  | "migrate_resume"
+  | "migrate_already_imported"
+  | "migrate_load"
+  | "migrate_checks"
+  | "migrate_dry_run"
+  | "migrate_nothing_to_import"
+  | "migrate_confirm"
+  | "migrate_import"
+  // `clerk migrate export [platform]`. `pick_platform` only on the bare picker.
+  | "migrate_pick_platform"
+  | "migrate_export_read"
+  | "migrate_export_write"
+  // `clerk migrate undo`, which shares `migrate_target`, `migrate_dry_run` and
+  // `migrate_confirm` with import.
+  | "migrate_run_lookup"
+  | "migrate_inspect"
+  | "migrate_delete"
   // shared terminal marker
   | "done";
+
+/** The Clerk app and instance a command acted on. Only real `app_`/`ins_` IDs are kept. */
+type TelemetryTarget = {
+  appId?: string;
+  instanceId?: string;
+  /** A `key_` stand-in: a key Clerk didn't name an instance for, so not the linked app's. */
+  standIn?: true;
+};
 
 /** Structural slice of Commander's Command — avoids its generic types. */
 export type TelemetryCommand = {
@@ -136,6 +169,10 @@ type TelemetryContext = {
   pauseStep: TelemetryPauseStep | null;
   /** Per-component readiness, each field written only by an observation. */
   components: TelemetryComponents;
+  /** What the command acted on — see setTelemetryTarget. Empty when nothing said. */
+  target: TelemetryTarget;
+  /** Where a migration's users come from — see setTelemetryMigrateSource. */
+  migrateSource: string | null;
 };
 
 /** What a command wants recorded for its soft exit. `deploy status` declares no code: nothing was thrown. */
@@ -248,6 +285,8 @@ export function startCommandTelemetry(actionCommand: TelemetryCommand): void {
       softExit: null,
       pauseStep: null,
       components: emptyComponents(),
+      target: {},
+      migrateSource: null,
     };
   } catch (error) {
     log.debug(`telemetry: failed to start context: ${error}`);
@@ -293,6 +332,61 @@ export function setTelemetryDomainComponents(status: {
 /** Record whether every required OAuth provider has production credentials. Leaves the domain components alone. */
 export function setTelemetryOAuthComplete(complete: boolean): void {
   if (context) context.components = { ...context.components, oauth: complete };
+}
+
+/**
+ * The Clerk app and instance the command acted on. Overrides the linked
+ * profile's app. Each call replaces the last, so a resolved target replaces an
+ * early hint from the flags. Anything that is not an `app_`/`ins_` ID — an
+ * `--instance dev` alias, an app label, a `key_` stand-in hashed from a secret
+ * key — is dropped here, so no call site can send one.
+ */
+export function setTelemetryTarget(target: { appId?: string; instanceId?: string }): void {
+  if (!context) return;
+  context.target = {
+    ...(target.appId?.startsWith("app_") ? { appId: target.appId } : {}),
+    ...(target.instanceId?.startsWith("ins_") ? { instanceId: target.instanceId } : {}),
+    ...(target.instanceId?.startsWith("key_") ? { standIn: true as const } : {}),
+  };
+}
+
+/**
+ * Record where a migration's users come from: a built-in source or export
+ * platform, or `custom`. Last call wins. `recordMigrateSource` in
+ * `commands/migrate/telemetry.ts` is the only caller, and it checks the key
+ * against the registries, so a custom source's path or name never gets here.
+ */
+export function setTelemetryMigrateSource(source: string): void {
+  if (context) context.migrateSource = source;
+}
+
+/**
+ * The app and workspace an event names. A command's own target wins; a
+ * key-only target borrows the linked profile's app when the profile owns its
+ * instance; a command that set no target reports the linked profile as
+ * before. A `key_` stand-in is a target, so it never borrows the linked
+ * profile's app. The workspace is the profile's only when the app is too, so
+ * an event never pairs one app's workspace with another app's ID.
+ */
+function resolveEventApp(
+  target: TelemetryTarget,
+  profile:
+    | { appId: string; workspaceId: string; instances: Record<string, string | undefined> }
+    | undefined,
+): { appId: string | null; workspaceId: string | null } {
+  const targetSet =
+    target.appId !== undefined || target.instanceId !== undefined || target.standIn === true;
+  const profileOwnsInstance =
+    target.instanceId !== undefined &&
+    profile !== undefined &&
+    Object.values(profile.instances).includes(target.instanceId);
+  const appId =
+    target.appId ??
+    (profileOwnsInstance ? profile.appId : undefined) ??
+    (targetSet ? undefined : profile?.appId) ??
+    null;
+  const workspaceId = appId !== null && appId === profile?.appId ? profile.workspaceId : null;
+  return { appId, workspaceId };
 }
 
 /**
@@ -423,72 +517,204 @@ async function buildAndSend(
 ): Promise<void> {
   // Re-checked here (not just at start) so `clerk telemetry disable` itself
   // sees the freshly persisted opt-out and sends nothing.
-  if (!(await getTelemetryStatus()).enabled) return;
+  const telemetryStatus = await getTelemetryStatus();
+  if (!telemetryStatus.enabled) return;
 
   // The notice tells the user "Nothing has been sent during this run" — honor it.
-  if (await maybeShowTelemetryNotice()) return;
+  if (await showTelemetryNoticeOnce()) return;
 
-  const machineUuid = await ensureMachineUuid();
-  const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
+  const envelope = await buildTelemetryEnvelope(current.target);
 
-  const event = {
-    sdk: "clerk-cli",
-    sdkv: CURRENT_VERSION,
-    event: "CLI_COMMAND_EXECUTED",
-    payload: {
-      command: current.command,
-      flags: current.flags,
-      outcome: result.outcome,
-      exit_code: result.exitCode,
-      error_code: result.errorCode ?? null,
-      // `pause_step` and `components` are deploy's; null on other commands.
-      stage: current.stage,
-      pause_step: current.pauseStep,
-      components: current.components,
-      duration_ms: Date.now() - current.startedAt,
-      machine_uuid: machineUuid,
-      install_method: detectInstallMethod(process.env, process.execPath),
-      ai_agent: detectAiAgent(process.env),
-      terminal_program: detectTerminalProgram(process.env),
-      mode: getMode(),
-      os: process.platform,
-      arch: process.arch,
-      ci: Boolean(process.env.CI),
-      in_tmux: detectInTmux(process.env),
-      in_screen: detectInScreen(process.env),
-      env: getCurrentEnvName(),
-      workspace_id: resolved?.profile.workspaceId ?? null,
-      app_id: resolved?.profile.appId ?? null,
+  // The internal post step, not the exported sender: the opt-out was read
+  // just above, and this whole job runs under a one-second deadline.
+  await postTelemetryEvent(
+    {
+      event: "CLI_COMMAND_EXECUTED",
+      payload: {
+        command: current.command,
+        flags: current.flags,
+        outcome: result.outcome,
+        exit_code: result.exitCode,
+        error_code: result.errorCode ?? null,
+        // `pause_step` and `components` are deploy's; null on other commands.
+        stage: current.stage,
+        pause_step: current.pauseStep,
+        components: current.components,
+        duration_ms: Date.now() - current.startedAt,
+        // Migrate's; null on other commands.
+        instance_id: current.target.instanceId ?? null,
+        migrate_source: current.migrateSource,
+        ...envelope,
+      },
     },
-  };
-
-  log.debug(`telemetry: event ${JSON.stringify(event)}`);
-
-  const url = process.env.CLERK_TELEMETRY_URL ?? DEFAULT_TELEMETRY_ENDPOINT;
-  await loggedFetch(url, {
-    tag: "telemetry",
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ events: [event] }),
-    signal,
-    bestEffort: true,
-    // Only the shutdown flush reports the interrupt, so only it may outlive
-    // one. A normal end-of-command flush must stay interruptible: bypassing
-    // the signal there would let a Ctrl-C mid-POST record the run's success
-    // event. Being aborted is how it hands the run to the shutdown flush,
-    // which finds the context still in place and re-sends it as an abort.
-    ignoreInterrupt: outlivesInterrupt,
-  });
+    {
+      signal,
+      // Only the shutdown flush reports the interrupt, so only it may outlive
+      // one. A normal end-of-command flush must stay interruptible: bypassing
+      // the signal there would let a Ctrl-C mid-POST record the run's success
+      // event. Being aborted is how it hands the run to the shutdown flush,
+      // which finds the context still in place and re-sends it as an abort.
+      ignoreInterrupt: outlivesInterrupt,
+    },
+  );
 }
 
 /**
- * One-time stderr disclosure for humans and agents alike. Returns true when
- * the notice was just shown — that run sends nothing, so disclosure always
- * precedes a machine's first event. CI is exempt from both the notice and
- * the grace run: ephemeral CI machines are always on their "first run", so
- * a grace there would mean CI never sends at all.
+ * The fields that describe the machine and the session, carried by every
+ * event the CLI sends. Keys are warehouse contracts (see `env-signals.ts`).
  */
-async function maybeShowTelemetryNotice(): Promise<boolean> {
+export type TelemetryEnvelope = {
+  machine_uuid: string;
+  install_method: string;
+  ai_agent: string;
+  terminal_program: string;
+  mode: Mode;
+  os: string;
+  arch: string;
+  ci: boolean;
+  in_tmux: boolean;
+  in_screen: boolean;
+  env: string;
+  workspace_id: string | null;
+  app_id: string | null;
+};
+
+/** {@link TelemetryEnvelope} for a preview on a machine that may have no id yet. */
+export type TelemetryEnvelopePreview = Omit<TelemetryEnvelope, "machine_uuid"> & {
+  machine_uuid: string | null;
+};
+
+/**
+ * Read the envelope fields. Creates the machine id on a machine that has
+ * none, so a caller that only previews an event still writes the config file;
+ * a preview that must not do that uses {@link peekTelemetryEnvelope}. The
+ * per-run usage event passes the command's target, which decides `app_id` and
+ * `workspace_id`; without one they are the linked project's.
+ */
+export async function buildTelemetryEnvelope(
+  target: TelemetryTarget = {},
+): Promise<TelemetryEnvelope> {
+  return envelopeWith(await ensureMachineUuid(), target);
+}
+
+/**
+ * The envelope with the machine id this machine already has; never creates
+ * one. The id is null when the machine has none, or when the config file
+ * cannot be read: this is for a preview, which must always be able to show
+ * something.
+ */
+export async function peekTelemetryEnvelope(): Promise<TelemetryEnvelopePreview> {
+  return envelopeWith(await peekMachineUuid().catch(() => null));
+}
+
+async function envelopeWith<Id extends string | null>(
+  machineUuid: Id,
+  target: TelemetryTarget = {},
+): Promise<Omit<TelemetryEnvelope, "machine_uuid"> & { machine_uuid: Id }> {
+  const resolved = await resolveProfile(process.cwd()).catch(() => undefined);
+  const app = resolveEventApp(target, resolved?.profile);
+  return {
+    machine_uuid: machineUuid,
+    install_method: detectInstallMethod(process.env, process.execPath),
+    ai_agent: detectAiAgent(process.env),
+    terminal_program: detectTerminalProgram(process.env),
+    mode: getMode(),
+    os: process.platform,
+    arch: process.arch,
+    ci: Boolean(process.env.CI),
+    in_tmux: detectInTmux(process.env),
+    in_screen: detectInScreen(process.env),
+    env: getCurrentEnvName(),
+    workspace_id: app.workspaceId,
+    app_id: app.appId,
+  };
+}
+
+export type TelemetryEvent = {
+  event: string;
+  payload: Record<string, unknown>;
+};
+
+/** An event as it is posted: wrapped with the sender name and the CLI version. */
+export type PostedTelemetryEvent<E extends TelemetryEvent = TelemetryEvent> = {
+  sdk: "clerk-cli";
+  sdkv: string;
+} & E;
+
+/** Wrap an event exactly as {@link sendTelemetryEvent} posts it, so a preview can show the same object. */
+export function asPostedTelemetryEvent<E extends TelemetryEvent>(
+  event: E,
+): PostedTelemetryEvent<E> {
+  return { sdk: "clerk-cli", sdkv: CURRENT_VERSION, ...event };
+}
+
+/**
+ * `accepted`: the endpoint answered 2xx. `refused`: it answered 4xx, refusing
+ * the event itself, so the event was not stored. `rejected`: it answered
+ * anything else (a 5xx), which may have come after the event was stored.
+ * `disabled`: telemetry is off on this machine, so nothing was sent.
+ */
+export type SendOutcome = "accepted" | "refused" | "rejected" | "disabled";
+
+/**
+ * Wrap one event in `{ sdk, sdkv }`, print it at debug level (what
+ * `--verbose` shows), and POST it, unless telemetry is off on this machine.
+ * This is `clerk feedback`'s sender; the per-run usage event reads the
+ * opt-out itself, since it also decides the first-run notice, and posts
+ * through {@link postTelemetryEvent}. Resolves to a {@link SendOutcome}
+ * (`loggedFetch` returns 4xx and 5xx without throwing); rejects on a network
+ * failure or an abort, for the caller to place.
+ */
+export async function sendTelemetryEvent(
+  event: TelemetryEvent,
+  options: { signal: AbortSignal; ignoreInterrupt?: boolean; onPost?: () => void },
+): Promise<SendOutcome> {
+  if (!(await getTelemetryStatus()).enabled) return "disabled";
+  // Tells the caller the opt-out check passed and the request is being made,
+  // which a rejection alone cannot: `clerk feedback` prints the report id
+  // only when a POST was attempted.
+  options.onPost?.();
+  return postTelemetryEvent(event, options);
+}
+
+/** The POST itself, with no opt-out check: only for a caller in this module that has just made one. */
+async function postTelemetryEvent(
+  event: TelemetryEvent,
+  options: { signal: AbortSignal; ignoreInterrupt?: boolean },
+): Promise<Exclude<SendOutcome, "disabled">> {
+  const wrapped = asPostedTelemetryEvent(event);
+  log.debug(`telemetry: event ${JSON.stringify(wrapped)}`);
+
+  const url = process.env.CLERK_TELEMETRY_URL ?? DEFAULT_TELEMETRY_ENDPOINT;
+  const response = await loggedFetch(url, {
+    tag: "telemetry",
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ events: [wrapped] }),
+    signal: options.signal,
+    bestEffort: true,
+    ignoreInterrupt: options.ignoreInterrupt ?? false,
+  });
+  if (response.ok) return "accepted";
+  return response.status >= 400 && response.status < 500 ? "refused" : "rejected";
+}
+
+const TELEMETRY_NOTICE_LAST_LINE = "Nothing has been sent during this run.";
+
+/**
+ * One-time stderr disclosure for humans and agents alike. Returns true when
+ * the notice was just shown — on the command-event path that run sends
+ * nothing, so disclosure always precedes a machine's first event. CI is exempt
+ * from both the notice and the grace run: ephemeral CI machines are always on
+ * their "first run", so a grace there would mean CI never sends at all.
+ *
+ * `clerk feedback` is the one caller that sends on the run that shows the
+ * notice, because that send is explicit; it passes its own `lastLine` saying
+ * what the run sends, so the notice never claims a silence that is not true.
+ */
+export async function showTelemetryNoticeOnce(
+  lastLine: string = TELEMETRY_NOTICE_LAST_LINE,
+): Promise<boolean> {
   if (process.env.CI) return false;
   if (!(await markTelemetryNoticeShown())) return false;
   log.blank();
@@ -496,10 +722,13 @@ async function maybeShowTelemetryNotice(): Promise<boolean> {
     "The Clerk CLI collects usage telemetry to help improve the CLI: command name, flag names,",
   );
   log.info(
-    "duration, outcome, the step a multi-step command reached, a random machine identifier —",
+    "duration, outcome, the step a multi-step command reached, a random machine identifier,",
   );
-  log.info("and your workspace and app IDs when a project is linked.");
-  log.info("Nothing has been sent during this run.");
+  log.info(
+    "the platform a migration's users come from, and the workspace, app and instance IDs of the",
+  );
+  log.info("Clerk app a command acts on or the project is linked to.");
+  log.info(lastLine);
   log.info("Opt out: `clerk telemetry disable` — details: https://clerk.com/docs/telemetry");
   log.blank();
   return true;

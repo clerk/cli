@@ -1,7 +1,7 @@
 /**
  * The run store: the one place `clerk migrate` keeps state.
  *
- * Every import, export and undo is a run. A run is a folder under the runs
+ * Every import, export, and undo is a run. A run is a folder under the runs
  * directory holding:
  *
  * - `run.json` — what ran, against what, from which file, and how it ended.
@@ -11,7 +11,7 @@
  *   second writer; a dead one, or a run with no `finishedAt`, means the run
  *   was interrupted.
  *
- * `runs`, `undo` and re-runs all read or write it, so there is no second
+ * `runs`, `undo`, and re-runs all read or write it, so there is no second
  * record to drift out of step.
  *
  * Appends are synchronous so a run interrupted with Ctrl-C still leaves a
@@ -20,6 +20,7 @@
 
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { resolveProfile } from "../../../lib/config.ts";
 import { throwUsageError } from "../../../lib/errors.ts";
@@ -89,6 +90,8 @@ export type RunRecord = {
    * continue for those.
    */
   flags?: ImportFlags;
+  /** The source the export file named, when a custom source replaced it. */
+  envelopeSource?: string;
   /**
    * A Firebase import's hash parameters, as a scrypt hash of the four (never the
    * parameters themselves): every digest it builds carries them, so a continue
@@ -100,6 +103,11 @@ export type RunRecord = {
    * not everyone, so it finishes `partial` and importing it says so.
    */
   truncated?: boolean;
+  /**
+   * Whether an import created unverified emails and phones reserved. A
+   * continue reuses it, so every user of one run is created the same way.
+   */
+  reserveUnverified?: boolean;
   /** The import run an undo reverses. */
   undoes?: string;
   /** The undo run that reversed this one. */
@@ -119,15 +127,31 @@ export type UserLine = {
    * run attaches them; a later `created` line without it means they are done.
    */
   pending?: PendingIdentifier[];
+  /**
+   * On a `created` line: the extra identifiers Clerk refused once the user
+   * existed, by kind and Clerk's reason. The user is imported without them.
+   */
+  refused?: string[];
+  /**
+   * On a `created` line: Clerk's reason for refusing the first phone on the
+   * create, which was retried without it. The user is imported without it.
+   * On a `creating` line, the retry's: a continue that adopts the user keeps it.
+   */
+  phoneRefused?: string;
   /** Why a user was skipped. */
   reason?: string;
   error?: string;
   /**
    * Failed: the HTTP status, or "unknown". Skipped: a machine reason,
-   * NO_PASSWORD_CODE, IN_FILE_CODE or SOURCE_SKIP_CODE.
+   * NO_PASSWORD_CODE, IN_FILE_CODE, or SOURCE_SKIP_CODE.
    */
   code?: string;
   passwordDropped?: boolean;
+  /**
+   * On a `creating` line: the create sent this user's unverified identifiers
+   * reserved. A continued run that adopts the user attaches none of them.
+   */
+  reserved?: boolean;
 };
 
 /** What `runs` shows for a run: its stored status, or how it stopped. */
@@ -221,9 +245,14 @@ function isPidAlive(pid: number): boolean {
  * the same PID every run, so a killed run's lock would otherwise read as live.
  */
 export function liveLockPid(runsDir: string, id: string): number | undefined {
+  return livePidIn(lockFile(runsDir, id));
+}
+
+/** The live PID a lock file holds, by the same rules as {@link liveLockPid}. */
+function livePidIn(file: string): number | undefined {
   let raw: string;
   try {
-    raw = fs.readFileSync(lockFile(runsDir, id), "utf-8");
+    raw = fs.readFileSync(file, "utf-8");
   } catch {
     return undefined;
   }
@@ -246,31 +275,59 @@ const isMissing = (error: unknown) => (error as NodeJS.ErrnoException).code === 
  * both read "free" and both write; a stale lock is removed and taken once.
  */
 function acquireLock(runsDir: string, id: string): void {
-  const file = lockFile(runsDir, id);
-  const refuse = (holder: number | undefined): never =>
+  acquireLockFile(lockFile(runsDir, id), (holder, file) =>
     throwUsageError(
       `Run ${id} is in use by another process${holder ? ` (PID ${holder})` : ""}. Wait for it to finish, then try again. ` +
         `If that process is not a migrate run, delete ${file}.`,
-    );
-  const take = () => fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
+    ),
+  );
+}
+
+/** Takes the lock at `file`, or calls `refuse` with its live holder. */
+function acquireLockFile(
+  file: string,
+  refuse: (holder: number | undefined, file: string) => never,
+): void {
+  // Written whole, then linked into place: the link fails on an existing lock
+  // as `wx` does, but the lock never exists without its PID, which a second
+  // process would read as stale and remove.
+  const take = () => {
+    // Random and exclusive: a name no one can plant a link at, and a crashed
+    // run's leftover (same PID, in a container) never reads as a held lock.
+    const whole = `${file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
+    fs.writeFileSync(whole, String(process.pid), { flag: "wx", mode: 0o600 });
+    try {
+      fs.linkSync(whole, file);
+    } catch (error) {
+      if (isExists(error)) throw error;
+      // A filesystem without hard links.
+      fs.writeFileSync(file, String(process.pid), { flag: "wx", mode: 0o600 });
+    } finally {
+      fs.rmSync(whole, { force: true });
+    }
+  };
 
   try {
     take();
-    log.debug(`migrate: locked run ${id} (${file})`);
+    log.debug(`migrate: took the lock ${file}`);
     return;
   } catch (error) {
     if (!isExists(error)) throw error;
   }
-  const holder = liveLockPid(runsDir, id);
-  if (holder !== undefined) refuse(holder);
-  log.debug(`migrate: removing a stale lock on run ${id} (${file})`);
+  // ponytail: two processes that both read the same stale lock can both
+  // remove it, and the second can remove the first's new one. Clerk still
+  // refuses the second create of any email, phone, or username, so the cost
+  // is failed lines, not duplicate users. A lock on the reclaim would close it.
+  const holder = livePidIn(file);
+  if (holder !== undefined) refuse(holder, file);
+  log.debug(`migrate: removing a stale lock (${file})`);
   fs.rmSync(file, { force: true });
   try {
     take();
-    log.debug(`migrate: locked run ${id} (${file})`);
+    log.debug(`migrate: took the lock ${file}`);
   } catch (error) {
     // Another process took the stale lock between the remove and the write.
-    if (isExists(error)) refuse(liveLockPid(runsDir, id));
+    if (isExists(error)) refuse(livePidIn(file), file);
     throw error;
   }
 }
@@ -278,6 +335,45 @@ function acquireLock(runsDir: string, id: string): void {
 function releaseLock(runsDir: string, id: string): void {
   log.debug(`migrate: released run ${id}`);
   fs.rmSync(lockFile(runsDir, id), { force: true });
+}
+
+/**
+ * What makes two imports the same job: the file and the instance, by its ID
+ * or its key's stand-in ID. Not the source: whichever source maps the file,
+ * its users are the same people.
+ */
+export type ImportIdentity = { sha256: string; instanceId: string };
+
+/**
+ * The lock one import of a file into an instance holds. In the
+ * temp directory, as it is taken before consent, when nothing may be written
+ * to the runs folder yet. Not keyed by the runs folder: two imports with
+ * different `--runs-dir` values would still send the same users.
+ */
+export function importLockFile(identity: ImportIdentity): string {
+  const key = createHash("sha256")
+    .update(JSON.stringify([identity.sha256, identity.instanceId]))
+    .digest("hex")
+    .slice(0, 32);
+  return path.join(os.tmpdir(), `clerk-migrate-import-${key}.lock`);
+}
+
+/**
+ * Takes the lock for one import of this file into this instance, before
+ * its checks, so no second process can pass them and start a run beside it.
+ *
+ * @returns Releases the lock.
+ * @throws UsageError when a live process holds it.
+ */
+export function lockImport(identity: ImportIdentity): () => void {
+  const file = importLockFile(identity);
+  acquireLockFile(file, (holder) =>
+    throwUsageError(
+      `Another process${holder ? ` (PID ${holder})` : ""} is importing this file into this instance right now. ` +
+        `Wait for it to finish. If that process is not a migrate run, delete ${file}.`,
+    ),
+  );
+  return () => fs.rmSync(file, { force: true });
 }
 
 // --- Reading ---------------------------------------------------------------
@@ -402,6 +498,21 @@ export function undosOf(runs: RunRecord[], importId: string): RunRecord[] {
 }
 
 /**
+ * True when a run's users are gone: it is marked undone, or an undo of it
+ * finished. `runs` is the caller's `listRuns`, when it has one already.
+ */
+export function undoneInFull(
+  runsDir: string,
+  record: RunRecord,
+  runs = listRuns(runsDir),
+): boolean {
+  return (
+    runState(runsDir, record) === "undone" ||
+    undosOf(runs, record.id).some((undo) => runState(runsDir, undo) === "complete")
+  );
+}
+
+/**
  * The undo of this import that has not finished, if any. `runs` is the
  * caller's `listRuns`, when it has one already.
  */
@@ -489,7 +600,7 @@ export type Run = {
   /** Merges fields into `run.json`. */
   update(patch: Partial<RunRecord>): void;
   /**
-   * Counts the outcomes, settles the status and releases the lock.
+   * Counts the outcomes, settles the status, and releases the lock.
    *
    * `partial` when any user failed, was skipped, may not have been created,
    * was never sent (`notSent`: they have no line to count) or has identifiers
@@ -553,7 +664,7 @@ function openRun(runsDir: string, record: RunRecord): Run {
 
 export type StartRunInit = Omit<RunRecord, "id" | "status" | "startedAt" | "counts">;
 
-/** Creates a run folder, takes its lock and writes the first `run.json`. */
+/** Creates a run folder, takes its lock, and writes the first `run.json`. */
 export function startRun(runsDir: string, init: StartRunInit): Run {
   // Owner-only: a run's files hold user data.
   fs.mkdirSync(runsDir, { recursive: true, mode: 0o700 });

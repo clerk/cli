@@ -8,7 +8,7 @@ import { NEXT_STEPS } from "../../lib/next-steps.ts";
 import { withGutter } from "../../lib/spinner.ts";
 import { resolveSkillsRunner, runSkillsAdd } from "../../lib/skills.ts";
 import { applyConfigPatch } from "../config/apply-patch.ts";
-import { resolveInstanceTarget, type InstanceTarget } from "../../lib/keyless-target.ts";
+import { keyAccess, resolveInstanceTarget, type InstanceTarget } from "../../lib/keyless-target.ts";
 
 interface BillingOptions {
   app?: string;
@@ -60,12 +60,14 @@ function describeTargets(targets: Target[]): string {
 /**
  * Billing settings live only in the account-level config document — Clerk's
  * Backend API exposes no billing resource — so these commands can't run against
- * an unclaimed keyless application the way the org toggles can. Pure assertion:
- * resolving the target is `resolveInstanceTarget`'s job, not billing's.
+ * any keyless target the way the org toggles can. The refusal asks Clerk whether
+ * the key's application is claimed, to word itself. Resolving the target is
+ * `resolveInstanceTarget`'s job, not billing's.
  */
-function assertBillingTarget(target: InstanceTarget): void {
+async function assertBillingTarget(target: InstanceTarget): Promise<void> {
   if (target.kind === "keyless") {
-    throw new CliError(keylessCopy.billingNeedsClaimedApplication(), {
+    const access = await keyAccess(target.keyless);
+    throw new CliError(keylessCopy.billingNeedsClaimedApplication(access), {
       code: ERROR_CODE.AUTH_REQUIRED,
     });
   }
@@ -74,7 +76,7 @@ function assertBillingTarget(target: InstanceTarget): void {
 export async function billingEnable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
   const target = await resolveInstanceTarget(options);
-  assertBillingTarget(target);
+  await assertBillingTarget(target);
 
   const billing: Record<string, unknown> = {};
   const payload: Record<string, unknown> = { billing };
@@ -139,7 +141,7 @@ async function offerBillingSkillInstall(options: BillingOptions): Promise<void> 
 export async function billingDisable(options: BillingOptions): Promise<void> {
   const targets = parseForTargets(options.for);
   const target = await resolveInstanceTarget(options);
-  assertBillingTarget(target);
+  await assertBillingTarget(target);
 
   // No cascade: leave organization_settings untouched.
   const billing: Record<string, unknown> = {};
