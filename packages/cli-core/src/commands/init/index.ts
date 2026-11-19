@@ -145,8 +145,9 @@ export async function init(options: InitOptions = {}) {
   ].filter((flag): flag is string => Boolean(flag));
   const appleStarter =
     options.starter === true && (options.framework === "ios" || options.framework === MACOS);
+  // The resolved framework, since Android's own flags select its starter without --framework.
   const nativeStarter =
-    appleStarter || (options.starter === true && options.framework === "android");
+    appleStarter || (options.starter === true && frameworkOverride?.dep === "android");
   // Before the link checks below, whose advice (--app) these flags would contradict.
   if (nativeStarter && accountlessFlags.length) rejectAccountlessNative(accountlessFlags);
   // In agent mode, implicitly enable --yes to skip all confirmation prompts.

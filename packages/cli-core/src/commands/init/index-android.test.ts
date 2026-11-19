@@ -332,6 +332,34 @@ describe("clerk init --starter --framework android", () => {
     });
   });
 
+  // Android's own flags select the starter too, so the check can't depend on --framework.
+  test.each([
+    ["--framework android", { framework: "android" }],
+    ["--android-package alone", { androidPackage: "org.acme.app" }],
+  ])(
+    "an agent's new app chosen by %s stops before writing instead of using the link it would inherit",
+    async (_label, flags) => {
+      starter({ isAgent: true });
+      spyOn(config, "resolveProfile").mockResolvedValue({
+        path: "/work",
+        profile: { appId: "app_P", appName: "Parent" },
+      } as never);
+
+      await expect(init({ starter: true, name: "MyApp", ...flags })).rejects.toThrow(
+        "is linked to Parent (app_P), so a new app here would use it too.",
+      );
+      expect(written).toBe(false);
+    },
+  );
+
+  test("--android-package alone refuses the accountless flags like --framework android", async () => {
+    starter();
+    await expect(
+      init({ starter: true, androidPackage: "org.acme.app", accountless: true }),
+    ).rejects.toThrow("link a Clerk application instead");
+    expect(written).toBe(false);
+  });
+
   test("refuses the accountless flags and --android-module before writing", async () => {
     starter();
     await expect(init({ starter: true, framework: "android", accountless: true })).rejects.toThrow(
