@@ -1,16 +1,15 @@
 import { test, expect } from "bun:test";
 import { parse as parsePbxProject } from "@bacons/xcode/json";
-import { mkdtemp, cp, rm, realpath } from "node:fs/promises";
+import { mkdtemp, cp, rm, realpath, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { parseEnv } from "node:util";
 import { gitInit, linkProject } from "./lib/fixture-setup.ts";
 import { log } from "./lib/logger.ts";
 
 const FIXTURES_DIR = join(import.meta.dir, "fixtures");
 const CLI_PATH = join(import.meta.dir, "../../packages/cli-core/src/cli.ts");
 
-/** Native Apple integration requires Xcode; Android keeps the portable setup test. */
+/** Native Apple integration requires Xcode; Android has its own test below. */
 const PLATFORMS = [
   {
     fixture: "ios",
@@ -23,12 +22,6 @@ const PLATFORMS = [
       "packages downloaded",
     ],
     expectedGitEntries: ["M MyApp.xcodeproj/project.pbxproj", "M MyApp/MyAppApp.swift"],
-  },
-  {
-    fixture: "android",
-    detectedName: "Android (Kotlin)",
-    instructions: ["app/build.gradle.kts", "dashboard.clerk.com/~/native-applications"],
-    expectedGitEntries: ["?? .env"],
   },
 ] as const;
 
@@ -141,7 +134,7 @@ test.skipIf(process.platform !== "darwin")(
   { timeout: 30_000 },
 );
 
-test.each(PLATFORMS.filter((item) => item.fixture !== "ios" || process.platform === "darwin"))(
+test.each(PLATFORMS.filter(() => process.platform === "darwin"))(
   "clerk init sets up a $fixture project within its native write boundary",
   async ({ fixture, detectedName, instructions, expectedGitEntries }) => {
     const platformAPIKey =
@@ -257,17 +250,11 @@ test.each(PLATFORMS.filter((item) => item.fixture !== "ios" || process.platform 
         expect(contentView).not.toContain("UserButton(");
         expect(contentView).not.toContain("Clerk.preview()");
         expect(contentView).not.toContain(inlineKey!);
-      } else {
-        const envFile = Bun.file(join(projectDir, ".env"));
-        expect(await envFile.exists()).toBe(true);
-        const envVars = parseEnv(await envFile.text()) as Record<string, string>;
-        expect(envVars["CLERK_PUBLISHABLE_KEY"]).toStartWith("pk_");
-        expect(envVars["CLERK_SECRET_KEY"]).toBeUndefined();
       }
 
       // Everything was committed by gitInit. Only the declared native setup
       // files and any platform-consumed publishable-key file may remain changed.
-      const status = await Bun.$`git status --porcelain`.cwd(projectDir).quiet().nothrow();
+      const status = await Bun.$`git status --porcelain -uall`.cwd(projectDir).quiet().nothrow();
       const entries = status.stdout
         .toString()
         .split("\n")
@@ -339,7 +326,7 @@ test.each(PLATFORMS.filter((item) => item.fixture !== "ios" || process.platform 
         const confirmed = await runRelink(true);
         expect(confirmed.exitCode).toBe(0);
         expect(confirmed.result.remote).toBe("verified");
-      } else expect(entries.sort()).toEqual([...expectedGitEntries].sort());
+      }
     } finally {
       if (iosPlatformStub) await iosPlatformStub.stop(true);
       await rm(projectDir, { recursive: true, force: true }).catch((err) => log(`rm: ${err}`));
@@ -347,4 +334,156 @@ test.each(PLATFORMS.filter((item) => item.fixture !== "ios" || process.platform 
     }
   },
   { timeout: 120_000 },
+);
+
+/**
+ * A fixed certificate fingerprint for the shared e2e application's registration of
+ * `com.clerk.cli.e2e`. The CLI reads this machine's debug keystore as well, so the test points
+ * ANDROID_USER_HOME at an empty folder: a registration can't be amended through the Platform API
+ * yet, and a per-machine fingerprint would stop every later run.
+ */
+const E2E_FINGERPRINT = Array(32).fill("E2").join(":");
+
+/** Where the build step looks for an Android SDK; without one it is skipped, not failed. */
+function androidSdkRoot(): string | undefined {
+  return process.env.ANDROID_HOME || process.env.ANDROID_SDK_ROOT || undefined;
+}
+
+test(
+  "clerk init sets up an Android project, reruns without changes, passes doctor, and builds",
+  async () => {
+    const platformAPIKey = process.env.CLERK_PLATFORM_API_KEY;
+    if (!platformAPIKey) throw new Error("Missing required env var: CLERK_PLATFORM_API_KEY");
+    const tmp = await realpath(tmpdir());
+    const projectDir = await mkdtemp(join(tmp, "clerk-e2e-android-"));
+    const configDir = await mkdtemp(join(tmp, "clerk-e2e-config-"));
+    const androidUserHome = await mkdtemp(join(tmp, "clerk-e2e-android-home-"));
+    const env = {
+      ...process.env,
+      CLERK_CONFIG_DIR: configDir,
+      CLERK_PLATFORM_API_KEY: platformAPIKey,
+      CLERK_TELEMETRY_DISABLED: "1",
+      ANDROID_USER_HOME: androidUserHome,
+    };
+    try {
+      await cp(join(FIXTURES_DIR, "android"), projectDir, { recursive: true });
+      await gitInit(projectDir);
+      await linkProject(projectDir, configDir);
+      const run = async (...args: string[]) =>
+        Bun.$`bun ${CLI_PATH} --mode human init --yes --no-skills --android-fingerprint ${E2E_FINGERPRINT} ${args}`
+          .cwd(projectDir)
+          .env(env)
+          .quiet()
+          .nothrow();
+
+      const first = await run();
+      const output = first.stdout.toString() + first.stderr.toString();
+      log(`Android init output:\n${output}`);
+      expect(first.exitCode).toBe(0);
+      expect(output).toContain("Set up com.clerk.cli.e2e (app)");
+      expect(output).toContain("native registration verified");
+      expect(output).not.toContain("pk_test_");
+
+      const build = await readFile(join(projectDir, "app/build.gradle.kts"), "utf8");
+      expect(build).toContain("implementation(libs.clerk.android.api)");
+      expect(await readFile(join(projectDir, "gradle/libs.versions.toml"), "utf8")).toContain(
+        'clerk-android-api = { module = "com.clerk:clerk-android-api", version.ref = "clerk" }',
+      );
+      const application = await readFile(
+        join(projectDir, "app/src/main/java/com/clerk/cli/e2e/ClerkApplication.kt"),
+        "utf8",
+      );
+      expect(application).toContain(
+        "Clerk.initialize(this, publishableKey = getString(R.string.clerk_publishable_key))",
+      );
+      const manifest = await readFile(join(projectDir, "app/src/main/AndroidManifest.xml"), "utf8");
+      expect(manifest).toContain('android:name=".ClerkApplication"');
+      expect(manifest).toContain('<uses-permission android:name="android.permission.INTERNET" />');
+      const resource = await readFile(
+        join(projectDir, "app/src/main/res/values/clerk.xml"),
+        "utf8",
+      );
+      expect(resource).toMatch(
+        /<string name="clerk_publishable_key" translatable="false">pk_test_/,
+      );
+      expect(resource).not.toContain("sk_");
+      expect(await Bun.file(join(projectDir, ".env")).exists()).toBe(false);
+
+      // Everything was committed by gitInit; only the planned edits may show, and no backups
+      // (every edited file was clean and tracked, so git can restore it).
+      const status = await Bun.$`git status --porcelain -uall`.cwd(projectDir).quiet().nothrow();
+      const entries = status.stdout
+        .toString()
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .sort();
+      expect(entries).toEqual(
+        [
+          "M app/build.gradle.kts",
+          "M app/src/main/AndroidManifest.xml",
+          "M gradle/libs.versions.toml",
+          "?? app/src/main/java/com/clerk/cli/e2e/ClerkApplication.kt",
+          "?? app/src/main/res/values/clerk.xml",
+        ].sort(),
+      );
+
+      const second = await run();
+      expect(second.exitCode).toBe(0);
+      const rerunStatus = await Bun.$`git status --porcelain -uall`
+        .cwd(projectDir)
+        .quiet()
+        .nothrow();
+      expect(rerunStatus.stdout.toString().split("\n").filter(Boolean).sort()).toEqual(
+        status.stdout.toString().split("\n").filter(Boolean).sort(),
+      );
+      expect(await readFile(join(projectDir, "app/build.gradle.kts"), "utf8")).toBe(build);
+
+      const doctor = await Bun.$`bun ${CLI_PATH} --mode human doctor --json`
+        .cwd(projectDir)
+        .env(env)
+        .quiet()
+        .nothrow();
+      const checks = JSON.parse(doctor.stdout.toString()) as {
+        name: string;
+        status: string;
+        message: string;
+      }[];
+      log(`Android doctor output:\n${JSON.stringify(checks, null, 2)}`);
+      expect(checks.map((check) => check.name)).toEqual(
+        expect.arrayContaining(["SDK dependency", "Clerk initialization", "Native registration"]),
+      );
+      expect(checks.filter((check) => check.status === "fail")).toEqual([]);
+
+      const sdkRoot = androidSdkRoot();
+      if (!sdkRoot) {
+        log("Skipping ./gradlew assembleDebug: no Android SDK (ANDROID_HOME or ANDROID_SDK_ROOT).");
+        return;
+      }
+      const gradle = Bun.spawn(["./gradlew", "--no-daemon", "-q", ":app:assembleDebug"], {
+        cwd: projectDir,
+        env: { ...env, ANDROID_HOME: sdkRoot },
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: 600_000,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([
+        new Response(gradle.stdout).text(),
+        new Response(gradle.stderr).text(),
+        gradle.exited,
+      ]);
+      log(`gradle output:\n${stdout}${stderr}`);
+      expect(exitCode).toBe(0);
+      expect(
+        await Bun.file(join(projectDir, "app/build/outputs/apk/debug/app-debug.apk")).exists(),
+      ).toBe(true);
+    } finally {
+      await Promise.all(
+        [projectDir, configDir, androidUserHome].map((path) =>
+          rm(path, { recursive: true, force: true }).catch((err) => log(`rm: ${err}`)),
+        ),
+      );
+    }
+  },
+  { timeout: 900_000 },
 );

@@ -8,7 +8,7 @@ import {
   assertAbsent,
   assertUnchanged,
   createFile,
-  gitDirty,
+  gitStatus,
   gitTracked,
   removeEmptyBackupFolders,
   replaceProject,
@@ -94,6 +94,8 @@ export interface SetupPreview {
   resolvePackages: boolean;
   progress?: (message: string) => void;
   dirtyFiles: string[];
+  /** Files git reported clean before setup, so it can restore them and their backups can go. */
+  cleanGitFiles: string[];
   capabilities?: Awaited<ReturnType<typeof planAllCapabilities>>;
   sdk: ScaffoldPlan["actions"][number];
   sdkCheck: ReturnType<typeof sdkHealth>;
@@ -253,13 +255,15 @@ export async function prepareSetup(
   await assertUnchanged(root, inspection.document);
   for (const snapshot of [...(capabilities?.snapshots ?? []), ...(starter?.snapshots ?? [])])
     await assertUnchanged(root, snapshot);
-  const dirtyFiles = (
-    await Promise.all(
-      local.actions
-        .filter((action) => action.type !== "skip")
-        .map(async (action) => ((await gitDirty(root, action.path)) ? action.path : undefined)),
-    )
-  ).filter((path): path is string => path !== undefined);
+  const gitStatuses = await Promise.all(
+    local.actions
+      .filter((action) => action.type !== "skip")
+      .map(async (action) => [action.path, await gitStatus(root, action.path)] as const),
+  );
+  const dirtyFiles = gitStatuses.filter(([, status]) => status === "dirty").map(([path]) => path);
+  const cleanGitFiles = gitStatuses
+    .filter(([, status]) => status === "clean")
+    .map(([path]) => path);
   const instructions = local.postInstructions;
   if (remote) {
     local.postInstructions = instructions.map((instruction) =>
@@ -303,6 +307,7 @@ export async function prepareSetup(
     sdk: originalAction,
     sdkCheck,
     dirtyFiles,
+    cleanGitFiles,
   };
 }
 
@@ -632,10 +637,10 @@ export async function applySetup(
     result.message = `Local setup stopped (${errorMessage(error)}). Earlier edits were restored where unchanged; review recovery.needsReview and backups for any files requiring attention. No remote changes were attempted.`;
     return finish();
   }
-  // Git restores tracked files that were clean before setup; keep backups for
-  // everything else (uncommitted changes, untracked or ignored files, no Git).
+  // Git restores tracked files that were clean before setup; keep backups for everything else
+  // (uncommitted changes, untracked or ignored files, no Git, or a status that couldn't be read).
   for (const [path, backup] of backups) {
-    if (!preview.dirtyFiles.includes(path) && (await gitTracked(root, path)))
+    if (preview.cleanGitFiles.includes(path) && (await gitTracked(root, path)))
       await unlink(join(root, backup));
     else result.backups.push(backup);
   }

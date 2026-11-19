@@ -1,0 +1,19 @@
+[versions]
+agp = "9.2.1"
+# The Kotlin Gradle plugin on the classpath (here the Compose compiler plugin, as in Android
+# Studio's Empty Activity template) sets the compiler AGP's built-in Kotlin uses; the Clerk SDK
+# needs 2.3 or newer, and AGP 9's own bundle is 2.2.10.
+kotlin = "2.3.21"
+coreKtx = "1.18.0"
+activityCompose = "1.13.0"
+composeBom = "2026.05.01"
+
+[libraries]
+androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
+androidx-activity-compose = { group = "androidx.activity", name = "activity-compose", version.ref = "activityCompose" }
+androidx-compose-bom = { group = "androidx.compose", name = "compose-bom", version.ref = "composeBom" }
+androidx-compose-ui = { group = "androidx.compose.ui", name = "ui" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
