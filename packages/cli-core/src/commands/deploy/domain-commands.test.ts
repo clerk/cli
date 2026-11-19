@@ -345,105 +345,41 @@ describe("clerk deploy domain commands", () => {
       },
     );
 
-    describe("a clerk.app domain on production on a domain you own", () => {
-      const own = domain("example.com", { is_primary: true });
-      const added = domain("acme.clerk.app", { is_clerk_managed: true, cname_targets: [] });
+    test("refuses a clerk.app domain on production on a domain you own", async () => {
+      listReturns([domain("example.com", { is_primary: true })]);
 
-      test("adds it and says how to switch to it", async () => {
-        listReturns([own]);
-        create.mockResolvedValue(added);
+      const error = await addDomain("Acme.clerk.app").catch((e: unknown) => e);
 
-        await addDomain("Acme.clerk.app");
+      expect((error as CliError).code).toBe(ERROR_CODE.NO_CLERK_APP_DOMAIN);
+      expect(create).not.toHaveBeenCalled();
+    });
 
-        expect(create).toHaveBeenCalledWith("app_1", { name: "acme.clerk.app" });
-        expect(report()).toEqual({
-          domain: "acme.clerk.app",
-          kind: "clerk_app",
-          added: true,
-          primary: false,
-          nextAction:
-            "Make acme.clerk.app primary with `clerk deploy use-domain acme.clerk.app` once it's ready.",
-        });
-      });
+    test("refuses a second clerk.app domain before any request", async () => {
+      listReturns([managed]);
 
-      test("tells a person there are no DNS records to add", async () => {
-        setMode("human");
-        listReturns([own]);
-        create.mockResolvedValue(added);
+      const error = await addDomain("other.clerk.app").catch((e: unknown) => e);
 
-        await addDomain("acme.clerk.app");
-
-        expect(captured.err).toContain("Added acme.clerk.app");
-        expect(captured.err).toContain(
-          "No DNS records to add. Your app keeps using its current domain until you make this one primary.",
-        );
-        expect(captured.err).toContain("`clerk deploy use-domain acme.clerk.app`");
-      });
-
-      test("reports it again on a rerun", async () => {
-        listReturns([own, added]);
-
-        await addDomain("acme.clerk.app");
-
-        expect(create).not.toHaveBeenCalled();
-        expect(report()).toMatchObject({ kind: "clerk_app", added: false, primary: false });
-      });
-
-      test("refuses a second clerk.app domain before any request", async () => {
-        listReturns([own, added]);
-
-        const error = await addDomain("other.clerk.app").catch((e: unknown) => e);
-
-        expect((error as CliError).code).toBe(ERROR_CODE.CLERK_APP_DOMAIN_EXISTS);
-        expect((error as CliError).message).toBe(
-          "This instance already has a clerk.app domain. Nothing was added.",
-        );
-        expect(create).not.toHaveBeenCalled();
-      });
-
-      test.each([
-        [
-          403,
-          "feature_not_enabled",
-          ERROR_CODE.CLERK_APP_NOT_ENABLED,
-          "Free clerk.app domains aren't available right now. Nothing was added.",
-        ],
-        [
-          422,
-          "clerk_app_slug_unavailable",
-          ERROR_CODE.CLERK_APP_SLUG_UNAVAILABLE,
-          "This name is taken. Nothing was added.",
-        ],
-        [
-          422,
-          "clerk_app_slug_invalid",
-          ERROR_CODE.CLERK_APP_SLUG_INVALID,
-          "Use 3 to 63 lowercase letters, numbers, and hyphens, with no hyphen at the start or end.",
-        ],
-        [
-          422,
-          "clerk_app_domain_exists",
-          ERROR_CODE.CLERK_APP_DOMAIN_EXISTS,
-          "This instance already has a clerk.app domain. Nothing was added.",
-        ],
-        [
-          400,
-          "instance_type_invalid",
-          ERROR_CODE.INSTANCE_TYPE_INVALID,
-          "Only production instances can add a clerk.app domain. Nothing was added.",
-        ],
-      ] as [number, string, string, string][])(
-        "maps %i %s",
-        async (status, code, cliCode, message) => {
-          listReturns([own]);
-          create.mockRejectedValue(plapiError(status, code, { param_name: "name" }));
-
-          const error = await addDomain("acme.clerk.app").catch((e: unknown) => e);
-
-          expect((error as CliError).code).toBe(cliCode as never);
-          expect((error as CliError).message).toBe(message);
-        },
+      expect((error as CliError).code).toBe(ERROR_CODE.CLERK_APP_DOMAIN_EXISTS);
+      expect((error as CliError).message).toBe(
+        "This instance already has a clerk.app domain. Nothing was added.",
       );
+      expect(create).not.toHaveBeenCalled();
+    });
+
+    test("says a clerk.app domain production moved off can't be primary again", async () => {
+      listReturns([{ ...managed, is_primary: false }, domain("example.com", { is_primary: true })]);
+
+      await addDomain("acme.clerk.app");
+
+      expect(create).not.toHaveBeenCalled();
+      expect(report()).toEqual({
+        domain: "acme.clerk.app",
+        kind: "clerk_app",
+        added: false,
+        primary: false,
+        nextAction:
+          "acme.clerk.app is this application's clerk.app domain. Production moved off it, and it can't become the primary domain again.",
+      });
     });
 
     test("refuses a satellite domain of the application", async () => {

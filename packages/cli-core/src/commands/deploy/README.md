@@ -24,7 +24,6 @@ clerk deploy status        # Verify deploy completion without prompts
 clerk deploy status --mode agent --wait # Agent verification with retrying wait
 clerk deploy add-domain example.com      # Add a domain you own; prints its DNS records
 clerk deploy add-domain acme.netlify.app # Add your app's hosting domain; prints the proxy setup
-clerk deploy add-domain acme.clerk.app   # Add a free clerk.app domain to production on a domain you own
 clerk deploy use-domain example.com      # Make an added domain primary once it is ready
 clerk deploy use-domain example.com --yes # Switch without asking (agents must pass it)
 clerk deploy domains                     # List production's domains
@@ -81,23 +80,20 @@ It then reads the domain list:
 
 - A name that is already added is reported again without a request, so a rerun is safe. A satellite is refused (`deploy_domain_conflict`).
 - An app with no Clerk-managed domain is refused (`no_clerk_app_domain`, exit 1), with the Dashboard's domains page. PLAPI routes names only on an instance with a clerk.app domain, primary or not. So hosting domains can still be added after the move to a domain you own, until the clerk.app domain is shut down.
-- A `<name>.clerk.app` name is the exception. Production on a domain you own can add one, so it can move to clerk.app later with `clerk deploy use-domain` and no downtime. Production that already has a different clerk.app domain is refused (`clerk_app_domain_exists`, exit 1).
+- A `<name>.clerk.app` name that isn't already added is refused (`clerk_app_domain_exists`, exit 1). Production gets its one clerk.app domain only when `clerk deploy` creates it.
 
 Then it sends `POST domains` with `{"name": "<domain>"}`. PLAPI decides the kind and gives a hosting domain the proxy path `/__clerk`.
 
 The report follows the response's `is_web_host`, not the name:
 
 - **Hosting domain.** It says the name is on a hosting provider, so it's added as a hosting domain that can't be made primary. It prints the proxy URL, the proxy setup steps from the Clerk Dashboard (with apps not using a Clerk SDK pointed at the proxy guide), including that hosted sign-in pages don't work on a hosting domain, and a link to the proxy guide. Its notes say the app on the hosting domain uses the same Clerk setup as the primary domain, that a route in the app passes sign-in requests to Clerk so users, sign-in options and emails are all shared, that a backend checking the session token's issuer also accepts the hosting domain's issuer, and the passkey limit. Agent mode prints `domain`, `kind: "hosting"`, `added`, `proxyUrl`, `proxySetup`, `notes`, `docsUrl`, and `nextAction`.
-- **clerk.app domain.** It says there are no DNS records to add and the app keeps its current domain until this one is made primary with `clerk deploy use-domain <domain>`. Agent mode prints `domain`, `kind: "clerk_app"`, `added`, `primary`, and `nextAction`.
+- **clerk.app domain.** Only a rerun on the app's own clerk.app domain gets here. It says the domain is already primary, or, after the move to a domain you own, that it can't become primary again. Agent mode prints `domain`, `kind: "clerk_app"`, `added`, `primary`, and `nextAction`.
 - **Domain you own.** It prints the DNS records and says to make it primary once it's configured with `clerk deploy use-domain <domain>`, which reports which of DNS, SSL, and email DNS are still pending and switches once they all pass. Agent mode prints `domain`, `kind: "custom"`, `added`, `primary`, `dnsRecords`, and `nextAction`. A rerun after the switch says the domain is already primary.
 
 | PLAPI error                                     | CLI code                                    | Meaning                                                            |
 | ----------------------------------------------- | ------------------------------------------- | ------------------------------------------------------------------ |
 | 403 `feature_not_enabled`                       | `clerk_app_not_enabled`                     | The application can't use clerk.app domains, so it can't add here. |
-| 422 `clerk_app_slug_invalid`                    | `clerk_app_slug_invalid`                    | The clerk.app name isn't a valid label.                            |
-| 422 `clerk_app_slug_unavailable`                | `clerk_app_slug_unavailable`                | The clerk.app name is taken.                                       |
 | 422 `clerk_app_domain_exists`                   | `clerk_app_domain_exists`                   | Production already has a clerk.app domain.                         |
-| 400 `instance_type_invalid` (clerk.app names)   | `instance_type_invalid`                     | Only production instances can add a clerk.app domain.              |
 | 422 `known_hosting_domain`                      | `known_hosting_domain`                      | PLAPI refuses the hosting provider, so its suffix list differs.    |
 | 422 `custom_domain_beside_clerk_managed_exists` | `custom_domain_beside_clerk_managed_exists` | Production already has a domain you own. The message names it.     |
 | 422 `form_identifier_exists` on `name`          | `domain_taken`                              | The name is already added to a Clerk instance.                     |
@@ -256,7 +252,6 @@ PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`.
 | 422 `clerk_app_slug_invalid`                    | `clerk_app_slug_invalid`                    |
 | 422 `clerk_app_slug_unavailable`                | `clerk_app_slug_unavailable`                |
 | 422 `clerk_app_domain_exists`                   | `clerk_app_domain_exists`                   |
-| 400 `instance_type_invalid` (add-domain)        | `instance_type_invalid`                     |
 | 422 `domain_not_ready_for_primary`              | `domain_not_ready`                          |
 | 422 `home_url_taken`                            | `home_url_taken`                            |
 | 422 `known_hosting_domain`                      | `known_hosting_domain`                      |

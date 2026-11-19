@@ -35,10 +35,6 @@ export type MapDeployErrorOptions<T> = {
   knownHostingDomainMessage?: string;
   /** `custom_domain_beside_clerk_managed_exists` can name the domain only when the caller already read it. */
   customDomainExistsMessage?: string;
-  /** Replaces PLAPI's own message for `clerk_app_slug_unavailable`. */
-  slugUnavailableMessage?: string;
-  /** `instance_type_invalid` is a generic PLAPI code, like `feature_not_enabled`. */
-  instanceTypeInvalidMessage?: string;
 };
 
 export async function mapDeployError<T>(
@@ -112,21 +108,13 @@ function translatePlapiError<T>(
 
   if (status === 422 && code === "clerk_app_slug_unavailable") {
     return new CliError(
-      options.slugUnavailableMessage ||
-        error.longMessage ||
-        "That clerk.app name is not available. Choose another name.",
+      error.longMessage || "That clerk.app name is not available. Choose another name.",
       { code: ERROR_CODE.CLERK_APP_SLUG_UNAVAILABLE },
     );
   }
 
   if (status === 422 && code === "clerk_app_domain_exists") {
     return new CliError(CLERK_APP_DOMAIN_EXISTS, { code: ERROR_CODE.CLERK_APP_DOMAIN_EXISTS });
-  }
-
-  if (status === 400 && code === "instance_type_invalid" && options.instanceTypeInvalidMessage) {
-    return new CliError(options.instanceTypeInvalidMessage, {
-      code: ERROR_CODE.INSTANCE_TYPE_INVALID,
-    });
   }
 
   if (status === 422 && code === "web_host_cannot_be_primary") {

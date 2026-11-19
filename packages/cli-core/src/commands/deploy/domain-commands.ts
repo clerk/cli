@@ -27,9 +27,6 @@ const PROXY_DOCS_URL = "https://clerk.com/docs/guides/dashboard/dns-domains/prox
 const ADD_NOT_ENABLED =
   "This application can't use clerk.app domains, so it can't add domains here. Manage its domains in the Clerk Dashboard.";
 
-const CLERK_APP_NOT_AVAILABLE =
-  "Free clerk.app domains aren't available right now. Nothing was added.";
-
 const PROXY_INTRO =
   `Your app has to forward every request under ${PROXY_PATH} to Clerk. A plain rewrite isn't enough, ` +
   "because each request needs your secret key and the Clerk proxy headers.";
@@ -59,8 +56,8 @@ function hostingNotes(name: string, issuer: string): string[] {
  * PLAPI routes a name by itself: on an instance with a clerk.app domain, a
  * hosting provider's URL becomes a hosting domain served through the Clerk
  * proxy, and any other name becomes the instance's one custom domain. A
- * `<slug>.clerk.app` name becomes the instance's one clerk.app domain on any
- * production instance.
+ * clerk.app domain is never added here: production gets one only when
+ * `clerk deploy` creates it.
  */
 export type AddDomainReport =
   | {
@@ -155,12 +152,7 @@ export async function addDomain(rawDomain: string): Promise<void> {
     return;
   }
 
-  const clerkAppName = isClerkAppName(name);
-  const clerkApp = domains.find((d) => d.is_clerk_managed);
-  if (clerkAppName && clerkApp) {
-    throw new CliError(CLERK_APP_DOMAIN_EXISTS, { code: ERROR_CODE.CLERK_APP_DOMAIN_EXISTS });
-  }
-  if (!clerkAppName && !clerkApp) {
+  if (!domains.some((d) => d.is_clerk_managed)) {
     const primary = domains.find((d) => d.is_primary);
     throw new CliError(
       `\`clerk deploy add-domain\` adds domains to an app on clerk.app, and production uses ${primary?.name ?? "another domain"} with no clerk.app domain. ` +
@@ -168,24 +160,17 @@ export async function addDomain(rawDomain: string): Promise<void> {
       { code: ERROR_CODE.NO_CLERK_APP_DOMAIN },
     );
   }
+  if (isClerkAppName(name)) {
+    throw new CliError(CLERK_APP_DOMAIN_EXISTS, { code: ERROR_CODE.CLERK_APP_DOMAIN_EXISTS });
+  }
 
   const own = domains.find((d) => !d.is_satellite && !d.is_web_host && !d.is_clerk_managed);
   const domain = await withSpinner(`Adding ${name}...`, async () =>
-    mapDeployError(
-      createApplicationDomain(appId, { name }),
-      clerkAppName
-        ? {
-            featureNotEnabledMessage: CLERK_APP_NOT_AVAILABLE,
-            slugUnavailableMessage: "This name is taken. Nothing was added.",
-            instanceTypeInvalidMessage:
-              "Only production instances can add a clerk.app domain. Nothing was added.",
-          }
-        : {
-            featureNotEnabledMessage: ADD_NOT_ENABLED,
-            knownHostingDomainMessage: unsupportedHosting(name),
-            customDomainExistsMessage: own && secondOwnDomain(own),
-          },
-    ),
+    mapDeployError(createApplicationDomain(appId, { name }), {
+      featureNotEnabledMessage: ADD_NOT_ENABLED,
+      knownHostingDomainMessage: unsupportedHosting(name),
+      customDomainExistsMessage: own && secondOwnDomain(own),
+    }),
   );
   emitAddDomainReport(buildAddDomainReport(domain, true));
 }
@@ -213,7 +198,7 @@ function buildAddDomainReport(domain: ApplicationDomain, added: boolean): AddDom
       primary,
       nextAction: primary
         ? `${name} is already production's primary domain. Nothing changed.`
-        : `Make ${name} primary with \`clerk deploy use-domain ${name}\` once it's ready.`,
+        : `${name} is this application's clerk.app domain. Production moved off it, and it can't become the primary domain again.`,
     };
   }
   if (domain.is_web_host) {
@@ -281,14 +266,7 @@ export function emitAddDomainReport(report: AddDomainReport): void {
   }
   if (report.added) log.success(`Added ${report.domain}`);
   else log.info(`${report.domain} is already one of your domains`);
-  if (report.kind === "clerk_app") {
-    if (!report.primary) {
-      log.blank();
-      log.info(
-        "No DNS records to add. Your app keeps using its current domain until you make this one primary.",
-      );
-    }
-  } else if (report.dnsRecords.length > 0) {
+  if (report.kind === "custom" && report.dnsRecords.length > 0) {
     log.blank();
     for (const line of dnsRecords(report.dnsRecords)) log.info(line);
   }

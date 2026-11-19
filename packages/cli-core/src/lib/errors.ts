@@ -93,10 +93,8 @@ export const ERROR_CODE = {
   PRIMARY_NOT_CLERK_MANAGED: "primary_not_clerk_managed",
   /** `add-domain` adds domains only to an app with a clerk.app domain. */
   NO_CLERK_APP_DOMAIN: "no_clerk_app_domain",
-  /** `add-domain` names a clerk.app domain, and production already has another. */
+  /** `add-domain` names a clerk.app domain it hasn't got, and production already has one. */
   CLERK_APP_DOMAIN_EXISTS: "clerk_app_domain_exists",
-  /** `add-domain` names a clerk.app domain for an instance that isn't production. */
-  INSTANCE_TYPE_INVALID: "instance_type_invalid",
   /** Production already has a domain you own beside its clerk.app domain. */
   CUSTOM_DOMAIN_BESIDE_CLERK_MANAGED_EXISTS: "custom_domain_beside_clerk_managed_exists",
   /** `use-domain` names a domain production doesn't have yet. */
