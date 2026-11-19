@@ -1,0 +1,970 @@
+{
+  "source": "nimbus",
+  "seedPassword": "Kk4aPMeiaRpAs2OeX1NE",
+  "metadataPlacement": "advisory",
+  "sensitive": [
+    "acct_note"
+  ],
+  "users": [
+    {
+      "externalId": "70000",
+      "primaryEmail": "daphne.treutel1@example.com",
+      "emails": [
+        "daphne.treutel1@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "daphne_treutel",
+      "firstName": "Daphne",
+      "lastName": "Treutel",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "ref": "organic"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70011",
+      "primaryEmail": "sandra.lowe2@example.com",
+      "emails": [
+        "sandra.lowe2@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "corp"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70022",
+      "primaryEmail": "sarai.oreillyemard3@example.com",
+      "emails": [
+        "sarai.oreillyemard3@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": true,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "corp",
+        "lang": "en"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70033",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+447814400660",
+      "phones": [
+        "+447814400660"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Emery",
+      "lastName": "Fahey",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "corp",
+        "lang": "es"
+      },
+      "privateMetadata": {
+        "ref": "ads"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70044",
+      "primaryEmail": "haylee.prohaska5@example.com",
+      "emails": [
+        "haylee.prohaska5@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Haylee",
+      "lastName": "Prohaska",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "ref": "organic",
+        "acct_note": "utrum conscendo harum talio"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70055",
+      "emails": [],
+      "unverifiedEmails": [
+        "evelyn.fahey6@example.com"
+      ],
+      "primaryPhone": "+4915140928514",
+      "phones": [
+        "+4915140928514"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Evelyn",
+      "lastName": "Fahey",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70066",
+      "primaryEmail": "hank.frami7@example.com",
+      "emails": [
+        "hank.frami7@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": true,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "corp"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70077",
+      "primaryEmail": "ignatius.orn8@example.com",
+      "emails": [
+        "ignatius.orn8@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "ignatius.orn",
+      "firstName": "Ignatius",
+      "lastName": "Orn",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70088",
+      "primaryEmail": "deshaun.emard9@example.com",
+      "emails": [
+        "deshaun.emard9@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+33628775843",
+      "phones": [
+        "+33628775843"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Deshaun",
+      "lastName": "Emard",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "ref": "partner",
+        "acct_note": "adsuesco solvo carcer curis"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70099",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+34644551346",
+      "phones": [
+        "+34644551346"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Marguerite",
+      "lastName": "Stamm",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "corp",
+        "lang": "es"
+      },
+      "privateMetadata": {
+        "ref": "organic"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70110",
+      "primaryEmail": "norberto.farrell11@example.com",
+      "emails": [
+        "norberto.farrell11@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [
+        "+393506414091"
+      ],
+      "firstName": "Norberto",
+      "lastName": "Farrell",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70121",
+      "primaryEmail": "yessenia.price12@example.com",
+      "emails": [
+        "yessenia.price12@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Yessenia",
+      "lastName": "Price",
+      "banned": true,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "team",
+        "lang": "es"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70132",
+      "primaryEmail": "norbert.schinner13@example.com",
+      "emails": [
+        "norbert.schinner13@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Norbert",
+      "lastName": "Schinner",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "ref": "organic"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70143",
+      "emails": [],
+      "unverifiedEmails": [
+        "gage.schamberger14@example.com"
+      ],
+      "primaryPhone": "+31689417082",
+      "phones": [
+        "+31689417082"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Gage",
+      "lastName": "Schamberger",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "team",
+        "lang": "en"
+      },
+      "privateMetadata": {
+        "ref": "partner"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70154",
+      "primaryEmail": "frida.kunze15@example.com",
+      "emails": [
+        "frida.kunze15@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70165",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+46766581929",
+      "phones": [
+        "+46766581929"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Bartholome",
+      "lastName": "Turcotte",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "team"
+      },
+      "privateMetadata": {
+        "ref": "organic"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70176",
+      "primaryEmail": "sincere.dooley17@example.com",
+      "emails": [
+        "sincere.dooley17@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+353853117530",
+      "phones": [
+        "+353853117530"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Sincere",
+      "lastName": "Dooley",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "corp"
+      },
+      "privateMetadata": {
+        "ref": "ads"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70187",
+      "emails": [],
+      "unverifiedEmails": [
+        "damion.wilkinson18@example.com"
+      ],
+      "primaryPhone": "+14165550106",
+      "phones": [
+        "+14165550106"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "ref": "ads"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70198",
+      "primaryEmail": "matilda.larkin19@example.com",
+      "emails": [
+        "matilda.larkin19@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Matilda",
+      "lastName": "Larkin",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70209",
+      "primaryEmail": "corene.kunze20@example.com",
+      "emails": [
+        "corene.kunze20@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "corene.kunze",
+      "firstName": "Corene",
+      "lastName": "Kunze",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "solo"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70220",
+      "primaryEmail": "edgardo.ratke21@example.com",
+      "emails": [
+        "edgardo.ratke21@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "solo",
+        "lang": "en"
+      },
+      "privateMetadata": {
+        "ref": "ads",
+        "acct_note": "cumque sulum tabella ustulo"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70231",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+16475550106",
+      "phones": [
+        "+16475550106"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "team",
+        "lang": "en"
+      },
+      "privateMetadata": {
+        "ref": "organic",
+        "acct_note": "tabgo taedium turba trans"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70242",
+      "primaryEmail": "fletcher.rogahn23@example.com",
+      "emails": [
+        "fletcher.rogahn23@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "team",
+        "lang": "en"
+      },
+      "privateMetadata": {
+        "ref": "partner"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70253",
+      "primaryEmail": "demetris.konopelski24@example.com",
+      "emails": [
+        "demetris.konopelski24@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "solo"
+      },
+      "privateMetadata": {
+        "ref": "partner"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70264",
+      "primaryEmail": "gabriella.hudson25@example.com",
+      "emails": [
+        "gabriella.hudson25@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "solo"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70275",
+      "primaryEmail": "corine.abshire26@example.com",
+      "emails": [
+        "corine.abshire26@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "solo",
+        "lang": "es"
+      },
+      "privateMetadata": {
+        "ref": "partner",
+        "acct_note": "voluptatum absque curis thermae"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70286",
+      "primaryEmail": "lillian.hegmann27@example.com",
+      "emails": [
+        "lillian.hegmann27@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "lillian_hegmann",
+      "firstName": "Lillian",
+      "lastName": "Hegmann",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "corp"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70297",
+      "emails": [],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "nina_huels",
+      "firstName": "Nina",
+      "lastName": "Huels",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "team"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70308",
+      "primaryEmail": "alysa.oconnell29@example.com",
+      "emails": [
+        "alysa.oconnell29@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "alysa.oconnell78",
+      "firstName": "Alysa",
+      "lastName": "O'Connell",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "ref": "organic",
+        "acct_note": "somniculosus copia complectus quia"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70319",
+      "primaryEmail": "devante.gutmann30@example.com",
+      "emails": [
+        "devante.gutmann30@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Devante",
+      "lastName": "Gutmann",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70330",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+14375550106",
+      "phones": [
+        "+14375550106"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Valerie",
+      "lastName": "Zieme",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "team"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70341",
+      "primaryEmail": "jacky.kirlin32@example.com",
+      "emails": [
+        "jacky.kirlin32@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+19055550106",
+      "phones": [
+        "+19055550106"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "solo",
+        "lang": "en"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70352",
+      "primaryEmail": "nellie.jast33@example.com",
+      "emails": [
+        "nellie.jast33@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+16045550106",
+      "phones": [
+        "+16045550106"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "ref": "ads"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70363",
+      "primaryEmail": "brisa.hammes34@example.com",
+      "emails": [
+        "brisa.hammes34@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "solo"
+      },
+      "privateMetadata": {
+        "ref": "organic"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70374",
+      "primaryEmail": "alana.jacobi35@example.com",
+      "emails": [
+        "alana.jacobi35@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Alana",
+      "lastName": "Jacobi",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "ref": "ads"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70385",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+17785550106",
+      "phones": [
+        "+17785550106"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Jesus",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "corp"
+      },
+      "privateMetadata": {
+        "ref": "partner"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70396",
+      "emails": [],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "shyanne_funk",
+      "firstName": "Shyanne",
+      "lastName": "Funk",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70407",
+      "primaryEmail": "jake.schowalter38@example.com",
+      "emails": [
+        "jake.schowalter38@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Jake",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70418",
+      "primaryEmail": "isabell.sporer39@example.com",
+      "emails": [
+        "isabell.sporer39@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "corp",
+        "lang": "en"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70429",
+      "primaryEmail": "athena.hodkiewicz40@example.com",
+      "emails": [
+        "athena.hodkiewicz40@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70440",
+      "primaryEmail": "margie.schiller41@example.com",
+      "emails": [
+        "margie.schiller41@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "margie_schiller89",
+      "firstName": "Margie",
+      "lastName": "Schiller",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "corp",
+        "lang": "en"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70451",
+      "emails": [],
+      "unverifiedEmails": [
+        "danny.mcdermott42@example.com"
+      ],
+      "primaryPhone": "+15145550106",
+      "phones": [
+        "+15145550106"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Danny",
+      "lastName": "McDermott",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "solo",
+        "lang": "es"
+      },
+      "privateMetadata": {
+        "ref": "partner"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70462",
+      "skip": "soft-deleted at the source",
+      "primaryEmail": "donald.zulauf43@example.com",
+      "emails": [
+        "donald.zulauf43@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "corp"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70473",
+      "primaryEmail": "mike.anderson44@example.com",
+      "emails": [
+        "mike.anderson44@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+14385550106",
+      "phones": [
+        "+14385550106"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70484",
+      "primaryEmail": "eulalia.bednar45@example.com",
+      "emails": [
+        "eulalia.bednar45@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "solo"
+      },
+      "privateMetadata": {
+        "ref": "ads"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70495",
+      "skip": "soft-deleted at the source",
+      "primaryEmail": "garth.rodriguez46@example.com",
+      "emails": [
+        "garth.rodriguez46@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "team"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70506",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+12125550106",
+      "phones": [
+        "+12125550106"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70517",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+16465550106",
+      "phones": [
+        "+16465550106"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "solo",
+        "lang": "es"
+      },
+      "privateMetadata": {
+        "ref": "ads"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70528",
+      "emails": [],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "reuben_turner",
+      "firstName": "Reuben",
+      "lastName": "Turner",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "plan": "team"
+      },
+      "privateMetadata": {
+        "ref": "partner"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70539",
+      "primaryEmail": "allen.monahan50@example.com",
+      "emails": [
+        "allen.monahan50@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Allen",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "plan": "corp"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    }
+  ]
+}

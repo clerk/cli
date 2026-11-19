@@ -101,6 +101,10 @@ bun test ./test/e2e/react.test.ts --parallel --retry 1
 
 E2E test files live in `test/e2e/`, with fixture projects in `test/e2e/fixtures/`. Fixture config lives in `test/e2e/fixtures.manifest.ts`, keyed by fixture name; each test file calls `createFixtureHarness("<name>")` and passes the returned harness to `runFixtureTests()` and `runBrowserTests()` from `test/e2e/lib/`. See `.claude/rules/e2e.md` for full details on adding fixtures and required env vars.
 
+### Live migrate tests
+
+`test/migrate-live/` holds live end-to-end tests of `clerk migrate` against real provider accounts and Clerk instances. They never run in PR CI; they run weekly in `.github/workflows/migrate-live.yml`, and locally with `bun run test:migrate-live -p better-auth -v B0` (secrets from 1Password). See `test/migrate-live/README.md`.
+
 ## Opening a pull request
 
 1. Search for open or closed [pull requests](https://github.com/clerk/cli/pulls) that relate to your submission to avoid duplicating effort

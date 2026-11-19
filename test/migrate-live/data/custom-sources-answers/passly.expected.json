@@ -1,0 +1,989 @@
+{
+  "source": "passly",
+  "seedPassword": "Kk4aPMeiaRpAs2OeX1NE",
+  "metadataPlacement": "strict",
+  "sensitive": [
+    "crm_id"
+  ],
+  "users": [
+    {
+      "externalId": "d443a4ca-30a4-457c-9baf-14edb608cac8",
+      "primaryEmail": "bart.reichel1@example.com",
+      "emails": [
+        "bart.reichel1@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": true,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Asia/Aqtobe",
+        "bio": "caption supporter  🍡"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_78218"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "330d7278-6f2f-426b-8fe9-e208781cf5e1",
+      "primaryEmail": "lane.beatty2@example.com",
+      "emails": [
+        "lane.beatty2@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Lane",
+      "lastName": "Beatty",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "timezone": "Asia/Bahrain",
+        "bio": "couch devotee, filmmaker"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_82838",
+        "lifetime_value": 325
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "9c86fc1a-ad00-4cea-8062-a147355eb700",
+      "primaryEmail": "nicola.blick3@example.com",
+      "emails": [
+        "nicola.blick3@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_50911",
+        "lifetime_value": 2411
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "eaa98ffa-eae1-40ab-8530-2b12085ac795",
+      "primaryEmail": "marilyn.wuckert4@example.com",
+      "emails": [
+        "marilyn.wuckert4@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Marilyn",
+      "lastName": "Wuckert",
+      "banned": true,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "676a3b5b-e5e2-47c0-acc2-3835fe3be9dc",
+      "primaryEmail": "felicita.bashirian5@example.com",
+      "emails": [
+        "felicita.bashirian5@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+447206576422",
+      "phones": [
+        "+447206576422"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Felicita",
+      "lastName": "Bashirian",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Asia/Samarkand"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_48867"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "72b4b726-ed7c-45eb-bc4d-61a3c07e9bf7",
+      "emails": [],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "olivia_auer76",
+      "firstName": "Olivia",
+      "lastName": "Auer",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "332ac93a-13c6-4b73-8a4b-b9df473f60e8",
+      "primaryEmail": "nils.veum7@example.com",
+      "emails": [
+        "nils.veum7@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [
+        "+4915157715650"
+      ],
+      "username": "nils_veum0",
+      "firstName": "Nils",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_16440",
+        "lifetime_value": 146
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "98fe291b-907d-4792-ae79-c2b05a2352f3",
+      "primaryEmail": "jess.osinski8@example.com",
+      "emails": [
+        "jess.osinski8@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+33685754195",
+      "phones": [
+        "+33685754195"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Africa/Kinshasa"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "de27342f-f93b-4b61-bdce-af77a68ccba1",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+34612414317",
+      "phones": [
+        "+34612414317"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Daron",
+      "lastName": "Huels",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_23869",
+        "lifetime_value": 1076
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "b7cc3175-a48d-4dbf-b976-aaf6a056669c",
+      "emails": [],
+      "unverifiedEmails": [
+        "ubaldo.waelchi10@example.com"
+      ],
+      "primaryPhone": "+393501088154",
+      "phones": [
+        "+393501088154"
+      ],
+      "unverifiedPhones": [],
+      "username": "ubaldo.waelchi",
+      "firstName": "Ubaldo",
+      "lastName": "Waelchi",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Australia/Melbourne",
+        "avatar_color": "#e1b959"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "99e26aa0-c1ae-4f93-898a-47b25b6bbc3c",
+      "emails": [],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "brett_wilderman84",
+      "firstName": "Brett",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "America/Chihuahua",
+        "avatar_color": "#b7cda2",
+        "bio": "grad, veteran, teacher 🍀"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_64613"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "3f361f21-e3b6-4c06-991e-aaf585e51b92",
+      "primaryEmail": "kareem.langosh12@example.com",
+      "emails": [
+        "kareem.langosh12@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+31659499460",
+      "phones": [
+        "+31659499460"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "America/Yellowknife",
+        "bio": "fisherman supporter  🎚️"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_90271"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "c413235e-94ed-4b0c-acab-144f1a01e1ac",
+      "primaryEmail": "carol.mohrerdman13@example.com",
+      "emails": [
+        "carol.mohrerdman13@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+46761969114",
+      "phones": [
+        "+46761969114"
+      ],
+      "unverifiedPhones": [],
+      "username": "carol_mohrerdman45",
+      "firstName": "Carol",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "28b4dd04-7c26-4369-893b-5f746ac8af20",
+      "primaryEmail": "filomena.stiedemann14@example.com",
+      "emails": [
+        "filomena.stiedemann14@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": true,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Australia/Melbourne",
+        "avatar_color": "#9bb0ed"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "5f2688cc-e49f-4020-8704-63bb402d097a",
+      "primaryEmail": "miguel.kuhlman15@example.com",
+      "emails": [
+        "miguel.kuhlman15@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "timezone": "America/Tegucigalpa",
+        "bio": "environmentalist, traveler, creator"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "f3c514ba-0a36-4062-a49f-27a05c2c8f47",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+353872581923",
+      "phones": [
+        "+353872581923"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Quentin",
+      "lastName": "McClure",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "999d76b2-bbb0-4408-81b8-8753fe45726d",
+      "primaryEmail": "dahlia.hermann17@example.com",
+      "emails": [
+        "dahlia.hermann17@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "dahlia.hermann79",
+      "firstName": "Dahlia",
+      "lastName": "Hermann",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Asia/Novosibirsk",
+        "bio": "produce devotee, person 🇰🇪"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "804dac99-a665-48b2-b36c-c63b58d9e1d7",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+14165550102",
+      "phones": [
+        "+14165550102"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "79b6cceb-1762-452e-8ff8-d180e11d9b9e",
+      "emails": [],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "frieda.johns33",
+      "firstName": "Frieda",
+      "lastName": "Johns",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "2fc2c773-70f9-4dee-8059-19005ed8abf9",
+      "primaryEmail": "rosetta.price20@example.com",
+      "emails": [
+        "rosetta.price20@example.com"
+      ],
+      "unverifiedEmails": [],
+      "primaryPhone": "+16475550102",
+      "phones": [
+        "+16475550102"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Rosetta",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "dc4d4a9a-a2cf-4869-a630-6fbee3f4639e",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+14375550102",
+      "phones": [
+        "+14375550102"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Consuelo",
+      "lastName": "Weber",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_20138",
+        "lifetime_value": 2420
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "dddbcba4-b126-4f4b-b224-3178ee1aa6a8",
+      "primaryEmail": "jaeden.littel22@example.com",
+      "emails": [
+        "jaeden.littel22@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_31278"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "ed4b322f-616b-40fb-9226-fb046eaa5e91",
+      "primaryEmail": "elfrieda.monahan23@example.com",
+      "emails": [
+        "elfrieda.monahan23@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "elfrieda.monahan",
+      "firstName": "Elfrieda",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_89696"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "70bfc514-0282-4c57-8ae8-2e0dd155de71",
+      "primaryEmail": "tara.okeefe24@example.com",
+      "emails": [
+        "tara.okeefe24@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Tara",
+      "lastName": "O'Keefe",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "timezone": "Asia/Tokyo",
+        "avatar_color": "#3a1fb3",
+        "bio": "iridescence devotee"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_99894"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "52a953d0-7c2c-40e0-a9a1-35140fc90909",
+      "primaryEmail": "elliot.mohr25@example.com",
+      "emails": [
+        "elliot.mohr25@example.com",
+        "elliot.mohr25.alt@example.org"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "America/Atikokan"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "19164c61-aa9c-4e4f-bf80-6af5e1f15744",
+      "primaryEmail": "brennan.jones26@example.com",
+      "emails": [
+        "brennan.jones26@example.com",
+        "brennan.jones26.alt@example.org"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Europe/Busingen"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "371a37dd-3640-48ab-b4ef-048fab329140",
+      "primaryEmail": "estell.witting27@example.com",
+      "emails": [
+        "estell.witting27@example.com",
+        "estell.witting27.alt@example.org"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Australia/Perth",
+        "bio": "testimonial junkie, friend 🧪"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "3ae617c8-2b13-4bee-836a-fe581048dbf3",
+      "primaryEmail": "bernardo.braun28@example.com",
+      "emails": [
+        "bernardo.braun28@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "4a142cff-8848-4c7b-b934-dcede291ba46",
+      "primaryEmail": "verona.flatley29@example.com",
+      "emails": [
+        "verona.flatley29@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "verona_flatley20",
+      "firstName": "Verona",
+      "lastName": "Flatley",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_56867",
+        "lifetime_value": 1992
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "4d6a0149-abaf-41f6-8307-0f76dd9a3334",
+      "emails": [],
+      "unverifiedEmails": [
+        "lloyd.barton30@example.com"
+      ],
+      "primaryPhone": "+19055550102",
+      "phones": [
+        "+19055550102"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Lloyd",
+      "lastName": "Barton",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Asia/Riyadh"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_42696"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "353044a4-4dec-4fb2-b7b5-dbdddae11d26",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+16045550102",
+      "phones": [
+        "+16045550102"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Pacific/Wallis",
+        "avatar_color": "#51d034",
+        "bio": "dwell fan, person"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_54314"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "0d9117d9-bb18-4d8e-a2ae-91c05d1d50a3",
+      "primaryEmail": "joany.beahan32@example.com",
+      "emails": [
+        "joany.beahan32@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "joany_beahan",
+      "firstName": "Joany",
+      "lastName": "Beahan",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_65843",
+        "lifetime_value": 2734
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "3cfc2f5a-5c23-49a8-9c82-d22b8933d1ba",
+      "primaryEmail": "seth.blanda33@example.com",
+      "emails": [
+        "seth.blanda33@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Seth",
+      "lastName": "Blanda",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "e0b4263b-487f-40a3-8214-33de2d96fb68",
+      "primaryEmail": "jaron.swift34@example.com",
+      "emails": [
+        "jaron.swift34@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "c693e711-b252-47c4-b6b4-9ec7674c4f87",
+      "primaryEmail": "layne.barrows35@example.com",
+      "emails": [
+        "layne.barrows35@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Pacific/Guadalcanal",
+        "bio": "environmentalist, film lover"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_37073",
+        "lifetime_value": 2815
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "68c1a13c-1a8b-4f99-864e-7ca95d2fad35",
+      "primaryEmail": "junius.bogisich36@example.com",
+      "emails": [
+        "junius.bogisich36@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Junius",
+      "lastName": "Bogisich",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Africa/Kampala",
+        "bio": "middle junkie, student"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_14612",
+        "lifetime_value": 4350
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "453d6e1c-7174-4361-9ff5-823696ce459d",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+17785550102",
+      "phones": [
+        "+17785550102"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Lucas",
+      "lastName": "Cartwright",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "timezone": "Indian/Antananarivo",
+        "bio": "alb fan, model 👍"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "26c8724a-2236-47a9-b8f3-6b6c2ec063e0",
+      "primaryEmail": "damien.bartell38@example.com",
+      "emails": [
+        "damien.bartell38@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Damien",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "timezone": "Pacific/Tahiti",
+        "bio": "peninsula junkie  🇵🇰"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_82701",
+        "lifetime_value": 2882
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "b8bdca97-18b2-4dc4-ba99-69e5b6269121",
+      "primaryEmail": "alexanne.klein39@example.com",
+      "emails": [
+        "alexanne.klein39@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Alexanne",
+      "lastName": "Klein",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Europe/Tallinn"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_53894",
+        "lifetime_value": 1348
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "f6f27dba-48b5-4793-905e-0b1576675b46",
+      "primaryEmail": "skylar.hyatt40@example.com",
+      "emails": [
+        "skylar.hyatt40@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {
+        "timezone": "Pacific/Palau",
+        "avatar_color": "#1b66e8"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_52969"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "a81ecad1-04af-4de1-bbbf-2a3f7febfaa0",
+      "primaryEmail": "carli.ankunding41@example.com",
+      "emails": [
+        "carli.ankunding41@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "carli_ankunding",
+      "firstName": "Carli",
+      "lastName": "Ankunding",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Indian/Cocos"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_28833",
+        "lifetime_value": 302
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "b4c5eca9-3626-439f-92f2-df2460cce30c",
+      "primaryEmail": "hershel.feil42@example.com",
+      "emails": [
+        "hershel.feil42@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Hershel",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Africa/Luanda",
+        "avatar_color": "#5cb1cd"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_11922",
+        "lifetime_value": 3386
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "9e9556c6-1b7c-4504-ab6f-a63fc2dd27df",
+      "primaryEmail": "fernando.jones43@example.com",
+      "emails": [
+        "fernando.jones43@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "b5d5a958-7782-4b3f-a053-308d75ce3c2f",
+      "primaryEmail": "alva.ohara44@example.com",
+      "emails": [
+        "alva.ohara44@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "username": "alva_ohara",
+      "firstName": "Alva",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Pacific/Noumea",
+        "avatar_color": "#72c2cb",
+        "bio": "valuable junkie, model"
+      },
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "82ab54c4-277e-4f39-9fc7-90588ed6c21e",
+      "primaryEmail": "payton.stracke45@example.com",
+      "emails": [
+        "payton.stracke45@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "77329ccc-d8bd-4b16-aa5a-641576d136f0",
+      "emails": [],
+      "unverifiedEmails": [
+        "giovanni.hermandamore46@example.com"
+      ],
+      "primaryPhone": "+15145550102",
+      "phones": [
+        "+15145550102"
+      ],
+      "unverifiedPhones": [],
+      "username": "giovanni.hermandamore",
+      "firstName": "Giovanni",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_45544"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "2240f85e-7ddf-47da-8df5-8844e286358d",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+14385550102",
+      "phones": [
+        "+14385550102"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Evan",
+      "lastName": "Reilly",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_28028"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "6a07ef8e-8f8d-4554-bc50-a673b490a557",
+      "emails": [],
+      "unverifiedEmails": [],
+      "primaryPhone": "+12125550102",
+      "phones": [
+        "+12125550102"
+      ],
+      "unverifiedPhones": [],
+      "firstName": "Chance",
+      "lastName": "Murphy",
+      "banned": false,
+      "hasPassword": false,
+      "publicMetadata": {},
+      "privateMetadata": {
+        "crm_id": "hs_42977"
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "0cb76960-0509-4535-82f4-7b7bad549e4b",
+      "primaryEmail": "burnice.lang49@example.com",
+      "emails": [
+        "burnice.lang49@example.com"
+      ],
+      "unverifiedEmails": [],
+      "phones": [],
+      "unverifiedPhones": [],
+      "firstName": "Burnice",
+      "lastName": "Lang",
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {
+        "timezone": "Atlantic/Cape_Verde",
+        "avatar_color": "#fbf1ec",
+        "bio": "fedora fan"
+      },
+      "privateMetadata": {
+        "crm_id": "hs_78961",
+        "lifetime_value": 1771
+      },
+      "unsafeMetadata": {}
+    },
+    {
+      "externalId": "238fbc24-ef51-4ddf-bfdf-b83a4eda3a5f",
+      "emails": [],
+      "unverifiedEmails": [
+        "eldridge.willms50@example.com"
+      ],
+      "primaryPhone": "+16465550102",
+      "phones": [
+        "+16465550102"
+      ],
+      "unverifiedPhones": [],
+      "banned": false,
+      "hasPassword": true,
+      "publicMetadata": {},
+      "privateMetadata": {},
+      "unsafeMetadata": {}
+    }
+  ]
+}

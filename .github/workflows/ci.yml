@@ -64,6 +64,8 @@ jobs:
           key: bun-${{ runner.os }}-${{ hashFiles('bun.lock') }}
           restore-keys: bun-${{ runner.os }}-
       - run: bun install --frozen-lockfile
+      # test/migrate-live isn't a workspace member: install its deps so lint and typecheck can resolve them.
+      - run: bun install --frozen-lockfile --cwd test/migrate-live
       - run: bun run format:check
       - run: bun run lint
       - run: bun run typecheck

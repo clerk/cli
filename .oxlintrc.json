@@ -30,7 +30,7 @@
     "typescript/restrict-template-expressions": "off",
     "typescript/unbound-method": "off"
   },
-  "ignorePatterns": ["test/e2e/fixtures/**", "test/e2e/templates/**"],
+  "ignorePatterns": ["test/e2e/fixtures/**", "test/e2e/templates/**", "test/migrate-live/data/**"],
   "overrides": [
     {
       "files": [
@@ -38,7 +38,8 @@
         "packages/cli-core/src/cli-program.ts",
         "packages/cli-core/src/lib/signals.ts",
         "packages/cli-core/src/commands/webhooks/listen.ts",
-        "scripts/*"
+        "scripts/*",
+        "test/migrate-live/**"
       ],
       "rules": {
         "unicorn/no-process-exit": "off"
@@ -49,7 +50,8 @@
         "scripts/**",
         "packages/cli-core/src/**/*.test.ts",
         "packages/cli-core/src/test/**",
-        "test/e2e/**"
+        "test/e2e/**",
+        "test/migrate-live/**"
       ],
       "rules": {
         "no-console": "off"
@@ -60,7 +62,8 @@
         "packages/*/src/**/*.test.ts",
         "packages/*/src/test/**",
         "scripts/**/*.test.ts",
-        "test/e2e/**"
+        "test/e2e/**",
+        "test/migrate-live/**"
       ],
       "rules": {
         "typescript/await-thenable": "off",
