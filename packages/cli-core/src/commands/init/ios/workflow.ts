@@ -383,7 +383,13 @@ export interface ApplyResult {
   handoff: ReturnType<typeof integrationHandoff>;
   capabilities: { status: "manual" | "configured"; scope?: string; reason?: string };
   /** The native identity registered with Clerk and where its App ID Prefix came from. */
-  identity?: { bundleIdentifier: string; appIdPrefix: string; prefixSource: string };
+  identity?: {
+    bundleIdentifier: string;
+    appIdPrefix: string;
+    prefixSource: string;
+    /** Present when the registered App ID Prefix differs from the signing team; says what to do. */
+    warnings?: string[];
+  };
 }
 
 export async function applySetup(
@@ -464,6 +470,7 @@ export async function applySetup(
             bundleIdentifier: preview.remote.context.bundleIdentifier,
             appIdPrefix: preview.remote.context.appIdPrefix,
             prefixSource: preview.discovery.prefixSource,
+            ...(preview.discovery.warnings.length ? { warnings: preview.discovery.warnings } : {}),
           },
         }
       : {}),
@@ -516,6 +523,8 @@ export async function applySetup(
           ? "Native Apple sign-in is enabled for the confirmed Bundle ID."
           : "Apple provider activation is incomplete; review Clerk settings and local entitlements.",
       );
+    for (const detail of preview.discovery?.warnings ?? [])
+      remaining.push({ id: "app-id-prefix-review", detail });
     if (preview.appleWarning)
       remaining.push({ id: "apple-provider-review", detail: preview.appleWarning });
     if (preview.personalTeamNote)

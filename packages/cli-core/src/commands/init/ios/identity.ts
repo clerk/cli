@@ -147,6 +147,19 @@ export async function discoverRemote(
   const invalidPrefix = appIdPrefix !== undefined && !/^[A-Z0-9]{10}$/.test(appIdPrefix);
   if (invalidPrefix && prefixSource !== "clerk-registration")
     throw setupError("Supply a valid ten-character Apple App ID Prefix.");
+  // The registration keeps precedence, but one made before the app moved to another team still
+  // has the old team's prefix, and passkeys and native Sign in with Apple then fail silently.
+  // An explicit --app-id-prefix is the confirmation, so it never warns.
+  const signingTeamMismatch =
+    prefixSource === "clerk-registration" &&
+    !invalidPrefix &&
+    !conflict &&
+    suggestedPrefix !== undefined &&
+    appIdPrefix !== suggestedPrefix;
+  const warnings =
+    signingTeamMismatch && bundleIdentifier && appIdPrefix
+      ? [signingTeamMismatchWarning(bundleIdentifier, appIdPrefix, suggestedPrefix, macOS)]
+      : [];
   const issues = [
     ...(!bundleIdentifier
       ? [
@@ -174,6 +187,7 @@ export async function discoverRemote(
     bundleSource,
     prefixSource,
     issues,
+    warnings,
     context:
       bundleIdentifier && appIdPrefix && !conflict && !invalidPrefix
         ? { ...instance, bundleIdentifier, appIdPrefix }
@@ -193,7 +207,25 @@ export function describeIdentity(discovery: IdentityDiscovery) {
     bundleSource: discovery.bundleSource,
     prefixSource: discovery.prefixSource,
     issues: discovery.issues,
+    warnings: discovery.warnings,
   };
+}
+
+/**
+ * Apple uses the Team ID as the prefix of current App IDs, so after a team switch the prefix
+ * changes. iOS App IDs can still carry a legacy prefix; macOS App IDs never could.
+ */
+export function signingTeamMismatchWarning(
+  bundleIdentifier: string,
+  registeredPrefix: string,
+  signingTeam: string,
+  macOS: boolean,
+): string {
+  const registration = `Clerk's native registration for ${bundleIdentifier} uses App ID Prefix ${registeredPrefix}, but the app is signed by team ${signingTeam}.`;
+  const fix = `edit that registration's App ID Prefix to ${signingTeam} under Native applications in the Clerk Dashboard, then rerun clerk init`;
+  return macOS
+    ? `${registration} Mac App IDs always use the Team ID as their prefix, so the registration doesn't match this app, and passkeys and Sign in with Apple fail until it does: ${fix}.`
+    : `${registration} If the app moved to that team, its App ID Prefix is now ${signingTeam}, and passkeys and Sign in with Apple fail until the registration matches: ${fix}. If its App ID in Apple Developer still uses the legacy prefix ${registeredPrefix}, rerun with --app-id-prefix ${registeredPrefix} to confirm it.`;
 }
 export class IdentityRequired extends CliError {
   constructor(public discovery: IdentityDiscovery) {

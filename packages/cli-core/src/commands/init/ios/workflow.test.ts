@@ -451,8 +451,8 @@ test("cancelled setup, invalid Xcode output, and failed processes are bounded an
   ).rejects.toThrow();
 });
 
-async function discoveredFixture() {
-  const f = await fixture();
+async function discoveredFixture(platform: "ios" | "macos" = "ios") {
+  const f = await fixture(platform);
   const original = f.dependencies.run;
   f.dependencies.run = async (command, root, signal) => {
     const rows = JSON.parse(await original(command, root, signal));
@@ -482,6 +482,105 @@ test("ordinary Bundle ID and existing Clerk prefix are discovered without questi
     prefixSource: "clerk-registration",
   });
   expect(preview.remote?.actions).toEqual([]);
+});
+
+// A registration made while the app was signed by another team (for example a Personal Team).
+function registeredByEarlierTeam(): IOSApplication {
+  return {
+    object: "ios_application",
+    id: "existing",
+    bundle_id: identity.bundleIdentifier!,
+    app_id_prefix: "OLDTEAM123",
+  };
+}
+
+test("a registration whose prefix differs from the signing team keeps precedence but warns", async () => {
+  const f = await discoveredFixture();
+  f.state.applications = [registeredByEarlierTeam()];
+  f.state.enabled = true;
+  const options = { ...f.options, remote: { applicationId: identity.applicationId } };
+  const preview = await prepareSetup(options, f.dependencies);
+  const described = describePreview(preview).identity;
+  expect(described).toMatchObject({
+    appIdPrefix: "OLDTEAM123",
+    prefixSource: "clerk-registration",
+  });
+  expect(described?.warnings).toEqual([
+    expect.stringContaining(
+      "uses App ID Prefix OLDTEAM123, but the app is signed by team TEAMID1234",
+    ),
+  ]);
+  expect(described?.warnings[0]).toContain(
+    "edit that registration's App ID Prefix to TEAMID1234 under Native applications in the Clerk Dashboard",
+  );
+  expect(described?.warnings[0]).toContain("rerun with --app-id-prefix OLDTEAM123 to confirm it");
+  // Nothing is re-registered or changed in Clerk.
+  expect(preview.remote?.context.appIdPrefix).toBe("OLDTEAM123");
+  expect(preview.remote?.actions).toEqual([]);
+
+  const result = await applySetup(preview, f.dependencies);
+  expect(result.status).toBe("manual-steps-required");
+  expect(result.identity?.warnings).toEqual(described?.warnings);
+  expect(result.handoff.remaining).toContainEqual({
+    id: "app-id-prefix-review",
+    detail: described!.warnings[0]!,
+  });
+  expect(f.state.events).toEqual([]);
+
+  const report = await doctor(options, f.dependencies);
+  expect(report.checks.find((check) => check.name === "App ID Prefix")).toEqual({
+    name: "App ID Prefix",
+    status: "warn",
+    message: described!.warnings[0]!,
+  });
+  expect(report.identity?.warnings).toEqual(described?.warnings);
+
+  // Passing the registered prefix confirms a legacy prefix and silences the warning.
+  const confirmed = await prepareSetup(
+    { ...options, remote: { ...options.remote, appIdPrefix: "OLDTEAM123" } },
+    f.dependencies,
+  );
+  expect(describePreview(confirmed).identity).toMatchObject({
+    prefixSource: "explicit",
+    warnings: [],
+  });
+});
+
+test("a registration that matches the signing team, or no single signing team, doesn't warn", async () => {
+  const f = await discoveredFixture();
+  f.state.applications = [{ ...registeredByEarlierTeam(), app_id_prefix: "TEAMID1234" }];
+  const options = { ...f.options, remote: { applicationId: identity.applicationId } };
+  expect(describePreview(await prepareSetup(options, f.dependencies)).identity).toMatchObject({
+    appIdPrefix: "TEAMID1234",
+    prefixSource: "clerk-registration",
+    warnings: [],
+  });
+
+  f.state.applications = [registeredByEarlierTeam()];
+  const original = f.dependencies.run;
+  f.dependencies.run = async (command, root, signal) => {
+    const output = await original(command, root, signal);
+    return command.includes("Release") ? output.replace("TEAMID1234", "OTHERTEAM1") : output;
+  };
+  expect(describePreview(await prepareSetup(options, f.dependencies)).identity).toMatchObject({
+    appIdPrefix: "OLDTEAM123",
+    prefixSource: "clerk-registration",
+    warnings: [],
+  });
+});
+
+test("on macOS, a registration whose prefix differs from the signing team warns more firmly", async () => {
+  const f = await discoveredFixture("macos");
+  f.state.applications = [registeredByEarlierTeam()];
+  const preview = await prepareSetup(
+    { ...f.options, remote: { applicationId: identity.applicationId } },
+    f.dependencies,
+  );
+  const [warning] = describePreview(preview).identity!.warnings;
+  expect(describePreview(preview).identity?.appIdPrefix).toBe("OLDTEAM123");
+  expect(warning).toContain("Mac App IDs always use the Team ID as their prefix");
+  expect(warning).toContain("edit that registration's App ID Prefix to TEAMID1234");
+  expect(warning).not.toContain("legacy");
 });
 
 test("invalid registered prefixes produce actionable identity diagnostics without writes", async () => {

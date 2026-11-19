@@ -72,6 +72,11 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
           discovery.issues.join(" ") ||
           `Bundle ID from ${discovery.bundleSource}; App ID Prefix from ${discovery.prefixSource}.`,
       },
+      ...discovery.warnings.map((message): Check => ({
+        name: "App ID Prefix",
+        status: "warn",
+        message,
+      })),
     );
   // The same rule as setup: a Personal Team gets no Sign in with Apple, and no Associated Domain on macOS.
   const personalTeam = signedByPersonalTeam(preview.inspection, dependencies.xcodeTeams);
