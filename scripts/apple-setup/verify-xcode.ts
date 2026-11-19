@@ -21,6 +21,9 @@ for (const platform of ["ios", "macos"] as const) {
     let enabled = false;
     const applications: IOSApplication[] = [];
     const api: NativeAPI = {
+      async listApplications() {
+        return [];
+      },
       async fetchApplication(applicationId) {
         return {
           application_id: applicationId,

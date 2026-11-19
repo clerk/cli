@@ -299,19 +299,25 @@ export async function init(options: InitOptions = {}) {
         code: ERROR_CODE.NOT_LINKED,
       });
     const { appId, appName } = linked.profile;
+    const repoRoot = await getGitRepoRoot(ctx.cwd);
+    // Outside a repository, relinking a folder covered by a parent's link gives it a link of its
+    // own (as `clerk link` keys it), and leaves the parent's link alone.
+    const relinkEffect = repoRoot
+      ? `this switches the link for every project in ${repoRoot}`
+      : linked.path === ctx.cwd
+        ? `this switches the link for ${ctx.cwd}`
+        : `this gives ${ctx.cwd} a link of its own, leaving ${linked.path}'s`;
     return withNativeProgress(async () =>
       runAppleInit(
         {
           ...appleOptions,
-          link: {
-            ...(appName && { appName }),
-            scope: (await getGitRepoRoot(ctx.cwd)) ?? linked.path,
-          },
-          // Switching the link is what the user agrees to here, so the command carries --relink.
-          relinkCommand: (app) =>
+          link: { ...(appName && { appName }), scope: repoRoot ?? linked.path, relinkEffect },
+          // Switching the link is what the user agrees to here, so an agent's command carries
+          // --relink; people at a terminal confirm it at `clerk link`'s own prompt instead.
+          retryCommand: (app) =>
             options.json || agent
               ? appleContinuation({ ...options, relink: true }, undefined, app)
-              : `clerk init --app ${quoteArg(app)}`,
+              : appleContinuation({ ...options, relink: false }, undefined, app, { json: false }),
         },
         appId,
       ),
@@ -511,6 +517,7 @@ function appleContinuation(
   options: InitOptions,
   starter?: { projectName: string; apple: AppleStarter },
   appId?: string,
+  { json = true }: { json?: boolean } = {},
 ): string {
   const values: Partial<InitOptions> = {
     ...options,
@@ -518,7 +525,12 @@ function appleContinuation(
   };
   const parts = [
     ...(starter ? [`cd ${quoteArg(starter.projectName)}`, "&&"] : []),
-    `clerk init --app ${appId ? quoteArg(appId) : "<app_id>"} --json`,
+    `clerk init --app ${appId ? quoteArg(appId) : "<app_id>"}${json ? " --json" : ""}`,
+    // An explicit framework picked the native app over a web project in the same folder. A new
+    // starter's continuation runs inside the app's own folder, which holds only the Xcode project.
+    ...(!starter && (options.framework === "ios" || options.framework === MACOS)
+      ? ["--framework", options.framework]
+      : []),
     ...(options.relink ? ["--relink"] : []),
   ];
   for (const [key, flag] of APPLE_FLAGS) {

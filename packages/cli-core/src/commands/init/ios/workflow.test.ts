@@ -54,6 +54,9 @@ function server() {
     changedKey: false,
   };
   const api: NativeAPI = {
+    async listApplications() {
+      return [];
+    },
     async fetchApplication(id, options) {
       expect(options).toEqual({ includeSecretKeys: false });
       return {

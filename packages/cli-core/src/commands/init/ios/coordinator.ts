@@ -21,13 +21,14 @@ import { signedByPersonalTeam } from "./teams.ts";
 import { nonDefaultXcodeNote } from "./xcode-tools.ts";
 import { SelectionNeeded } from "./discovery.ts";
 import { IdentityRequired, describeIdentity } from "./identity.ts";
-import { listApplications } from "../../../lib/plapi.ts";
+import { profileLabel } from "../../../lib/config.ts";
 import {
   PublishableKeyMismatch,
-  checkConfiguredKey,
+  checkConfiguredKeys,
   describeMismatch,
   type ConfiguredKeyCheck,
   type LinkedApplication,
+  type RetryCommand,
 } from "./configured-key.ts";
 import { nativeAPI } from "./remote.ts";
 import {
@@ -153,13 +154,27 @@ export function printSetupResult(
 }
 
 /** Says, before setup is confirmed, what the app's publishable key check found when it needs attention. */
-function printConfiguredKeyNote(check: ConfiguredKeyCheck, linked: LinkedApplication): void {
-  const current = linked.appName ? `${linked.appName} (${linked.appId})` : linked.appId;
-  if (check.status === "unverified")
-    log.info(`  Publishable key not checked against ${current}: ${check.reason}.`);
-  else if (check.instance === "production")
+function printConfiguredKeyNotes(
+  checks: ConfiguredKeyCheck[],
+  linked: LinkedApplication,
+  /** The configuration setup runs against development first: Debug, or `--xcode-configuration`. */
+  primary: string,
+): void {
+  const current = profileLabel(linked);
+  // One line per reason, so Debug and Release sharing one unreadable call print it once.
+  const unverified = new Map<string, string[]>();
+  for (const check of checks)
+    if (check.status === "unverified")
+      unverified.set(check.reason, [...(unverified.get(check.reason) ?? []), check.configuration]);
+  for (const [reason, configurations] of unverified)
+    log.info(
+      `  Publishable key not checked against ${current} (${configurations.join(", ")}): ${reason}.`,
+    );
+  // Release builds usually use production, so only the primary configuration is called out.
+  const first = checks.find((check) => check.configuration === primary);
+  if (first?.status === "verified" && first.instance === "production")
     log.warn(
-      `${check.configuration} passes Clerk.configure ${current}'s production publishable key (from ${check.source}), so it signs in against production; clerk init sets up the development instance.`,
+      `${first.configuration} passes Clerk.configure ${current}'s production publishable key (from ${first.source}), so it signs in against production; clerk init sets up the development instance.`,
     );
 }
 
@@ -201,8 +216,8 @@ export interface AppleInitOptions {
   starterProject?: StarterProjectSummary;
   /** The link `applicationId` came from, for naming it when the app's key belongs elsewhere. */
   link?: Omit<LinkedApplication, "appId">;
-  /** The `clerk init` that switches the link to `appId` and sets that application up instead. */
-  relinkCommand?: (appId: string) => string;
+  /** The `clerk init` to suggest after a publishable key mismatch, carrying this run's setup options. */
+  retryCommand?: RetryCommand;
 }
 
 export interface StarterProjectSummary {
@@ -256,11 +271,14 @@ export async function runAppleInit(
         appId: applicationId,
         ...(options.link?.appName && { appName: options.link.appName }),
         scope: options.link?.scope ?? options.root,
+        relinkEffect:
+          options.link?.relinkEffect ??
+          `this switches the link for ${options.link?.scope ?? options.root}`,
       }
     : undefined;
-  const relinkCommand =
-    options.relinkCommand ??
-    ((appId: string) => `clerk init --app ${appId}${json ? " --json" : ""} --relink`);
+  const retryCommand: RetryCommand =
+    options.retryCommand ??
+    ((appId) => `clerk init --app ${appId ?? "<app_id>"}${json ? " --json" : ""} --relink`);
   const setup: SetupOptions = {
     root: options.root,
     project: options.xcodeProject,
@@ -324,24 +342,17 @@ export async function runAppleInit(
     stopNativeProgress();
     setup.inspection = inspection;
     const starter = await isUnchangedStarter(inspection);
-    // Before any prompt, remote read, or write: an app built against another application would
+    // Before setup's prompts and changes: an app built against another application would
     // otherwise be registered on the linked one. A new or unchanged starter gets the linked
     // application's key from setup itself, so it has nothing to check.
-    let configuredKey: ConfiguredKeyCheck | undefined;
-    if (linked && !newApp && !starter) {
-      const api = dependencies.api ?? nativeAPI;
-      configuredKey = await checkConfiguredKey(
+    let configuredKeys: ConfiguredKeyCheck[] | undefined;
+    if (linked && !newApp && !starter)
+      configuredKeys = await checkConfiguredKeys(
         inspection,
         linked,
-        {
-          fetchApplication: api.fetchApplication.bind(api),
-          // An injected API (tests) never falls back to the network to name a key's owner.
-          listApplications:
-            dependencies.listApplications ?? (dependencies.api ? undefined : listApplications),
-        },
-        relinkCommand,
+        dependencies.api ?? nativeAPI,
+        retryCommand,
       );
-    }
     // The signing team decides what the app can use, on every run. A Personal Team can't use Sign
     // in with Apple, and a Mac app has no simulator to fall back to, so it also can't keep
     // Associated Domains. Xcode's account list says which teams are Personal Teams.
@@ -443,7 +454,12 @@ export async function runAppleInit(
     stopNativeProgress();
     if (!json) {
       printSetupPreview(preview);
-      if (configuredKey && linked) printConfiguredKeyNote(configuredKey, linked);
+      if (configuredKeys && linked)
+        printConfiguredKeyNotes(
+          configuredKeys,
+          linked,
+          inspection.contexts[0]!.selection.configuration,
+        );
     }
     if (
       interactive &&
@@ -454,7 +470,7 @@ export async function runAppleInit(
     setTelemetryStage("ios_apply");
     const result = await applySetup(preview, dependencies, signal);
     stopNativeProgress();
-    if (json) report({ ...result, ...(configuredKey && { configuredKey }) }, 2);
+    if (json) report({ ...result, ...(configuredKeys && { configuredKeys }) }, 2);
     else
       printSetupResult(
         result,
@@ -477,7 +493,7 @@ export async function runAppleInit(
       );
   } catch (error) {
     if (json && error instanceof PublishableKeyMismatch && linked)
-      report(describeMismatch(error, linked, relinkCommand), 2);
+      report(describeMismatch(error, linked, retryCommand));
     else if (json && error instanceof IdentityRequired)
       report({
         status: "input-required",
