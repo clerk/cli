@@ -21,6 +21,15 @@ import { signedByPersonalTeam } from "./teams.ts";
 import { nonDefaultXcodeNote } from "./xcode-tools.ts";
 import { SelectionNeeded } from "./discovery.ts";
 import { IdentityRequired, describeIdentity } from "./identity.ts";
+import { listApplications } from "../../../lib/plapi.ts";
+import {
+  PublishableKeyMismatch,
+  checkConfiguredKey,
+  describeMismatch,
+  type ConfiguredKeyCheck,
+  type LinkedApplication,
+} from "./configured-key.ts";
+import { nativeAPI } from "./remote.ts";
 import {
   applySetup,
   describePreview,
@@ -143,6 +152,17 @@ export function printSetupResult(
   for (const step of setupNextSteps(result, starter)) log.info(`  • ${step}`);
 }
 
+/** Says, before setup is confirmed, what the app's publishable key check found when it needs attention. */
+function printConfiguredKeyNote(check: ConfiguredKeyCheck, linked: LinkedApplication): void {
+  const current = linked.appName ? `${linked.appName} (${linked.appId})` : linked.appId;
+  if (check.status === "unverified")
+    log.info(`  Publishable key not checked against ${current}: ${check.reason}.`);
+  else if (check.instance === "production")
+    log.warn(
+      `${check.configuration} passes Clerk.configure ${current}'s production publishable key (from ${check.source}), so it signs in against production; clerk init sets up the development instance.`,
+    );
+}
+
 /**
  * What an agent needs to do before native setup can run: choose a Clerk application, then run
  * `command`, which carries this run's setup options.
@@ -179,6 +199,10 @@ export interface AppleInitOptions {
   prebuiltAuthUi?: boolean;
   /** The app `clerk init --starter` just created, which needs no confirmation before setup. */
   starterProject?: StarterProjectSummary;
+  /** The link `applicationId` came from, for naming it when the app's key belongs elsewhere. */
+  link?: Omit<LinkedApplication, "appId">;
+  /** The `clerk init` that switches the link to `appId` and sets that application up instead. */
+  relinkCommand?: (appId: string) => string;
 }
 
 export interface StarterProjectSummary {
@@ -227,6 +251,16 @@ export async function runAppleInit(
     reported = true;
     log.data(JSON.stringify({ ...status, ...(newApp && { starter: newApp }) }, null, indent));
   };
+  const linked: LinkedApplication | undefined = applicationId
+    ? {
+        appId: applicationId,
+        ...(options.link?.appName && { appName: options.link.appName }),
+        scope: options.link?.scope ?? options.root,
+      }
+    : undefined;
+  const relinkCommand =
+    options.relinkCommand ??
+    ((appId: string) => `clerk init --app ${appId}${json ? " --json" : ""} --relink`);
   const setup: SetupOptions = {
     root: options.root,
     project: options.xcodeProject,
@@ -290,6 +324,24 @@ export async function runAppleInit(
     stopNativeProgress();
     setup.inspection = inspection;
     const starter = await isUnchangedStarter(inspection);
+    // Before any prompt, remote read, or write: an app built against another application would
+    // otherwise be registered on the linked one. A new or unchanged starter gets the linked
+    // application's key from setup itself, so it has nothing to check.
+    let configuredKey: ConfiguredKeyCheck | undefined;
+    if (linked && !newApp && !starter) {
+      const api = dependencies.api ?? nativeAPI;
+      configuredKey = await checkConfiguredKey(
+        inspection,
+        linked,
+        {
+          fetchApplication: api.fetchApplication.bind(api),
+          // An injected API (tests) never falls back to the network to name a key's owner.
+          listApplications:
+            dependencies.listApplications ?? (dependencies.api ? undefined : listApplications),
+        },
+        relinkCommand,
+      );
+    }
     // The signing team decides what the app can use, on every run. A Personal Team can't use Sign
     // in with Apple, and a Mac app has no simulator to fall back to, so it also can't keep
     // Associated Domains. Xcode's account list says which teams are Personal Teams.
@@ -389,7 +441,10 @@ export async function runAppleInit(
           : undefined),
     });
     stopNativeProgress();
-    if (!json) printSetupPreview(preview);
+    if (!json) {
+      printSetupPreview(preview);
+      if (configuredKey && linked) printConfiguredKeyNote(configuredKey, linked);
+    }
     if (
       interactive &&
       !options.starterProject &&
@@ -399,7 +454,7 @@ export async function runAppleInit(
     setTelemetryStage("ios_apply");
     const result = await applySetup(preview, dependencies, signal);
     stopNativeProgress();
-    if (json) report(result, 2);
+    if (json) report({ ...result, ...(configuredKey && { configuredKey }) }, 2);
     else
       printSetupResult(
         result,
@@ -421,7 +476,9 @@ export async function runAppleInit(
             : "CLI setup complete; app verification remains",
       );
   } catch (error) {
-    if (json && error instanceof IdentityRequired)
+    if (json && error instanceof PublishableKeyMismatch && linked)
+      report(describeMismatch(error, linked, relinkCommand), 2);
+    else if (json && error instanceof IdentityRequired)
       report({
         status: "input-required",
         appIntegrationComplete: false,

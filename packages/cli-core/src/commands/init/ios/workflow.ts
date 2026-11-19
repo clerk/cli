@@ -1,3 +1,4 @@
+import type * as plapi from "../../../lib/plapi.ts";
 import type { AppleTeam } from "./teams.ts";
 import type { ScaffoldPlan } from "../frameworks/types.ts";
 import { unlink } from "node:fs/promises";
@@ -81,6 +82,8 @@ export interface SetupOptions extends InspectOptions {
 export interface Dependencies {
   run?: CommandRunner;
   api?: NativeAPI;
+  /** Names the application a mismatched publishable key belongs to (see configured-key.ts). */
+  listApplications?: typeof plapi.listApplications;
   appleAPI?: IOSNativeAppleAPI;
   promptIdentity?: IdentityPrompt;
   /** Xcode's signed-in teams, instead of reading them from Xcode's settings. */

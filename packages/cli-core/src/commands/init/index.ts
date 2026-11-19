@@ -298,7 +298,24 @@ export async function init(options: InitOptions = {}) {
       throw new CliError("Link a Clerk application before native setup.", {
         code: ERROR_CODE.NOT_LINKED,
       });
-    return withNativeProgress(async () => runAppleInit(appleOptions, linked.profile.appId));
+    const { appId, appName } = linked.profile;
+    return withNativeProgress(async () =>
+      runAppleInit(
+        {
+          ...appleOptions,
+          link: {
+            ...(appName && { appName }),
+            scope: (await getGitRepoRoot(ctx.cwd)) ?? linked.path,
+          },
+          // Switching the link is what the user agrees to here, so the command carries --relink.
+          relinkCommand: (app) =>
+            options.json || agent
+              ? appleContinuation({ ...options, relink: true }, undefined, app)
+              : `clerk init --app ${quoteArg(app)}`,
+        },
+        appId,
+      ),
+    );
   }
   // An agent that asked for JSON gets the usual "choose an app" guidance as data.
   if (ctx.framework.dep === "ios" && strategy === "manual" && options.json) {

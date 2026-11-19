@@ -53,6 +53,23 @@ describe("clerk init for native Apple projects", () => {
     expect(pullMod.pull).not.toHaveBeenCalled();
   });
 
+  test("passes the link's scope and a relink command that keeps the setup options", async () => {
+    const run = iosProject({ isAgent: true });
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      path: "/tmp/test",
+      profile: { appId: "app_test", appName: "Linked" },
+    } as never);
+    spyOn(gitMod, "getGitRepoRoot").mockResolvedValue("/repo");
+
+    await init({ json: true, appleSdk: "core" });
+
+    const [options] = run.mock.calls[0]! as [apple.AppleInitOptions, string];
+    expect(options.link).toEqual({ appName: "Linked", scope: "/repo" });
+    expect(options.relinkCommand!("app_other")).toBe(
+      "clerk init --app app_other --json --relink --apple-sdk core",
+    );
+  });
+
   test("links through the usual flow before native setup", async () => {
     const run = iosProject();
     spyOn(config, "resolveProfile")
