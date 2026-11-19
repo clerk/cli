@@ -6,10 +6,17 @@ import {
   discoverIdentity,
   readDebugKeystore,
 } from "./identity.ts";
+import { auditGoogleHealth, GOOGLE_GUIDE } from "./native-google.ts";
 import { auditRemote, nativeAPI, resolveInstance } from "./remote.ts";
 import { CLERK_ANDROID_MIN_SDK, sdkInstalled, type Check } from "./sdk.ts";
 import { KEY_RESOURCE } from "./project.ts";
-import { describePreview, prepareSetup, type Dependencies, type SetupOptions } from "./workflow.ts";
+import {
+  describePreview,
+  prepareSetup,
+  usesUiArtifact,
+  type Dependencies,
+  type SetupOptions,
+} from "./workflow.ts";
 
 /** The key the app passes to `Clerk.initialize`, when it's the resource or a string literal. */
 function configuredKey(
@@ -38,7 +45,14 @@ function configuredKey(
 export async function doctor(options: SetupOptions, dependencies: Dependencies = {}) {
   // Diagnosis is GET-only, and never blocks on what setup would refuse to edit.
   const preview = await prepareSetup(
-    { ...options, remote: undefined, inspectOnly: true, readDebugKeystore: false },
+    // Google is read below, on its own; prepareSetup would refuse it without a remote.
+    {
+      ...options,
+      remote: undefined,
+      inspectOnly: true,
+      readDebugKeystore: false,
+      signInWithGoogle: undefined,
+    },
     dependencies,
   );
   const api = dependencies.api ?? nativeAPI;
@@ -211,6 +225,64 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       message: "No linked Clerk application; registration and Native API were not checked.",
       remedy: "Run clerk link, then clerk doctor again.",
     });
+  if (instance) {
+    try {
+      const google = await auditGoogleHealth(instance, dependencies.googleAPI);
+      const enabled = google.current?.enabled === true && google.current.authenticatable;
+      // Like the Apple check: Google matters when it was asked for or the UI artifact (which
+      // renders a Google button) is in use. Otherwise Google being off is fine, and Google on
+      // Clerk's shared development credentials is a warning, not a failure.
+      const requested = options.signInWithGoogle === true || usesUiArtifact(inspection);
+      checks.push({
+        name: "Google connection",
+        status: google.status === "blocked" ? "fail" : enabled || !requested ? "pass" : "warn",
+        message:
+          google.status === "blocked"
+            ? google.blockers.map((blocker) => blocker.message).join(" ")
+            : enabled
+              ? "Google is enabled for authentication on the development instance."
+              : requested
+                ? "Google is not enabled on the development instance, so native Sign in with Google is off."
+                : "Google is not enabled on the development instance, and nothing here requires it.",
+        remedy:
+          google.status === "blocked"
+            ? "Review the Google connection in the Clerk Dashboard."
+            : enabled || !requested
+              ? undefined
+              : "Run clerk init --sign-in-with-google to enable it with a Google Web client.",
+      });
+      if (enabled || requested)
+        checks.push({
+          name: "Google Web client ID",
+          status:
+            google.credentials === "satisfied" ? "pass" : enabled && requested ? "fail" : "warn",
+          message:
+            google.credentials === "satisfied"
+              ? "A Web client ID is configured; the Android SDK reads it as the One Tap client ID."
+              : "No Web client ID is configured. The Android SDK needs one as the One Tap client ID; Clerk's shared development credentials don't provide it.",
+          remedy:
+            google.credentials === "satisfied"
+              ? undefined
+              : `Create a Web application OAuth client in Google Cloud and run clerk init --sign-in-with-google (${GOOGLE_GUIDE}).`,
+        });
+      // Only an app that signs in with Google natively needs the Android client, as in init.
+      if (enabled && requested)
+        checks.push({
+          name: "Google Cloud Android client",
+          status: "warn",
+          message: `Not verifiable from here: Google Cloud must have an Android OAuth client for ${identity.applicationId} with the SHA-1 of each signing certificate${identity.debug.sha1 ? ` (debug: ${identity.debug.sha1})` : ""}.`,
+          remedy: `Check APIs & Services > Credentials in Google Cloud Console; see ${GOOGLE_GUIDE}.`,
+        });
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      checks.push({
+        name: "Google connection",
+        status: "warn",
+        message: `Google provider settings could not be read: ${errorMessage(error)}`,
+        remedy: "Review them in the Clerk Dashboard; no settings were changed.",
+      });
+    }
+  }
   return {
     ...describePreview(preview),
     identity: describeIdentity(identity),

@@ -7,7 +7,11 @@ import { applySetup, prepareSetup } from "./workflow.ts";
 import {
   createAndroidFixture,
   DEBUG_FINGERPRINT,
+  DEBUG_SHA1,
+  FAKE_GOOGLE_CLIENT_ID,
+  FAKE_GOOGLE_CLIENT_SECRET,
   RELEASE_FINGERPRINT,
+  fakeGoogleAPI,
   fakeNativeAPI,
   keystore,
 } from "./test-helpers.ts";
@@ -20,7 +24,15 @@ async function fixture(options: Parameters<typeof createAndroidFixture>[0] = {})
   const root = await createAndroidFixture(options);
   roots.push(root);
   const { api, state } = fakeNativeAPI();
-  return { root, state, dependencies: { api, debugKeystore: keystore() } };
+  return {
+    root,
+    state,
+    dependencies: {
+      api,
+      googleAPI: fakeGoogleAPI({ enabled: false }).api,
+      debugKeystore: keystore(),
+    },
+  };
 }
 const options = (root: string, remote = true) => ({
   root,
@@ -47,6 +59,7 @@ describe("Android doctor", () => {
       "Development publishable key": "warn",
       "Native API": "fail",
       "Native registration": "fail",
+      "Google connection": "pass",
     });
     expect(report.status).toBe("failed");
     for (const check of report.checks)
@@ -60,7 +73,16 @@ describe("Android doctor", () => {
       f.dependencies,
     );
     const report = await doctor(options(f.root), f.dependencies);
-    expect(Object.values(status(report)).every((value) => value === "pass")).toBe(true);
+    expect(
+      report.checks
+        .filter((check) => !check.name.startsWith("Google"))
+        .map((check) => check.status),
+    ).toEqual(expect.arrayContaining(["pass"]));
+    expect(
+      report.checks
+        .filter((check) => !check.name.startsWith("Google"))
+        .every((check) => check.status === "pass"),
+    ).toBe(true);
     expect(
       report.checks.find((check) => check.name === "Debug signing fingerprint")?.message,
     ).toContain(DEBUG_FINGERPRINT);
@@ -145,5 +167,91 @@ describe("Android doctor", () => {
     const f = await fixture({ kotlin: "2.2.21" });
     const report = await doctor(options(f.root), f.dependencies);
     expect(status(report)["Kotlin compiler"]).toBe("fail");
+  });
+});
+
+describe("Android doctor: Sign in with Google", () => {
+  test("Google off passes when nothing requires it", async () => {
+    const f = await fixture();
+    const google = fakeGoogleAPI({ enabled: false });
+    const report = await doctor(options(f.root), { ...f.dependencies, googleAPI: google.api });
+    expect(status(report)["Google connection"]).toBe("pass");
+    expect(status(report)["Google Web client ID"]).toBeUndefined();
+    expect(status(report)["Google Cloud Android client"]).toBeUndefined();
+  });
+
+  test.each([
+    ["--sign-in-with-google", { signInWithGoogle: true }, {}],
+    ["the UI artifact", {}, { clerk: { product: "ui" as const, version: "1.3.0" } }],
+  ])(
+    "reports Google off as warnings, with the remedy, when %s asks for it",
+    async (_label, extra, fixtureOptions) => {
+      const f = await fixture(fixtureOptions);
+      const google = fakeGoogleAPI({ enabled: false });
+      const report = await doctor(
+        { ...options(f.root), ...extra },
+        { ...f.dependencies, googleAPI: google.api },
+      );
+      expect(status(report)["Google connection"]).toBe("warn");
+      expect(status(report)["Google Web client ID"]).toBe("warn");
+      expect(report.checks.find((check) => check.name === "Google connection")?.remedy).toContain(
+        "--sign-in-with-google",
+      );
+      expect(status(report)["Google Cloud Android client"]).toBeUndefined();
+    },
+  );
+
+  test("Google on shared credentials only warns for an app that doesn't ask for Google", async () => {
+    const f = await fixture();
+    const google = fakeGoogleAPI({ enabled: true });
+    const report = await doctor(options(f.root), { ...f.dependencies, googleAPI: google.api });
+    expect(status(report)["Google connection"]).toBe("pass");
+    expect(status(report)["Google Web client ID"]).toBe("warn");
+    // Google is on by default for development instances; an app that never uses it natively
+    // isn't told to create an Android OAuth client.
+    expect(status(report)["Google Cloud Android client"]).toBeUndefined();
+  });
+
+  test("Google on without a Web client fails that check when the UI artifact is in use", async () => {
+    const f = await fixture({ clerk: { product: "ui", version: "1.3.0" } });
+    const google = fakeGoogleAPI({ enabled: true });
+    const report = await doctor(options(f.root), { ...f.dependencies, googleAPI: google.api });
+    expect(status(report)["Google connection"]).toBe("pass");
+    expect(status(report)["Google Web client ID"]).toBe("fail");
+    expect(status(report)["Google Cloud Android client"]).toBe("warn");
+    expect(
+      report.checks.find((check) => check.name === "Google Cloud Android client")?.message,
+    ).toContain(DEBUG_SHA1);
+  });
+
+  test("a configured connection passes, with the Android client left as a note", async () => {
+    const f = await fixture({ clerk: { product: "ui", version: "1.3.0" } });
+    const google = fakeGoogleAPI({
+      enabled: true,
+      client_id: FAKE_GOOGLE_CLIENT_ID,
+      client_secret: FAKE_GOOGLE_CLIENT_SECRET,
+    });
+    const report = await doctor(options(f.root), { ...f.dependencies, googleAPI: google.api });
+    expect(status(report)["Google connection"]).toBe("pass");
+    expect(status(report)["Google Web client ID"]).toBe("pass");
+    expect(status(report)["Google Cloud Android client"]).toBe("warn");
+    expect(report.status).toBe("failed");
+    expect(JSON.stringify(report)).not.toContain(FAKE_GOOGLE_CLIENT_SECRET);
+  });
+
+  test("an unreadable connection is a warning, not a crash", async () => {
+    const f = await fixture();
+    const report = await doctor(options(f.root), {
+      ...f.dependencies,
+      googleAPI: {
+        fetchInstanceConfig: async () => {
+          throw new Error("forbidden");
+        },
+      } as never,
+    });
+    expect(report.checks.find((check) => check.name === "Google connection")).toMatchObject({
+      status: "warn",
+      message: expect.stringContaining("forbidden"),
+    });
   });
 });
