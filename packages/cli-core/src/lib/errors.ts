@@ -136,6 +136,10 @@ export const ERROR_CODE = {
   DEPLOY_INSTANCE_UNRESOLVED: "deploy_instance_unresolved",
   /** Local publishable key and secret key address different applications. */
   KEY_PAIR_MISMATCH: "key_pair_mismatch",
+  /** `clerk logs get` found no log group with that ID in the targeted instance. */
+  LOG_GROUP_NOT_FOUND: "log_group_not_found",
+  /** The Backend API has no `GET /v1/logs/types` yet, so `clerk logs schema` can't list event types. */
+  LOG_TYPES_UNAVAILABLE: "log_types_unavailable",
   /** BAPI returned a response the CLI could not use. */
   BAPI_UNEXPECTED_RESPONSE: "bapi_unexpected_response",
   /** The command needs a TTY that isn't available. */
@@ -164,6 +168,12 @@ export const ERROR_CODE = {
   IOS_REMOTE_APPLY_FAILED: "ios_remote_apply_failed",
   /** Clerk native configuration was readable after apply but did not match the approved state. */
   IOS_REMOTE_VERIFY_FAILED: "ios_remote_verify_failed",
+  /** The inspected Android project has a known condition that prevents safe automatic setup. */
+  ANDROID_SETUP_BLOCKED: "android_setup_blocked",
+  /** The Android project or Clerk application changed after the approved setup was planned. */
+  ANDROID_SETUP_STALE: "android_setup_stale",
+  /** Clerk's Android registration was readable after apply but did not match the approved state. */
+  ANDROID_REMOTE_VERIFY_FAILED: "android_remote_verify_failed",
   /** Platform API returned a successful response with missing or contradictory data. */
   PLAPI_UNEXPECTED_RESPONSE: "plapi_unexpected_response",
 } as const;

@@ -2,17 +2,16 @@ import { readdirSync } from "node:fs";
 import { confirm, text } from "../../../lib/prompts.ts";
 import { select } from "../../../lib/listage.ts";
 import { log } from "../../../lib/log.ts";
-import {
-  CliError,
-  ERROR_CODE,
-  errorMessage,
-  throwUsageError,
-  throwUserAbort,
-} from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE, throwUsageError, throwUserAbort } from "../../../lib/errors.ts";
 import { setTelemetryStage } from "../../../lib/telemetry.ts";
 import { interruptSignal } from "../../../lib/signals.ts";
 import { outro } from "../../../lib/spinner.ts";
-import { stopNativeProgress, withNativeSpinner } from "./progress.ts";
+import { stopNativeProgress, withNativeSpinner } from "../native/progress.ts";
+import {
+  applicationRequired as nativeApplicationRequired,
+  setupInterrupted,
+  type StarterProjectSummary,
+} from "../native/status.ts";
 import { isUnchangedStarter } from "./starter.ts";
 import { planAppleSetup } from "./plan.ts";
 import { sdkLinked } from "./sdk.ts";
@@ -143,23 +142,12 @@ export function printSetupResult(
   for (const step of setupNextSteps(result, starter)) log.info(`  • ${step}`);
 }
 
-/**
- * What an agent needs to do before native setup can run: choose a Clerk application, then run
- * `command`, which carries this run's setup options.
- */
+/** The `application-required` status, naming the Xcode project setup configures. */
 export function applicationRequired(
   command = "clerk init --app <app_id> --json",
   starter?: StarterProjectSummary,
 ) {
-  return {
-    status: "application-required",
-    appIntegrationComplete: false,
-    ...(starter && { starter }),
-    next: [
-      'Run `clerk apps list --json` and ask the user which application to use, or create one with `clerk apps create "<name>" --json`. If listing fails because you are not signed in, run `clerk auth login` first.',
-      `Then run \`${command}\` to link it, configure the Xcode project, and register the app with Clerk.`,
-    ],
-  };
+  return nativeApplicationRequired(command, "Xcode project", starter);
 }
 
 /** The Apple-specific `clerk init` options, as Commander names them. */
@@ -181,30 +169,8 @@ export interface AppleInitOptions {
   starterProject?: StarterProjectSummary;
 }
 
-export interface StarterProjectSummary {
-  projectName: string;
-  platform: "ios" | "macos";
-  /** Where the new app was written. */
-  projectDir?: string;
-  /** The `clerk init` that finishes setting up the new app, run from where the starter ran. */
-  continuation?: string;
-}
-
-/**
- * A new app was written, but setup stopped with an error that has no status of its own. Running
- * `--starter` again would refuse the existing folder, so the agent continues inside the new app.
- */
-export function setupInterrupted(starter: StarterProjectSummary, error: unknown) {
-  return {
-    status: "setup-interrupted",
-    appIntegrationComplete: false,
-    error: errorMessage(error),
-    starter,
-    next: [
-      `Resolve the error, then run \`${starter.continuation}\` to finish setting up the new app. Don't run --starter again.`,
-    ],
-  };
-}
+export type { StarterProjectSummary } from "../native/status.ts";
+export { setupInterrupted } from "../native/status.ts";
 
 /**
  * Sets up an existing Xcode app. `applicationId` is the app `clerk init` already

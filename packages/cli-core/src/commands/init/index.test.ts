@@ -23,6 +23,7 @@ import {
   mockMiddlewareScaffold,
 } from "../../test/lib/init-harness.ts";
 import * as telemetryMod from "../../lib/telemetry.ts";
+import * as androidCoordinator from "./android/coordinator.ts";
 import { init } from "./index.ts";
 
 describe("init", () => {
@@ -475,7 +476,7 @@ describe("init", () => {
     expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env.local", cwd: mockCtx.cwd });
   });
 
-  test("native framework skips npm SDK install but still pulls env keys", async () => {
+  test("native framework skips npm SDK install and runs native setup instead of pulling env keys", async () => {
     setup({ email: "test@test.com" });
 
     const androidCtx = {
@@ -493,15 +494,15 @@ describe("init", () => {
       },
     };
     spyOn(context, "gatherContext").mockResolvedValue(androidCtx);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [],
-      postInstructions: ["Add the Clerk Android SDK via Gradle"],
-    });
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_test" } } as never);
+    const run = spyOn(androidCoordinator, "runAndroidInit").mockResolvedValue();
+    track(run);
 
     await init({ yes: true });
 
     expect(heuristics.installSdk).not.toHaveBeenCalled();
-    expect(pullMod.pull).toHaveBeenCalledWith({ file: ".env", cwd: androidCtx.cwd });
+    expect(pullMod.pull).not.toHaveBeenCalled();
+    expect(run).toHaveBeenCalledWith(expect.objectContaining({ root: androidCtx.cwd }), "app_test");
   });
 
   test("native framework skips the agent skills install prompt", async () => {
@@ -522,10 +523,8 @@ describe("init", () => {
       },
     };
     spyOn(context, "gatherContext").mockResolvedValue(androidCtx);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [],
-      postInstructions: ["Add the Clerk Android SDK via Gradle"],
-    });
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_test" } } as never);
+    track(spyOn(androidCoordinator, "runAndroidInit").mockResolvedValue());
 
     await init({ yes: true });
 
@@ -553,15 +552,14 @@ describe("init", () => {
     spyOn(frameworkMod, "lookupFramework").mockReturnValue(androidFramework);
     spyOn(context, "gatherContext").mockResolvedValue(androidCtx);
     spyOn(context, "hasPackageJson").mockResolvedValue(false);
-    spyOn(scaffoldMod, "scaffold").mockResolvedValue({
-      actions: [],
-      postInstructions: ["Add the Clerk Android SDK via Gradle"],
-    });
+    spyOn(config, "resolveProfile").mockResolvedValue({ profile: { appId: "app_test" } } as never);
+    const run = spyOn(androidCoordinator, "runAndroidInit").mockResolvedValue();
+    track(run);
 
     await init({ yes: true, framework: "android" });
 
     expect(bootstrapMod.promptAndBootstrap).not.toHaveBeenCalled();
-    expect(pullMod.pull).toHaveBeenCalled();
+    expect(run).toHaveBeenCalled();
   });
 
   test("bootstrap passes project dir to link, not parent cwd", async () => {

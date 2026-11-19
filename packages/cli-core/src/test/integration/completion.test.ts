@@ -92,6 +92,12 @@ describe("generateCompletions", () => {
       const names = completionNames("security", "");
       expect(names).toEqual(expect.arrayContaining(["audit", "fix", "checks"]));
     });
+
+    test("completes logs subcommands", () => {
+      expect(completionNames("")).toContain("logs");
+      const names = completionNames("logs", "");
+      expect(names).toEqual(expect.arrayContaining(["list", "get", "schema"]));
+    });
   });
 
   describe("impersonate completion", () => {

@@ -1,47 +1,77 @@
 import { createOption } from "@commander-js/extra-typings";
 import type { Program } from "../../cli-program.ts";
-import { isExperimentEnabled, requireExperiment } from "../../lib/experimental.ts";
 import { collectOptionValues, parseIntegerOption } from "../../lib/option-parsers.ts";
 import { FILTER_MATCH_CHOICES } from "./filters.ts";
 import { follow } from "./follow.ts";
+import { get, MAX_LIMIT as GET_MAX_LIMIT } from "./get.ts";
+import { collectChoice, GROUP_STATUS_CHOICES, GROUP_TYPE_CHOICES } from "./grouped.ts";
 import { list } from "./list.ts";
 import { schema } from "./schema.ts";
 import { parseDuration, parseTimestamp } from "./time.ts";
 
-const logs = { list, follow, schema };
+const logs = { list, follow, get, schema };
 
-export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.env): void {
-  // Experimental until `clerk logs` is ready to ship (Linear project
-  // "Logs: $ clerk logs subcommand"); the gate comes off then. Same stub as
-  // `clerk migrate`: hidden, no subcommands for completion to walk, and it
-  // accepts anything so every invocation reaches the refusal.
-  if (!isExperimentEnabled("logs", env)) {
-    const stub = program
-      .command("logs", { hidden: true })
-      .helpOption(false)
-      .allowUnknownOption()
-      .allowExcessArguments()
-      .argument("[args...]")
-      .action(() => requireExperiment("logs", env));
-    // `clerk help logs` renders help without running the action.
-    stub.helpInformation = () => {
-      requireExperiment("logs", env);
-      return "";
-    };
-    return;
-  }
+const LOGS_SUMMARY = "Read your instance's Application Logs";
 
+// `summary` is what the root `clerk --help` table shows; the description is
+// the `clerk logs --help` body, which an agent reads to learn the output
+// shapes before it runs anything. Wrapped by hand at 80 columns, like
+// `clerk deploy`.
+const LOGS_DESCRIPTION = `${LOGS_SUMMARY}.
+
+\`list\` is the default subcommand, so \`clerk logs\` alone lists the newest logs
+and takes every \`list\` flag. Start with \`clerk logs schema\` to find the event
+types and the payload fields \`--type\`, \`--payload-filter\` and \`--fields\` take.
+
+With --json (implied in agent mode), list and get print \`{ data, cursor }\`:
+\`data\` holds the logs as the Backend API returns them, and \`cursor.next\` is what
+to pass to --cursor for the next page (null when there are none). With
+--grouped, \`data\` holds \`log_group\` items next to the logs outside a group, and
+a group with \`has_more_events\` continues with
+\`clerk logs get <group_id> --cursor <events_cursor>\`. With --follow the output
+is NDJSON instead, one log per line. schema prints the API's schema objects
+as-is. Logs go back as far as your plan's log retention;
+\`cursor.retention_limit_reached\` says a list reached it.`;
+
+export function registerLogs(program: Program): void {
   const logsCommand = program
     .command("logs")
-    .description("Read your instance's Application Logs")
+    .summary(LOGS_SUMMARY)
+    .description(LOGS_DESCRIPTION)
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    // The discovery flow, in the order an agent follows it.
     .setExamples([
-      { command: "clerk logs", description: "List the newest logs" },
-      { command: "clerk logs --since 30m", description: "Logs from the last 30 minutes" },
-      { command: "clerk logs --follow", description: "Print new logs as they arrive" },
-      { command: "clerk logs --instance prod --json", description: "Production logs as JSON" },
+      {
+        command: "clerk logs schema --json",
+        description: "Every event type and its payload fields",
+      },
+      {
+        command: "clerk logs schema user.created --json",
+        description: "The payload fields of one event type",
+      },
+      {
+        command:
+          "clerk logs --type user.created --payload-filter user_id=user_123 --since 1h --json",
+        description: "The last hour's logs of that type with a matching field",
+      },
+      {
+        command: "clerk logs --grouped --status failed --since 1h --json",
+        description: "Failed sign-in and sign-up flows, one item each",
+      },
+      {
+        command: "clerk logs get sia_123 --json",
+        description: "The logs of one sign-in (sua_... for a sign-up)",
+      },
+      {
+        command: "clerk logs --follow --json",
+        description: "Stream new logs as NDJSON, one per line",
+      },
+      {
+        command: "clerk logs --cursor <cursor> --json",
+        description: "The next page, from a previous cursor.next",
+      },
     ]);
 
   logsCommand
@@ -51,7 +81,8 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     .option(
       "--follow",
       "Keep running and print new logs as they arrive, oldest first, for live debugging " +
-        "(a log more than 5m late may be missed). To export or sync logs, use log drains: " +
+        "(a log more than 10s older than the newest one printed may be missed). " +
+        "To export or sync logs, use log drains: " +
         "https://clerk.com/docs/guides/dashboard/logs/application-logs#export-logs",
     )
     .option(
@@ -61,10 +92,27 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     )
     .option(
       "--limit <number>",
-      "Maximum logs to return (1-500, default 50; with --follow, the backfill)",
+      "Maximum logs to return (1-500, default 50; with --follow, the backfill). With --grouped it counts items, each a flow with its events or a log outside one, up to 100",
       (value) => parseIntegerOption(value, "--limit", { min: 1, max: 500 }),
     )
     .option("--cursor <cursor>", "Continue from the cursor a previous run printed")
+    .option(
+      "--grouped",
+      "One row per sign-in or sign-up flow, with its events below. Filters keep flows with a matching event; the time range picks flows by when they started",
+    )
+    .addOption(
+      createOption("--group-type <type>", "With --grouped, only flows of this type; repeatable")
+        .choices(GROUP_TYPE_CHOICES)
+        .argParser(collectChoice("--group-type", GROUP_TYPE_CHOICES)),
+    )
+    .addOption(
+      createOption(
+        "--status <status>",
+        "With --grouped, only flows that ended this way; repeatable",
+      )
+        .choices(GROUP_STATUS_CHOICES)
+        .argParser(collectChoice("--status", GROUP_STATUS_CHOICES)),
+    )
     .option(
       "--since <duration>",
       "Only logs from the last duration (30m, 2h, 7d, 1h30m)",
@@ -110,7 +158,6 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
       { command: "clerk logs list", description: "List the 50 newest logs" },
-      { command: "clerk logs list --limit 200", description: "List the 200 newest logs" },
       { command: "clerk logs list --since 1h", description: "Logs from the last hour" },
       {
         command: "clerk logs list --from 2026-11-01 --to 2026-11-02",
@@ -119,6 +166,11 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       { command: "clerk logs list --type 'sign_in.*'", description: "Sign-in logs" },
       { command: "clerk logs list --user user_123", description: "Logs about one user" },
       {
+        command:
+          "clerk logs list --type user.created --payload-filter user_id=user_123 --since 1h --json",
+        description: "The last hour's logs of a type with a matching payload field, as JSON",
+      },
+      {
         command: "clerk logs list --type sms.failed --payload-filter phone_number=+15555550100",
         description: "Failed SMS to one phone number",
       },
@@ -126,14 +178,22 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
         command: "clerk logs list --type user.created --fields email_address,username",
         description: "New users with their email address and username",
       },
+      {
+        command: "clerk logs list --grouped",
+        description: "Sign-in and sign-up flows, one row each, with their events",
+      },
+      {
+        command: "clerk logs list --grouped --group-type sign_in --status failed --json",
+        description: "Failed sign-ins with their events, as JSON",
+      },
       { command: "clerk logs list --follow", description: "Print new logs as they arrive" },
       {
         command: "clerk logs list --follow --type 'sign_in.*' --json",
-        description: "Stream sign-in logs as JSON, one per line",
+        description: "Stream sign-in logs as NDJSON, one per line",
       },
       {
-        command: "clerk logs list --cursor <cursor>",
-        description: "Continue where a previous run stopped",
+        command: "clerk logs list --cursor <cursor> --json",
+        description: "The next page, from a previous cursor.next",
       },
       {
         command: "clerk logs list --app app_123 --instance prod --json",
@@ -145,18 +205,91 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
       return options.follow ? logs.follow(options) : logs.list(options);
     });
 
+  // The event filters of `list`; get has no time range, `--follow` or group
+  // filters, since the group is already chosen.
+  logsCommand
+    .command("get")
+    .description("Show the logs of a log group (a sign-in or sign-up), oldest first")
+    .argument("[id]", "A log group ID: a sign-in ID (sia_...) or a sign-up ID (sua_...)")
+    .option("--json", "Output as JSON")
+    .option(
+      "--limit <number>",
+      `Maximum logs to return (1-${GET_MAX_LIMIT}, default 50)`,
+      (value) => parseIntegerOption(value, "--limit", { min: 1, max: GET_MAX_LIMIT }),
+    )
+    .option(
+      "--cursor <cursor>",
+      "Continue from a previous run's cursor.next, or a group's events_cursor",
+    )
+    .option("--type <type>", "Only logs of a type; a trailing * matches a prefix (sign_in.*)")
+    .option("--user <user-id>", "Only logs where the user is the actor or subject")
+    .option(
+      "--identifier <value>",
+      "Only logs for an email, phone number, username or web3 wallet (exact)",
+    )
+    .option("--actor <id>", "Only logs with this actor")
+    .option("--subject <id>", "Only logs with this subject")
+    .option("--session <id>", "Only logs from requests made with this session")
+    .option("--client <id>", "Only logs of a client")
+    .option("--ip <address>", "Only logs from an IP address")
+    .option("--trace <id>", "Only logs of a trace")
+    .option("--impersonator <user-id>", "Only logs made while this user impersonated someone")
+    .option(
+      "--payload-filter <path=value>",
+      "Only logs whose payload field equals a value (repeatable; needs --type)",
+      collectOptionValues,
+    )
+    .option("--fields <paths>", "Payload fields to include, comma-separated (needs --type)")
+    .addOption(
+      createOption("--match <mode>", "Match all filters (default) or any of them").choices(
+        FILTER_MATCH_CHOICES,
+      ),
+    )
+    .option("--end-user-only", "Only event types shown to end users")
+    .option("--secret-key <key>", "Backend API secret key to use")
+    .option("--app <id>", "Application ID to target (works from any directory)")
+    .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
+    .setExamples([
+      { command: "clerk logs get sia_123", description: "The logs of a sign-in" },
+      { command: "clerk logs get sua_123 --json", description: "The logs of a sign-up as JSON" },
+      {
+        command: "clerk logs list --grouped --json",
+        description: "Find recent sign-in and sign-up IDs (each group_id)",
+      },
+      {
+        command: "clerk logs get sia_123 --type 'sign_in.*'",
+        description: "Only the sign_in logs of a sign-in",
+      },
+      {
+        command: "clerk logs get sia_123 --cursor <cursor> --json",
+        description: "The next page, from cursor.next or the group's events_cursor",
+      },
+      {
+        command: "clerk logs get sia_123 --app app_123 --instance prod",
+        description: "A sign-in of another application's production instance",
+      },
+    ])
+    .action(async (id: string | undefined, _opts, cmd) =>
+      logs.get(id, cmd.optsWithGlobals() as Parameters<typeof logs.get>[1]),
+    );
+
   logsCommand
     .command("schema")
-    .description("Show the payload fields of a log event type")
+    .description("List every log event type, or show the payload fields of one")
     .argument(
       "[event-type]",
-      "An event type (sign_in.completed), a wildcard (sign_in.*) or a family (sign_in)",
+      "An event type (sign_in.completed), a wildcard (sign_in.*) or a family (sign_in); omit to list every type",
     )
     .option("--json", "Output as JSON")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
     .setExamples([
+      { command: "clerk logs schema", description: "Every event type, by group" },
+      {
+        command: "clerk logs schema --json",
+        description: "Every event type with its payload fields, as JSON",
+      },
       {
         command: "clerk logs schema sign_in.completed",
         description: "Fields of one event type",
@@ -166,6 +299,10 @@ export function registerLogs(program: Program, env: NodeJS.ProcessEnv = process.
         description: "Fields every sign_in event type shares",
       },
       { command: "clerk logs schema user.created --json", description: "The schema as JSON" },
+      {
+        command: "clerk logs list --type user.created --payload-filter user_id=user_123",
+        description: "Then filter logs of that type on one of its fields",
+      },
     ])
     .action(async (eventType: string | undefined, _opts, cmd) =>
       logs.schema(eventType, cmd.optsWithGlobals() as Parameters<typeof logs.schema>[1]),

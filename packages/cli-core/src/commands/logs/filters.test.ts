@@ -1,4 +1,5 @@
 import { test, expect, describe } from "bun:test";
+import { CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
 import { resolveFilters, type LogFilterOptions } from "./filters.ts";
 
 describe("resolveFilters", () => {
@@ -139,6 +140,28 @@ describe("resolveFilters", () => {
     ],
   ])("rejects %s", (_name, options, message) => {
     expect(() => resolveFilters(options)).toThrow(message);
+  });
+
+  test.each<[string, LogFilterOptions]>([
+    ["--payload-filter", { payloadFilter: ["user_id=user_1"] }],
+    ["--fields", { fields: "user_id" }],
+  ])("%s without --type points at clerk logs schema", (_flag, options) => {
+    let error: unknown;
+    try {
+      resolveFilters(options);
+    } catch (caught) {
+      error = caught;
+    }
+
+    expect(error).toBeInstanceOf(CliError);
+    const cliError = error as CliError;
+    expect(cliError.code).toBe(ERROR_CODE.USAGE_ERROR);
+    expect(cliError.exitCode).toBe(EXIT_CODE.USAGE);
+    expect(cliError.message).toContain("Run `clerk logs schema` to list the event types");
+    expect(cliError.examples?.map((example) => example.command)).toEqual([
+      "clerk logs schema --json",
+      "clerk logs list --type user.created --payload-filter user_id=user_123",
+    ]);
   });
 
   test.each([

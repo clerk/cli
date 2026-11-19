@@ -87,6 +87,7 @@ Commands:
   impersonate|imp  [options] [user]               Impersonate a Clerk user
   init             [options]                      Initialize Clerk in your project
   link             [options]                      Link this project to a Clerk application
+  logs             [options]                      Read your instance's Application Logs
   mcp                                             Manage the Clerk remote MCP server connection for AI editors and CLIs
   migrate                                         Migrate users into Clerk from another auth platform or another Clerk instance
   open                                            Open Clerk resources in your browser
@@ -99,6 +100,18 @@ Commands:
   whoami           [options]                      Show the current logged-in user and linked application
   bird                                            Play Clerk Bird, a Flappy Bird game in your terminal
 ```
+
+## Output stability
+
+The human output (tables, summaries, notes, and colors) is written for people
+and can change in any release. It truncates IDs, prints times in your local
+time zone, and adds color, so don't parse it.
+
+Scripts and agents should use `--json`. Its shape is a contract: removing,
+renaming, or changing the type of a field ships only in a major version. New
+fields, and list items with a new `object` value, can appear in any release, so
+ignore what you don't recognize. In agent mode, most commands that support
+`--json` print JSON without the flag.
 
 ## Telemetry
 

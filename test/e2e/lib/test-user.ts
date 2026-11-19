@@ -27,6 +27,7 @@ function clerkEnv(configDir: string, target: TestUserTarget): Record<string, str
   const env: Record<string, string | undefined> = {
     ...process.env,
     CLERK_CONFIG_DIR: configDir,
+    CLERK_TELEMETRY_DISABLED: "1",
   };
   if ("secretKey" in target) env.CLERK_SECRET_KEY = target.secretKey;
   return env;

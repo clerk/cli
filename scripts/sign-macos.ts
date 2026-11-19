@@ -49,6 +49,20 @@ export function getDarwinTargets(targetFilter?: string) {
   return matched;
 }
 
+/** Delays between `codesign` attempts when Apple's timestamp server fails. */
+export const CODESIGN_RETRY_DELAYS_MS = [10_000, 30_000, 60_000];
+
+/**
+ * Reports whether a `codesign` failure came from Apple's timestamp server
+ * (timestamp.apple.com) being unreachable or slow, which is transient and
+ * worth retrying. Any other signing failure is permanent.
+ */
+export function isTransientTimestampError(message: string): boolean {
+  return /timestamp was expected but was not found|timestamp service is not available/i.test(
+    message,
+  );
+}
+
 /**
  * Executes a command synchronously and returns its stdout. Throws on non-zero
  * exit. When `displayCmd` is provided it is used for logging and error messages
@@ -227,8 +241,9 @@ if (import.meta.main) {
       const binaryPath = join(artifactsDir, target.name, "clerk");
       console.log(`\n--- ${target.name} ---`);
 
-      // Code sign with hardened runtime
-      run([
+      // Code sign with hardened runtime. `--timestamp` contacts Apple's
+      // timestamp server, which intermittently fails; retry only that failure.
+      const codesignCmd = [
         "codesign",
         "--sign",
         identity,
@@ -241,7 +256,22 @@ if (import.meta.main) {
         "--timestamp",
         "--force",
         binaryPath,
-      ]);
+      ];
+      for (let attempt = 0; ; attempt++) {
+        try {
+          run(codesignCmd);
+          break;
+        } catch (error) {
+          const delay = CODESIGN_RETRY_DELAYS_MS[attempt];
+          if (delay === undefined || !isTransientTimestampError(String(error))) {
+            throw error;
+          }
+          console.warn(
+            `Timestamp server unavailable (attempt ${attempt + 1}); retrying in ${delay / 1000}s...`,
+          );
+          Bun.sleepSync(delay);
+        }
+      }
 
       // Verify signature
       run(["codesign", "--verify", "--verbose", binaryPath]);
