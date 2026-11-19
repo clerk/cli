@@ -280,7 +280,7 @@ describe("clerk deploy domain commands", () => {
         "added and not primary",
         domain("example.com"),
         "You already added example.com, and production can have only one domain you own beside clerk.app. Nothing was added. " +
-          "Run `clerk deploy use-domain example.com`, or remove it with `clerk deploy remove-domain example.com` first.",
+          "Run `clerk deploy use-domain example.com` to make it primary.",
       ],
       [
         "primary",
@@ -517,48 +517,57 @@ describe("clerk deploy domain commands", () => {
   });
 
   describe("remove-domain", () => {
-    test("asks a person, then deletes the domain by ID", async () => {
+    const replaced = domain("acme.clerk.app", { is_clerk_managed: true });
+    const ownPrimary = domain("example.com", { is_primary: true });
+    const withoutClerkApp = [ownPrimary, domain("www.example.com")];
+
+    test("asks a person, then shuts down the clerk.app domain a domain you own replaced", async () => {
       setMode("human");
-      listReturns([managed, hosting]);
+      listReturns([replaced, ownPrimary, hosting]);
 
-      await removeDomain("acme.netlify.app");
+      await removeDomain("acme.clerk.app");
 
-      expect(confirm).toHaveBeenCalled();
-      expect(remove).toHaveBeenCalledWith("app_1", "dmn_acme.netlify.app");
-      expect(captured.err).toContain("Removed acme.netlify.app");
+      expect(confirm).toHaveBeenCalledWith(
+        expect.objectContaining({
+          message:
+            "Remove acme.clerk.app? Removing acme.clerk.app shuts it down for good, so builds that still use it stop working.",
+        }),
+      );
+      expect(remove).toHaveBeenCalledWith("app_1", "dmn_acme.clerk.app");
+      expect(captured.err).toContain("Removed acme.clerk.app");
     });
 
-    test("removes a domain you own that isn't primary", async () => {
-      listReturns([managed, domain("example.com")]);
+    test("removes a domain that isn't primary on an app without clerk.app", async () => {
+      listReturns(withoutClerkApp);
 
-      await removeDomain("example.com", { yes: true });
+      await removeDomain("www.example.com", { yes: true });
 
-      expect(remove).toHaveBeenCalledWith("app_1", "dmn_example.com");
-      expect(report()).toEqual({ domain: "example.com", removed: true });
+      expect(remove).toHaveBeenCalledWith("app_1", "dmn_www.example.com");
+      expect(report()).toEqual({ domain: "www.example.com", removed: true });
     });
 
     test("deletes nothing when the person declines", async () => {
       setMode("human");
-      listReturns([managed, hosting]);
+      listReturns(withoutClerkApp);
       confirm.mockResolvedValue(false);
 
-      await expect(removeDomain("acme.netlify.app")).rejects.toBeInstanceOf(UserAbortError);
+      await expect(removeDomain("www.example.com")).rejects.toBeInstanceOf(UserAbortError);
       expect(remove).not.toHaveBeenCalled();
     });
 
     test("needs --yes from an agent", async () => {
-      listReturns([managed, hosting]);
+      listReturns([replaced, ownPrimary]);
 
-      const error = await removeDomain("acme.netlify.app").catch((e: unknown) => e);
+      const error = await removeDomain("acme.clerk.app").catch((e: unknown) => e);
 
       expect((error as CliError).exitCode).toBe(EXIT_CODE.USAGE);
       expect((error as CliError).message).toContain("Pass --yes to confirm");
       expect(remove).not.toHaveBeenCalled();
 
-      await removeDomain("acme.netlify.app", { yes: true });
+      await removeDomain("acme.clerk.app", { yes: true });
 
-      expect(remove).toHaveBeenCalledWith("app_1", "dmn_acme.netlify.app");
-      expect(report()).toEqual({ domain: "acme.netlify.app", removed: true });
+      expect(remove).toHaveBeenCalledWith("app_1", "dmn_acme.clerk.app");
+      expect(report()).toEqual({ domain: "acme.clerk.app", removed: true });
     });
 
     test("succeeds without a request when the domain is already gone", async () => {
@@ -574,21 +583,21 @@ describe("clerk deploy domain commands", () => {
       ["the primary clerk.app domain", [managed], "acme.clerk.app", "production's primary domain"],
       [
         "a primary domain you own",
-        [
-          domain("acme.clerk.app", { is_clerk_managed: true }),
-          domain("example.com", { is_primary: true }),
-        ],
+        [replaced, ownPrimary],
         "example.com",
         "production's primary domain",
       ],
       [
-        "the clerk.app domain after the switch",
-        [
-          domain("acme.clerk.app", { is_clerk_managed: true }),
-          domain("example.com", { is_primary: true }),
-        ],
-        "acme.clerk.app",
-        "Shutting it down is permanent, so do it in the Clerk Dashboard.",
+        "a hosting domain on an app with clerk.app",
+        [managed, hosting],
+        "acme.netlify.app",
+        "Domains of this application can't be deleted, except its clerk.app domain once another domain is primary.",
+      ],
+      [
+        "a domain you own beside clerk.app",
+        [managed, domain("example.com")],
+        "example.com",
+        "Domains of this application can't be deleted, except its clerk.app domain once another domain is primary.",
       ],
     ] as [string, Domain[], string, string][])(
       "refuses %s",
@@ -603,5 +612,18 @@ describe("clerk deploy domain commands", () => {
         expect(remove).not.toHaveBeenCalled();
       },
     );
+
+    test.each([
+      ["domain_deletion_not_allowed", "can't be deleted, except its clerk.app domain"],
+      ["operation_not_allowed_on_primary_domain", "production's primary domain"],
+    ])("maps Clerk's 403 %s", async (code, message) => {
+      listReturns(withoutClerkApp);
+      remove.mockRejectedValue(plapiError(403, code));
+
+      const error = await removeDomain("www.example.com", { yes: true }).catch((e: unknown) => e);
+
+      expect((error as CliError).code).toBe(ERROR_CODE.DOMAIN_NOT_REMOVABLE);
+      expect((error as CliError).message).toContain(message);
+    });
   });
 });

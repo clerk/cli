@@ -157,6 +157,16 @@ function translatePlapiError<T>(
     );
   }
 
+  if (status === 403 && code === "domain_deletion_not_allowed") {
+    return new CliError(DOMAIN_DELETION_NOT_ALLOWED, { code: ERROR_CODE.DOMAIN_NOT_REMOVABLE });
+  }
+
+  if (status === 403 && code === "operation_not_allowed_on_primary_domain") {
+    return new CliError(`That domain ${PRIMARY_NOT_REMOVABLE}`, {
+      code: ERROR_CODE.DOMAIN_NOT_REMOVABLE,
+    });
+  }
+
   if (status === 422 && code === "form_identifier_exists" && readParamName(error.meta) === "name") {
     return new CliError(
       "That domain is already added to a Clerk instance. Remove it there first, or choose another.",
@@ -214,6 +224,14 @@ export const HOSTING_DOMAIN_NEEDS_CLERK_APP =
 
 export const CLERK_APP_DOMAIN_EXISTS =
   "This instance already has a clerk.app domain. Nothing was added.";
+
+/** PLAPI's rule for an app with a clerk.app domain. */
+export const DOMAIN_DELETION_NOT_ALLOWED =
+  "Domains of this application can't be deleted, except its clerk.app domain once another domain is primary. Nothing changed.";
+
+export const PRIMARY_NOT_REMOVABLE =
+  "is production's primary domain, so it can't be removed. Nothing changed. " +
+  "Make another domain primary first with `clerk deploy use-domain <domain>`.";
 
 export const READINESS_LABELS = {
   dns: "DNS",

@@ -27,7 +27,7 @@ clerk deploy add-domain acme.netlify.app # Add your app's hosting domain; prints
 clerk deploy use-domain example.com      # Make an added domain primary once it is ready
 clerk deploy use-domain example.com --yes # Switch without asking (agents must pass it)
 clerk deploy domains                     # List production's domains
-clerk deploy remove-domain acme.netlify.app # Remove a domain (asks first; agents pass --yes)
+clerk deploy remove-domain acme.clerk.app   # Shut down a replaced clerk.app domain (asks first; agents pass --yes)
 ```
 
 ## Options
@@ -118,7 +118,7 @@ If production leaves clerk.app after the list is read, or the target is a clerk.
 
 Before a ready switch, the report and the prompt name the new domain's session token issuer and say to accept it as well as the current one, because builds already shipped keep sending the old issuer.
 
-A custom domain served through the Clerk proxy can become primary. Once a domain you own is primary, the report says the old clerk.app domain keeps working for builds that still use it and can be shut down in the Clerk Dashboard. If hosting domains exist, it says they keep working after the shutdown, and that before it you redeploy the apps on them with the new keys and point any proxy you wrote yourself at `https://frontend-api.clerk.dev` instead of the clerk.app domain's Frontend API URL. The CLI doesn't shut it down.
+A custom domain served through the Clerk proxy can become primary. Once a domain you own is primary, the report says the old clerk.app domain keeps working for builds that still use it and can be shut down in the Clerk Dashboard. If hosting domains exist, it says they keep working after the shutdown, and that before it you redeploy the apps on them with the new keys and point any proxy you wrote yourself at `https://frontend-api.clerk.dev` instead of the clerk.app domain's Frontend API URL. `use-domain` doesn't shut it down; `clerk deploy remove-domain <name>.clerk.app` does.
 
 #### `clerk deploy domains`
 
@@ -126,10 +126,14 @@ Lists production's domains. A person sees one table under "Domains". Each name h
 
 #### `clerk deploy remove-domain <domain>`
 
-Removes a domain with `DELETE domains/{id}`. It refuses, with `domain_not_removable` and no request:
+Removes a domain with `DELETE domains/{id}`. On an app with a clerk.app domain, PLAPI deletes only the clerk.app domain, and only once another domain is primary, as it does for a vercel.app domain a domain you own replaced. Removing it shuts it down for good. The command refuses, with `domain_not_removable` and no request:
 
-- production's primary domain, since PLAPI would promote another domain in its place. Make another domain primary first with `use-domain`;
-- the clerk.app domain, since removing it is its permanent shutdown, which the Clerk Dashboard owns.
+- production's primary domain. Make another domain primary first with `use-domain`;
+- any other domain of an app that has a clerk.app domain: hosting domains, the domain you own, and satellites.
+
+An app without clerk.app keeps the old rules: any domain that isn't primary can be removed.
+
+PLAPI answers a refused delete with 403 `domain_deletion_not_allowed` or, for the primary domain, 403 `operation_not_allowed_on_primary_domain`. Both map to `domain_not_removable`, which covers an app whose clerk.app domain is already gone.
 
 A person confirms at a prompt; an agent passes `--yes`, and without it the command exits 2 and names the command to run. A domain that is already gone reports `removed: false` and exits 0, so a rerun is safe.
 

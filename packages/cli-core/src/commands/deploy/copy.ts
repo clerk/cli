@@ -42,8 +42,9 @@ route in your app.
 
 \`clerk deploy use-domain <domain>\` makes an added domain you own the
 primary domain. Run it again until the domain is ready.
-\`clerk deploy domains\` lists the domains, and
-\`clerk deploy remove-domain <domain>\` removes one.`;
+\`clerk deploy domains\` lists the domains. Once a domain you own is
+primary, \`clerk deploy remove-domain <clerk.app domain>\` shuts down the
+clerk.app domain. Other domains on a clerk.app app can't be removed.`;
 
 const OWN_DOMAIN_NEED = `  - A domain you own where you can add DNS records (example.com, or a
     subdomain like app.example.com). The URL a hosting provider generated

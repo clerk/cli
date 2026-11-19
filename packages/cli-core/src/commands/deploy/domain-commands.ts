@@ -17,7 +17,13 @@ import {
   sessionTokenIssuer,
   WEB_HOST_SUFFIXES,
 } from "./domains.ts";
-import { CLERK_APP_DOMAIN_EXISTS, CLERK_APP_SLUG_FORMAT, mapDeployError } from "./errors.ts";
+import {
+  CLERK_APP_DOMAIN_EXISTS,
+  CLERK_APP_SLUG_FORMAT,
+  DOMAIN_DELETION_NOT_ALLOWED,
+  mapDeployError,
+  PRIMARY_NOT_REMOVABLE,
+} from "./errors.ts";
 import { DOMAIN_NAME } from "./prompts.ts";
 import { resolveProductionApp } from "./status.ts";
 
@@ -130,7 +136,7 @@ function secondOwnDomain(own: ApplicationDomain): string {
   return own.is_primary
     ? `Production already uses ${own.name}, and it can have only one domain you own beside clerk.app. Nothing was added.`
     : `You already added ${own.name}, and production can have only one domain you own beside clerk.app. Nothing was added. ` +
-        `Run \`clerk deploy use-domain ${own.name}\`, or remove it with \`clerk deploy remove-domain ${own.name}\` first.`;
+        `Run \`clerk deploy use-domain ${own.name}\` to make it primary.`;
 }
 
 export async function addDomain(rawDomain: string): Promise<void> {
@@ -328,36 +334,35 @@ type RemoveDomainReport = { domain: string; removed: boolean };
 
 /**
  * Removing a domain that is already gone reports `removed: false` and
- * succeeds, so a rerun converges. Deleting the primary would make PLAPI
- * promote another domain, and deleting the clerk.app domain is its permanent
- * shutdown, which the Dashboard owns.
+ * succeeds, so a rerun converges. On an app with a clerk.app domain, PLAPI
+ * deletes only that domain, and only once another domain is primary.
  */
 export async function removeDomain(
   rawDomain: string,
   options: { yes?: boolean } = {},
 ): Promise<void> {
   const name = parseDomainName(rawDomain);
-  const { appId, productionInstanceId } = await resolveProductionApp("remove-domain");
-  const found = (await listDomains(appId)).find((d) => d.name.toLowerCase() === name);
+  const { appId } = await resolveProductionApp("remove-domain");
+  const domains = await listDomains(appId);
+  const found = domains.find((d) => d.name.toLowerCase() === name);
 
   if (found?.is_primary) {
-    throw new CliError(
-      `${name} is production's primary domain, so it can't be removed. Nothing changed. ` +
-        "Make another domain primary first with `clerk deploy use-domain <domain>`.",
-      { code: ERROR_CODE.DOMAIN_NOT_REMOVABLE },
-    );
+    throw new CliError(`${name} ${PRIMARY_NOT_REMOVABLE}`, {
+      code: ERROR_CODE.DOMAIN_NOT_REMOVABLE,
+    });
   }
-  if (found?.is_clerk_managed) {
-    throw new CliError(
-      `${name} is this application's clerk.app domain. Shutting it down is permanent, so do it in the Clerk Dashboard. ` +
-        `Nothing changed. ${domainsDashboardUrl(appId, productionInstanceId)}`,
-      { code: ERROR_CODE.DOMAIN_NOT_REMOVABLE },
-    );
+  if (found && !found.is_clerk_managed && domains.some((d) => d.is_clerk_managed)) {
+    throw new CliError(`${name} can't be removed. ${DOMAIN_DELETION_NOT_ALLOWED}`, {
+      code: ERROR_CODE.DOMAIN_NOT_REMOVABLE,
+    });
   }
+  const consequence = found?.is_clerk_managed
+    ? `Removing ${name} shuts it down for good, so builds that still use it stop working.`
+    : `Clerk stops serving ${name}, so sign-in there stops working.`;
   if (found && !options.yes) {
     if (isAgent()) {
       throwUsageError(
-        `\`clerk deploy remove-domain\` stops Clerk serving ${name} and needs consent. Pass --yes to confirm.`,
+        `\`clerk deploy remove-domain\` needs consent. ${consequence} Pass --yes to confirm.`,
         undefined,
         undefined,
         [
@@ -369,7 +374,7 @@ export async function removeDomain(
       );
     }
     const proceed = await confirm({
-      message: `Remove ${name}? Clerk stops serving it, so sign-in there stops working.`,
+      message: `Remove ${name}? ${consequence}`,
       default: false,
     });
     if (!proceed) throwUserAbort();
