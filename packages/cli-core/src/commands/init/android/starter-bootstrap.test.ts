@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ERROR_CODE } from "../../../lib/errors.ts";
@@ -70,8 +70,10 @@ describe("promptAndroidStarter", () => {
   test.each([
     [{ name: "2fast" }, "name", "start with a letter"],
     [{ name: "class" }, "name", "Kotlin keyword"],
+    [{ name: "Native" }, "name", "Java keyword"],
     [{ name: "MyApp", applicationId: "myapp" }, "androidPackage", "reverse-DNS"],
     [{ name: "MyApp", applicationId: "com.example.object" }, "androidPackage", "Kotlin keyword"],
+    [{ name: "MyApp", applicationId: "com.new.app" }, "androidPackage", '"new" is a Java keyword'],
   ])("refuses %j before writing anything", async (options, field, message) => {
     const error = await run(options).catch((e: unknown) => e);
     expect(error).toBeInstanceOf(StarterInputRequired);
@@ -82,7 +84,7 @@ describe("promptAndroidStarter", () => {
     expect((error as StarterInputRequired).describe().flag).toBe(
       field === "name" ? "--name" : "--android-package",
     );
-    expect(await Bun.file(join(tmp, "MyApp/settings.gradle.kts")).exists()).toBe(false);
+    expect(readdirSync(tmp)).toEqual([]);
   });
 
   test("with --json, a missing --name is asked for with a suggestion", async () => {

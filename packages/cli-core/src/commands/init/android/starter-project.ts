@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 import wrapperJar from "./starter/gradle-wrapper.jar" with { type: "file" };
 import gradlewScript from "./starter/gradlew" with { type: "file" };
 import gradlewBatch from "./starter/gradlew.bat" with { type: "file" };
+import { log } from "../../../lib/log.ts";
 import { createFile } from "./files.ts";
 import { CLERK_ANDROID_MIN_SDK } from "./sdk.ts";
 
@@ -477,15 +478,23 @@ async function initializeRepository(directory: string): Promise<void> {
       cwd: directory,
       env: process.env,
       stdout: "ignore",
-      stderr: "ignore",
+      stderr: "pipe",
       timeout: 15_000,
     });
-    return (await child.exited) === 0;
+    const [code, stderr] = await Promise.all([child.exited, new Response(child.stderr).text()]);
+    if (code !== 0)
+      log.debug(`git: ${args.join(" ")} exited ${code} in ${directory}: ${stderr.trim()}`);
+    return code === 0;
   };
   try {
     if (!(await run(["init", "-q"]))) return;
     if (!(await run(["add", "-A"]))) return;
-    await run(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "Initial commit"]);
+    // Staged but uncommitted files aren't clean to the setup that follows, so it keeps backups of
+    // the ones it edits; say why, since nothing else does.
+    if (!(await run(["-c", "commit.gpgsign=false", "commit", "-q", "-m", "Initial commit"])))
+      log.warn(
+        "Git couldn't make the new app's initial commit, so its files are staged but not committed. If Git has no identity here, set user.name and user.email, then commit them.",
+      );
   } catch {
     // Git isn't installed.
   }

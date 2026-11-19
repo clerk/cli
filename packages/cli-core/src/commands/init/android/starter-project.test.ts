@@ -1,4 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, test } from "bun:test";
+import { useCaptureLog } from "../../../test/lib/stubs.ts";
 import { readdir, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -70,6 +71,39 @@ describe("starterProjectFiles", () => {
 });
 
 describe("writeAndroidStarter", () => {
+  const captured = useCaptureLog();
+  // Git needs an identity to commit and a CI runner has none; the starter passes process.env on.
+  const IDENTITY = {
+    GIT_AUTHOR_NAME: "t",
+    GIT_AUTHOR_EMAIL: "t@t",
+    GIT_COMMITTER_NAME: "t",
+    GIT_COMMITTER_EMAIL: "t@t",
+  };
+  const NO_IDENTITY = {
+    GIT_AUTHOR_NAME: undefined,
+    GIT_COMMITTER_NAME: undefined,
+    // An empty configured name is refused, and stops Git guessing one from the host.
+    GIT_CONFIG_COUNT: "1",
+    GIT_CONFIG_KEY_0: "user.name",
+    GIT_CONFIG_VALUE_0: "",
+  };
+  let restoreEnv = () => {};
+  function setEnv(values: Record<string, string | undefined>) {
+    const saved = Object.entries(values).map(([key]) => [key, process.env[key]] as const);
+    const apply = (entries: Iterable<readonly [string, string | undefined]>) => {
+      for (const [key, value] of entries) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    };
+    apply(Object.entries(values));
+    return () => apply(saved);
+  }
+  beforeAll(() => {
+    restoreEnv = setEnv(IDENTITY);
+  });
+  afterAll(() => restoreEnv());
+
   async function write(keep: string[] = roots) {
     const cwd = await mkdtemp(join(tmpdir(), "clerk-android-starter-"));
     keep.push(cwd);
@@ -94,13 +128,21 @@ describe("writeAndroidStarter", () => {
     });
   });
 
-  test("writes the executable wrapper and an initial commit", async () => {
+  // Windows has no executable bit to set or report.
+  test.skipIf(process.platform === "win32")(
+    "writes the wrapper executable, in the folder and in the initial commit",
+    async () => {
+      const dir = await write();
+      expect((await stat(join(dir, "gradlew"))).mode & 0o777).toBe(0o755);
+      expect((await stat(join(dir, "gradlew.bat"))).mode & 0o777).toBe(0o644);
+      // The initial commit records the executable bit, so a clone can run ./gradlew too.
+      const index = await Bun.$`git ls-files -s gradlew`.cwd(dir).quiet().nothrow();
+      expect(index.stdout.toString()).toStartWith("100755 ");
+    },
+  );
+
+  test("writes the wrapper files and an initial commit", async () => {
     const dir = await write();
-    expect((await stat(join(dir, "gradlew"))).mode & 0o777).toBe(0o755);
-    expect((await stat(join(dir, "gradlew.bat"))).mode & 0o777).toBe(0o644);
-    // The initial commit records the executable bit, so a clone can run ./gradlew too.
-    const index = await Bun.$`git ls-files -s gradlew`.cwd(dir).quiet().nothrow();
-    expect(index.stdout.toString()).toStartWith("100755 ");
     expect((await stat(join(dir, "gradle/wrapper/gradle-wrapper.jar"))).size).toBeGreaterThan(
       40_000,
     );
@@ -108,6 +150,20 @@ describe("writeAndroidStarter", () => {
     const log = await Bun.$`git log --oneline`.cwd(dir).quiet().nothrow();
     expect(log.stdout.toString()).toContain("Initial commit");
     expect((await Bun.$`git status --porcelain`.cwd(dir).quiet()).stdout.toString()).toBe("");
+    expect(captured.err).not.toContain("initial commit");
+  });
+
+  test("warns when Git can't make the initial commit, and still writes the project", async () => {
+    const restore = setEnv(NO_IDENTITY);
+    try {
+      const dir = await write();
+      expect(await readdir(dir)).toContain("app");
+      expect(captured.err).toContain("Git couldn't make the new app's initial commit");
+      const log = await Bun.$`git log --oneline`.cwd(dir).quiet().nothrow();
+      expect(log.stdout.toString()).toBe("");
+    } finally {
+      restore();
+    }
   });
 
   test("writes the project without Git on PATH, just with no repository", async () => {

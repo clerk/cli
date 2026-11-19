@@ -28,7 +28,9 @@ export interface AndroidStarterOptions {
 }
 
 const DEFAULT_NAME = "MyClerkApp";
-// Kotlin hard keywords can't be package segments; the lowercased name is the default's last one.
+// The applicationId is the Kotlin package, which can't have a Kotlin hard keyword as a segment, and
+// the namespace, which the Android Gradle Plugin refuses when a segment is a Java keyword. The
+// lowercased name is the default's last segment, so a name is held to both as well.
 const KOTLIN_KEYWORDS = new Set([
   "as",
   "break",
@@ -59,12 +61,56 @@ const KOTLIN_KEYWORDS = new Set([
   "when",
   "while",
 ]);
+// Java's reserved words and literals that aren't Kotlin hard keywords too.
+const JAVA_KEYWORDS = new Set([
+  "abstract",
+  "assert",
+  "boolean",
+  "byte",
+  "case",
+  "catch",
+  "char",
+  "const",
+  "default",
+  "double",
+  "enum",
+  "extends",
+  "final",
+  "finally",
+  "float",
+  "goto",
+  "implements",
+  "import",
+  "instanceof",
+  "int",
+  "long",
+  "native",
+  "new",
+  "private",
+  "protected",
+  "public",
+  "short",
+  "static",
+  "strictfp",
+  "switch",
+  "synchronized",
+  "throws",
+  "transient",
+  "void",
+  "volatile",
+]);
+
+function keywordLanguage(segment: string): "Kotlin" | "Java" | undefined {
+  if (KOTLIN_KEYWORDS.has(segment)) return "Kotlin";
+  return JAVA_KEYWORDS.has(segment) ? "Java" : undefined;
+}
 
 function nameProblem(name: string): string | undefined {
   if (!ANDROID_APP_NAME.test(name))
     return "App name must start with a letter and use only letters, numbers, and underscores, like MyApp.";
-  if (KOTLIN_KEYWORDS.has(name.toLowerCase()))
-    return `${name} is a Kotlin keyword, so it can't name the app's package. Pick a different name, like MyApp.`;
+  const language = keywordLanguage(name.toLowerCase());
+  if (language)
+    return `${name} is a ${language} keyword, so it can't name the app's package. Pick a different name, like MyApp.`;
   return undefined;
 }
 
@@ -111,8 +157,11 @@ async function chooseName(cwd: string, options: AndroidStarterOptions): Promise<
 function packageProblem(value: string): string | undefined {
   if (!PACKAGE_NAME.test(value))
     return "Enter a reverse-DNS applicationId with at least two segments, like com.example.myapp.";
-  if (value.split(".").some((segment) => KOTLIN_KEYWORDS.has(segment)))
-    return "An applicationId segment can't be a Kotlin keyword, since it's also the Kotlin package.";
+  for (const segment of value.split(".")) {
+    const language = keywordLanguage(segment);
+    if (language)
+      return `"${segment}" is a ${language} keyword, which an applicationId segment can't be, since the applicationId is also the app's Kotlin package and namespace.`;
+  }
   return undefined;
 }
 
