@@ -116,7 +116,6 @@ export function integrationHandoff(
           "Leave runtime verification untested unless the user explicitly requests it. Do not launch the app, automate sign-in/sign-out/relaunch, create test users, or troubleshoot simulator input as part of ordinary setup. Report signing and authentication as untested; this does not block completing the setup task.",
       },
     ],
-    completion:
-      "Stop after setup, pending source edits, doctor, and one Debug build for each platform in context.platforms (or a reported build blocker). Report completed setup, source edits, the build result, and unresolved setup requirements. When setup and source integration are complete, 'Setup complete; sign-in not tested' is a valid outcome. appIntegrationComplete remains false because the CLI does not verify application behavior; it does not require runtime testing. Release builds and runtime tests are separate, explicitly requested work.",
+    completion: `Stop after setup, pending source edits, doctor, and ${multiplatform ? "one Debug build for each platform in context.platforms" : "one Debug build of the selected target"} (or a reported build blocker). Report completed setup, source edits, the build result, and unresolved setup requirements. When setup and source integration are complete, 'Setup complete; sign-in not tested' is a valid outcome. appIntegrationComplete remains false because the CLI does not verify application behavior; it does not require runtime testing. Release builds and runtime tests are separate, explicitly requested work.`,
   };
 }
