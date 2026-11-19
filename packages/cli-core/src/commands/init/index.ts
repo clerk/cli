@@ -503,6 +503,19 @@ async function assertUsableFlags(
       `${androidSelection.join(", ")} ${androidSelection.length === 1 ? "selects" : "select"} an existing Android project and can't be combined with --starter.`,
     );
   }
+  if (
+    (options.googleClientId != null || options.googleClientSecretFile != null) &&
+    !options.signInWithGoogle
+  ) {
+    throwUsageError(
+      "--google-client-id and --google-client-secret-file apply with --sign-in-with-google.",
+    );
+  }
+  if (options.dryRun && options.googleClientSecretFile != null) {
+    throwUsageError(
+      "--dry-run never configures Sign in with Google; drop --google-client-secret-file.",
+    );
+  }
   for (const value of options.androidFingerprint ?? [])
     if (!/^(?:SHA-?256:\s*)?[A-Fa-f0-9]{2}(?::?[A-Fa-f0-9]{2}){31}$/i.test(value.trim()))
       throwUsageError(
@@ -535,6 +548,9 @@ const ANDROID_FLAGS = [
   ["androidPackage", "--android-package"],
   ["androidFingerprint", "--android-fingerprint"],
   ["androidSdk", "--android-sdk"],
+  ["signInWithGoogle", "--sign-in-with-google"],
+  ["googleClientId", "--google-client-id"],
+  ["googleClientSecretFile", "--google-client-secret-file"],
 ] as const;
 
 /** `--framework macos` creates a macOS starter; for an existing app it means the iOS (Swift) setup. */
@@ -1297,6 +1313,15 @@ export function registerInit(program: Program): void {
         "--android-sdk <artifact>",
         "Clerk SDK artifact: core (clerk-android-api) or ui (clerk-android-ui)",
       ).choices(["core", "ui"]),
+    )
+    .option(
+      "--sign-in-with-google",
+      "Enable native Sign in with Google for an Android app (Clerk Google connection with a Web client)",
+    )
+    .option("--google-client-id <id>", "Google Web client ID for --sign-in-with-google")
+    .option(
+      "--google-client-secret-file <path>",
+      "File holding the Google Web client secret or the Google Cloud OAuth client JSON download; - reads standard input",
     )
     .option("--relink", "Let --app replace this folder's link to a different application")
     .option("-y, --yes", "Skip confirmation prompts")
