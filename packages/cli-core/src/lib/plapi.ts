@@ -351,6 +351,15 @@ export type IOSApplication = {
   app_id_prefix: string;
   bundle_id: string;
 };
+export type AndroidApplication = {
+  object: "android_application";
+  id: string;
+  /** The Digital Asset Links namespace; `android_app` for an installed app. */
+  namespace: string;
+  package_name: string;
+  /** SHA-256 signing certificate fingerprints, colon-separated. */
+  fingerprints: string[];
+};
 
 function nativeUrl(appId: string, instanceId: string, path: string): URL {
   return new URL(
@@ -388,6 +397,27 @@ function readIOSApplication(value: unknown): IOSApplication {
     id: app.id,
     app_id_prefix: app.app_id_prefix,
     bundle_id: app.bundle_id,
+  };
+}
+
+function readAndroidApplication(value: unknown): AndroidApplication {
+  const app = value as Partial<AndroidApplication> | null;
+  if (
+    app?.object !== "android_application" ||
+    typeof app.id !== "string" ||
+    typeof app.namespace !== "string" ||
+    typeof app.package_name !== "string" ||
+    !Array.isArray(app.fingerprints) ||
+    !app.fingerprints.every((item) => typeof item === "string")
+  ) {
+    throw unexpectedResponse("Android registration");
+  }
+  return {
+    object: "android_application",
+    id: app.id,
+    namespace: app.namespace,
+    package_name: app.package_name,
+    fingerprints: app.fingerprints,
   };
 }
 
@@ -433,4 +463,31 @@ export async function createIOSApplication(
     },
   );
   return readIOSApplication(await response.json());
+}
+
+export async function listAndroidApplications(
+  appId: string,
+  instanceId: string,
+): Promise<AndroidApplication[]> {
+  const response = await plapiFetch(
+    "GET",
+    nativeUrl(appId, instanceId, "native_applications/android"),
+  );
+  const apps: unknown = await response.json();
+  if (!Array.isArray(apps)) throw unexpectedResponse("Android registrations");
+  return apps.map(readAndroidApplication);
+}
+
+export async function createAndroidApplication(
+  appId: string,
+  instanceId: string,
+  params: { namespace: "android_app"; package_name: string; fingerprints: string[] },
+  idempotencyKey: string,
+): Promise<AndroidApplication> {
+  const response = await plapiFetch(
+    "POST",
+    nativeUrl(appId, instanceId, "native_applications/android"),
+    { body: JSON.stringify(params), idempotencyKey },
+  );
+  return readAndroidApplication(await response.json());
 }
