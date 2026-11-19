@@ -119,4 +119,7 @@ export interface DoctorOptions {
   xcodeTarget?: string;
   xcodeConfiguration?: string;
   appIdPrefix?: string;
+  androidModule?: string;
+  androidPackage?: string;
+  androidFingerprint?: string[];
 }
