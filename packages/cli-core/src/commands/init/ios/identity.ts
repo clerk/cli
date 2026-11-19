@@ -165,7 +165,13 @@ export async function discoverRemote(
   const prefixMismatch =
     signingTeamMismatch && bundleIdentifier && appIdPrefix
       ? {
-          ...signingTeamMismatchWarning(bundleIdentifier, appIdPrefix, suggestedPrefix, macOS),
+          ...signingTeamMismatchWarning(
+            bundleIdentifier,
+            appIdPrefix,
+            suggestedPrefix,
+            macOS,
+            environment,
+          ),
           signingTeam: suggestedPrefix,
           macOS,
         }
@@ -232,8 +238,11 @@ export function signingTeamMismatchWarning(
   registeredPrefix: string,
   signingTeam: string,
   macOS: boolean,
+  environment: InstanceEnvironment = "development",
 ): { message: string; remedy: string } {
-  const registration = `Clerk's native registration for ${bundleIdentifier} uses App ID Prefix ${registeredPrefix}, but the app is signed by team ${signingTeam}.`;
+  const production = environment === "production";
+  const registration = `Clerk's ${production ? "production " : ""}native registration for ${bundleIdentifier} uses App ID Prefix ${registeredPrefix}, but the app is signed by team ${signingTeam}.`;
+  const dashboard = `under Native applications ${production ? "on the production instance " : ""}in the Clerk Dashboard`;
   const broken =
     "passkeys and password AutoFill (and device attestation, if you use it) fail until";
   // Either side can be wrong: the Bundle ID belongs to one team, so look up which.
@@ -242,11 +251,11 @@ export function signingTeamMismatchWarning(
   return macOS
     ? {
         message: `${registration} Mac App IDs always use the Team ID as their prefix, so the registration and the signing team disagree, and ${broken} they match.`,
-        remedy: `${lookUp} If it belongs to team ${signingTeam}, edit that registration's App ID Prefix to ${signingTeam} under Native applications in the Clerk Dashboard. ${otherTeam}`,
+        remedy: `${lookUp} If it belongs to team ${signingTeam}, edit that registration's App ID Prefix to ${signingTeam} ${dashboard}. ${otherTeam}`,
       }
     : {
         message: `${registration} If the app moved to that team, its App ID Prefix has probably changed, and ${broken} the registration matches.`,
-        remedy: `${lookUp} ${otherTeam} Then compare its App ID Prefix with ${registeredPrefix}: if it differs (usually it's ${signingTeam}), edit that registration's App ID Prefix to match under Native applications in the Clerk Dashboard. Only if team ${signingTeam} owns it and its prefix is still ${registeredPrefix}, a legacy prefix, rerun with --app-id-prefix ${registeredPrefix} to confirm it.`,
+        remedy: `${lookUp} ${otherTeam} Then compare its App ID Prefix with ${registeredPrefix}: if it differs (usually it's ${signingTeam}), edit that registration's App ID Prefix to match ${dashboard}. Only if team ${signingTeam} owns it and its prefix is still ${registeredPrefix}, a legacy prefix, ${production ? "the production registration is right as it is" : `rerun with --app-id-prefix ${registeredPrefix} to confirm it`}.`,
       };
 }
 export class IdentityRequired extends CliError {

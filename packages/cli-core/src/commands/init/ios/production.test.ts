@@ -421,6 +421,37 @@ test("doctor doesn't carry a development prefix that differs from the signing te
   expect(production?.message).not.toContain("OLDTEAM123");
 });
 
+test("doctor warns when production's own registration differs from the signing team", async () => {
+  await writeFile(join(root, "MyApp/MyAppApp.swift"), state.swift);
+  state.devPrefix = "OLDTEAM123";
+  state.registrations = [registration("com.example.MyApp", "PRODTEAM12")];
+  const options = {
+    root,
+    products: "core" as const,
+    minimumVersion: "1.0.0",
+    inspectOnly: true,
+    remote: { applicationId: "app_test" },
+  };
+  const report = await doctor(options, { api, run });
+  const check = report.checks.find((check) => check.name === "Production App ID Prefix");
+  expect(check?.status).toBe("warn");
+  expect(check?.message).toContain(
+    "Release: Clerk's production native registration for com.example.MyApp uses App ID Prefix PRODTEAM12, but the app is signed by team ABCDE12345.",
+  );
+  expect(check?.remedy).toContain("on the production instance in the Clerk Dashboard");
+  expect(check?.remedy).toContain("the production registration is right as it is");
+  expect(check?.remedy).not.toContain("--app-id-prefix");
+  expect(check?.remedy).toContain("/instances/ins_prod/native-applications");
+
+  // A production registration that matches the signing team passes, as before.
+  state.registrations = [registration("com.example.MyApp")];
+  const matched = await doctor(options, { api, run });
+  expect(matched.checks.some((check) => check.name === "Production App ID Prefix")).toBe(false);
+  expect(
+    matched.checks.find((check) => check.name === "Production native registration")?.status,
+  ).toBe("pass");
+});
+
 test("on macOS, doctor checks production against the signing team when the development prefix is stale", async () => {
   await rm(root, { recursive: true, force: true });
   await createIOSFixture(root, { platform: "macos", clerkSDK: false, includeKey: false });
