@@ -118,4 +118,5 @@ export interface DoctorOptions {
   xcodeProject?: string;
   xcodeTarget?: string;
   xcodeConfiguration?: string;
+  appIdPrefix?: string;
 }

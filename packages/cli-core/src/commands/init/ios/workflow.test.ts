@@ -186,6 +186,7 @@ for (const platform of ["ios", "macos"] as const) {
       bundleIdentifier: identity.bundleIdentifier,
       appIdPrefix: identity.appIdPrefix,
       prefixSource: "explicit",
+      warnings: [],
     });
     expect(await readFile(join(f.root, result.backups.at(-1)!), "utf8")).toBe(source);
     expect((await stat(f.path)).mode & 0o777).toBe(0o640);
@@ -511,9 +512,11 @@ test("a registration whose prefix differs from the signing team keeps precedence
     ),
   ]);
   expect(described?.warnings[0]).toContain(
-    "edit that registration's App ID Prefix to TEAMID1234 under Native applications in the Clerk Dashboard",
+    "Look up com.example.FinalIdentity under Identifiers in Apple Developer. If it belongs to another team, select that team in Xcode. Then compare its App ID Prefix with OLDTEAM123: if it differs (usually it's TEAMID1234), edit that registration's App ID Prefix to match",
   );
-  expect(described?.warnings[0]).toContain("rerun with --app-id-prefix OLDTEAM123 to confirm it");
+  expect(described?.warnings[0]).toContain(
+    "Only if team TEAMID1234 owns it and its prefix is still OLDTEAM123, a legacy prefix, rerun with --app-id-prefix OLDTEAM123 to confirm it.",
+  );
   // Nothing is re-registered or changed in Clerk.
   expect(preview.remote?.context.appIdPrefix).toBe("OLDTEAM123");
   expect(preview.remote?.actions).toEqual([]);
@@ -528,12 +531,18 @@ test("a registration whose prefix differs from the signing team keeps precedence
   expect(f.state.events).toEqual([]);
 
   const report = await doctor(options, f.dependencies);
-  expect(report.checks.find((check) => check.name === "App ID Prefix")).toEqual({
-    name: "App ID Prefix",
-    status: "warn",
-    message: described!.warnings[0]!,
-  });
+  const check = report.checks.find(({ name }) => name === "App ID Prefix");
+  expect(check?.status).toBe("warn");
+  expect(check?.message).toContain("signed by team TEAMID1234");
+  expect(check?.remedy).toContain("rerun with --app-id-prefix OLDTEAM123");
+  expect(`${check?.message} ${check?.remedy}`).toBe(described!.warnings[0]!);
   expect(report.identity?.warnings).toEqual(described?.warnings);
+  // Doctor takes the same confirmation.
+  const confirmedReport = await doctor(
+    { ...options, remote: { ...options.remote, appIdPrefix: "OLDTEAM123" } },
+    f.dependencies,
+  );
+  expect(confirmedReport.checks.some(({ name }) => name === "App ID Prefix")).toBe(false);
 
   // Passing the registered prefix confirms a legacy prefix and silences the warning.
   const confirmed = await prepareSetup(
@@ -579,8 +588,28 @@ test("on macOS, a registration whose prefix differs from the signing team warns 
   const [warning] = describePreview(preview).identity!.warnings;
   expect(describePreview(preview).identity?.appIdPrefix).toBe("OLDTEAM123");
   expect(warning).toContain("Mac App IDs always use the Team ID as their prefix");
-  expect(warning).toContain("edit that registration's App ID Prefix to TEAMID1234");
+  expect(warning).toContain(
+    "If it belongs to team TEAMID1234, edit that registration's App ID Prefix to TEAMID1234",
+  );
+  expect(warning).toContain("If it belongs to another team, select that team in Xcode.");
   expect(warning).not.toContain("legacy");
+  expect(warning).toContain("passkeys and password AutoFill");
+  expect(warning).not.toContain("Sign in with Apple");
+
+  // A Mac App ID never has a legacy prefix, so passing the registered prefix doesn't clear it.
+  const explicit = await prepareSetup(
+    { ...f.options, remote: { applicationId: identity.applicationId, appIdPrefix: "OLDTEAM123" } },
+    f.dependencies,
+  );
+  expect(describePreview(explicit).identity).toMatchObject({
+    prefixSource: "explicit",
+    warnings: [warning],
+  });
+  const report = await doctor(
+    { ...f.options, remote: { applicationId: identity.applicationId, appIdPrefix: "OLDTEAM123" } },
+    f.dependencies,
+  );
+  expect(report.checks.find(({ name }) => name === "App ID Prefix")?.status).toBe("warn");
 });
 
 test("invalid registered prefixes produce actionable identity diagnostics without writes", async () => {

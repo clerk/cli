@@ -72,11 +72,16 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
           discovery.issues.join(" ") ||
           `Bundle ID from ${discovery.bundleSource}; App ID Prefix from ${discovery.prefixSource}.`,
       },
-      ...discovery.warnings.map((message): Check => ({
-        name: "App ID Prefix",
-        status: "warn",
-        message,
-      })),
+      ...(discovery.prefixMismatch
+        ? [
+            {
+              name: "App ID Prefix",
+              status: "warn" as const,
+              message: discovery.prefixMismatch.message,
+              remedy: discovery.prefixMismatch.remedy,
+            },
+          ]
+        : []),
     );
   // The same rule as setup: a Personal Team gets no Sign in with Apple, and no Associated Domain on macOS.
   const personalTeam = signedByPersonalTeam(preview.inspection, dependencies.xcodeTeams);
@@ -191,10 +196,16 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
     });
   if (options.remote)
     try {
-      // A prefix Clerk or the user confirmed for development is the app's; a signing-team guess isn't.
-      const confirmedPrefix =
-        discovery &&
-        ["explicit", "confirmed", "clerk-registration"].includes(discovery.prefixSource)
+      // A prefix Clerk or the user confirmed for development is the app's; a signing-team guess
+      // isn't, and neither is a registration that no longer matches the signing team. A Mac App
+      // ID always uses the signing team, so for a Mac mismatch production is checked against it.
+      const mismatch = discovery?.prefixMismatch;
+      const confirmedPrefix = mismatch
+        ? mismatch.macOS
+          ? mismatch.signingTeam
+          : undefined
+        : discovery &&
+            ["explicit", "confirmed", "clerk-registration"].includes(discovery.prefixSource)
           ? discovery.appIdPrefix
           : undefined;
       checks.push(

@@ -387,8 +387,8 @@ export interface ApplyResult {
     bundleIdentifier: string;
     appIdPrefix: string;
     prefixSource: string;
-    /** Present when the registered App ID Prefix differs from the signing team; says what to do. */
-    warnings?: string[];
+    /** Non-empty when the registered App ID Prefix differs from the signing team; says what to do. */
+    warnings: string[];
   };
 }
 
@@ -470,7 +470,7 @@ export async function applySetup(
             bundleIdentifier: preview.remote.context.bundleIdentifier,
             appIdPrefix: preview.remote.context.appIdPrefix,
             prefixSource: preview.discovery.prefixSource,
-            ...(preview.discovery.warnings.length ? { warnings: preview.discovery.warnings } : {}),
+            warnings: preview.discovery.warnings,
           },
         }
       : {}),

@@ -148,18 +148,29 @@ export async function discoverRemote(
   if (invalidPrefix && prefixSource !== "clerk-registration")
     throw setupError("Supply a valid ten-character Apple App ID Prefix.");
   // The registration keeps precedence, but one made before the app moved to another team still
-  // has the old team's prefix, and passkeys and native Sign in with Apple then fail silently.
-  // An explicit --app-id-prefix is the confirmation, so it never warns.
+  // has the old team's prefix, and passkeys and password AutoFill then fail silently. On iOS an
+  // explicit --app-id-prefix confirms a legacy prefix, so it never warns; a Mac App ID can't have
+  // one, so there an explicit prefix that matches the stale registration still warns.
+  const registeredPrefix =
+    prefixSource === "clerk-registration" ||
+    (macOS && prefixSource === "explicit" && matches.length === 1);
   const signingTeamMismatch =
-    prefixSource === "clerk-registration" &&
+    registeredPrefix &&
     !invalidPrefix &&
     !conflict &&
     suggestedPrefix !== undefined &&
     appIdPrefix !== suggestedPrefix;
-  const warnings =
+  // The signing team rides along so doctor can check production against it: on macOS it's the
+  // only valid prefix, while on iOS a legacy prefix is still possible.
+  const prefixMismatch =
     signingTeamMismatch && bundleIdentifier && appIdPrefix
-      ? [signingTeamMismatchWarning(bundleIdentifier, appIdPrefix, suggestedPrefix, macOS)]
-      : [];
+      ? {
+          ...signingTeamMismatchWarning(bundleIdentifier, appIdPrefix, suggestedPrefix, macOS),
+          signingTeam: suggestedPrefix,
+          macOS,
+        }
+      : undefined;
+  const warnings = prefixMismatch ? [`${prefixMismatch.message} ${prefixMismatch.remedy}`] : [];
   const issues = [
     ...(!bundleIdentifier
       ? [
@@ -188,6 +199,7 @@ export async function discoverRemote(
     prefixSource,
     issues,
     warnings,
+    prefixMismatch,
     context:
       bundleIdentifier && appIdPrefix && !conflict && !invalidPrefix
         ? { ...instance, bundleIdentifier, appIdPrefix }
@@ -220,12 +232,22 @@ export function signingTeamMismatchWarning(
   registeredPrefix: string,
   signingTeam: string,
   macOS: boolean,
-): string {
+): { message: string; remedy: string } {
   const registration = `Clerk's native registration for ${bundleIdentifier} uses App ID Prefix ${registeredPrefix}, but the app is signed by team ${signingTeam}.`;
-  const fix = `edit that registration's App ID Prefix to ${signingTeam} under Native applications in the Clerk Dashboard, then rerun clerk init`;
+  const broken =
+    "passkeys and password AutoFill (and device attestation, if you use it) fail until";
+  // Either side can be wrong: the Bundle ID belongs to one team, so look up which.
+  const lookUp = `Look up ${bundleIdentifier} under Identifiers in Apple Developer.`;
+  const otherTeam = "If it belongs to another team, select that team in Xcode.";
   return macOS
-    ? `${registration} Mac App IDs always use the Team ID as their prefix, so the registration doesn't match this app, and passkeys and Sign in with Apple fail until it does: ${fix}.`
-    : `${registration} If the app moved to that team, its App ID Prefix is now ${signingTeam}, and passkeys and Sign in with Apple fail until the registration matches: ${fix}. If its App ID in Apple Developer still uses the legacy prefix ${registeredPrefix}, rerun with --app-id-prefix ${registeredPrefix} to confirm it.`;
+    ? {
+        message: `${registration} Mac App IDs always use the Team ID as their prefix, so the registration and the signing team disagree, and ${broken} they match.`,
+        remedy: `${lookUp} If it belongs to team ${signingTeam}, edit that registration's App ID Prefix to ${signingTeam} under Native applications in the Clerk Dashboard. ${otherTeam}`,
+      }
+    : {
+        message: `${registration} If the app moved to that team, its App ID Prefix has probably changed, and ${broken} the registration matches.`,
+        remedy: `${lookUp} ${otherTeam} Then compare its App ID Prefix with ${registeredPrefix}: if it differs (usually it's ${signingTeam}), edit that registration's App ID Prefix to match under Native applications in the Clerk Dashboard. Only if team ${signingTeam} owns it and its prefix is still ${registeredPrefix}, a legacy prefix, rerun with --app-id-prefix ${registeredPrefix} to confirm it.`,
+      };
 }
 export class IdentityRequired extends CliError {
   constructor(public discovery: IdentityDiscovery) {

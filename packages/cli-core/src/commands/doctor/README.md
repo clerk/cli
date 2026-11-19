@@ -16,15 +16,16 @@ clerk doctor --fix       # Offer to auto-fix issues
 
 ## Options
 
-| Flag                           | Description                                                      |
-| ------------------------------ | ---------------------------------------------------------------- |
-| `--verbose`                    | Show detailed diagnostic info for each check                     |
-| `--json`                       | Output results as machine-readable JSON                          |
-| `--spotlight`                  | Only show warnings and failures (hide passing checks)            |
-| `--fix`                        | Offer to auto-fix issues with known remedies                     |
-| `--xcode-project <path>`       | Xcode project or workspace to check; also selects the iOS checks |
-| `--xcode-target <name-or-id>`  | Xcode app target to check                                        |
-| `--xcode-configuration <name>` | Xcode build configuration to check                               |
+| Flag                           | Description                                                                           |
+| ------------------------------ | ------------------------------------------------------------------------------------- |
+| `--verbose`                    | Show detailed diagnostic info for each check                                          |
+| `--json`                       | Output results as machine-readable JSON                                               |
+| `--spotlight`                  | Only show warnings and failures (hide passing checks)                                 |
+| `--fix`                        | Offer to auto-fix issues with known remedies                                          |
+| `--xcode-project <path>`       | Xcode project or workspace to check; also selects the iOS checks                      |
+| `--xcode-target <name-or-id>`  | Xcode app target to check                                                             |
+| `--xcode-configuration <name>` | Xcode build configuration to check                                                    |
+| `--app-id-prefix <prefix>`     | Apple App ID Prefix to check the native registration against, such as a legacy prefix |
 
 ## Checks
 
@@ -70,13 +71,15 @@ application instead of reading like a problem.
 
 ### iOS and macOS projects
 
-When the directory is an Xcode project (or an `--xcode-*` flag is given), doctor
+When the directory is an Xcode project (or an `--xcode-*` or `--app-id-prefix` flag is given), doctor
 skips the env-file check, since native apps configure Clerk in Swift, and adds
 read-only checks from the same engine as `clerk init`: configuration coverage,
 SDK linkage and version, capabilities, Native API, registration, and the Apple
 connection. It never edits the project, resolves packages, or writes to Clerk.
 Without Xcode (another OS, or a Mac with only the Command Line Tools) these checks become one warning and the env-file check stays, matching `clerk init`'s fallback. If Clerk can't
 be reached, the local checks still run and a warning says so.
+
+When the App ID Prefix of the app's Clerk registration differs from the signing team (for example after the app moved to another Apple team), an `App ID Prefix` check warns that passkeys and password AutoFill (and device attestation, where used) fail until the registration matches, and the production check doesn't treat that prefix as confirmed (for a Mac app it checks production against the signing team, the only prefix a Mac App ID can have). For an iOS App ID that really uses a legacy prefix, `--app-id-prefix <prefix>` confirms it, as it does for `clerk init`; a Mac App ID can't have one, so on macOS the flag doesn't clear the warning.
 
 `clerk init` sets up only the development instance, so doctor also checks the
 non-Debug configurations it inspected (Release by default) against the
