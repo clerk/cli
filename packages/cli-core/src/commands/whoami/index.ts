@@ -202,9 +202,8 @@ function render(identity: Identity): void {
     log.info(
       `Not logged in — running on an unclaimed accountless application (key from \`${identity.keySource}\`)`,
     );
-    // Not NEXT_STEPS.WHOAMI: `clerk link` needs an application in an account,
-    // which an unclaimed app by definition isn't — the same dead end
-    // `users open`, `doctor`, and `open` all refuse to point at.
+    // Not NEXT_STEPS.WHOAMI: `clerk link` claims only an app a signed-out `clerk init` created,
+    // and an SDK-created app needs `clerk open`. These steps work for both.
     printNextSteps(NEXT_STEPS.WHOAMI_KEYLESS);
     return;
   }

@@ -63,6 +63,18 @@ The handoff state is one of:
 
 Agent-mode `clerk deploy` without `--domain` is informational and exits 0 for linked projects. With `--domain` it exits 0 once the instance is created or resumed and the report is printed, and non-zero when it refuses the domain (`production_instance_exists`, `deploy_domain_unchecked`), when Clerk refuses the create, or when the instance's status can't be read afterwards (`deploy_instance_unresolved`, or Clerk's own code). Either way, the pass/fail gate for the deploy itself is `clerk deploy status`.
 
+### An unlinked folder
+
+`clerk deploy` and `clerk deploy status` stop with `not_linked` in a folder with no link. The message says which kind of application the folder runs on, because `clerk link` can claim only the kind `clerk init` created:
+
+| Folder holds                                                                                  | Message tells you to                                                                                                                                                                                                                                                   |
+| --------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `.clerk/keyless.json` with a claim token, written by a signed-out `clerk init`                | If no account owns the application yet, `clerk link` claims it into your account. Run `clerk link` to link the folder, then rerun the command.                                                                                                                         |
+| `.clerk/.tmp/keyless.json` with an https claim link, written by a Clerk SDK in keyless mode   | If no account owns the application yet, have a person run `clerk open` to claim it in the Dashboard. Then run `clerk link` and choose it (agents: `clerk auth login` if needed, then `clerk apps list --json` and `clerk link --app <app_id>`), and rerun the command. |
+| Neither, or an SDK file without a usable claim link (`clerk open` would have nothing to open) | Run `clerk link`, then rerun the command.                                                                                                                                                                                                                              |
+
+The error code is `not_linked` in all three cases. Only the message text differs.
+
 ### `clerk deploy status`
 
 `clerk deploy status` is the read-only verification command for agents and automation. It resolves the same live deploy state, triggers a DNS check for active production domains, and reports DNS, SSL, email DNS, and OAuth completeness. Human mode waits with the shared exponential-backoff poll loop; agent mode performs one quick DNS check and returns the resulting status immediately by default. Pass `--wait` in agent mode to wait with the same poll loop: one immediate status read, then up to 5 retries with exponential backoff.

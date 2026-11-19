@@ -6,7 +6,7 @@ import {
   revokeToken,
   type UserInfo,
 } from "../../lib/token-exchange.ts";
-import { buildDashboardUrl, getOAuthConfig } from "../../lib/environment.ts";
+import { getOAuthConfig } from "../../lib/environment.ts";
 import {
   createOAuthSession,
   getStoredSession,
@@ -21,7 +21,13 @@ import { isHuman } from "../../mode.ts";
 import { ERROR_CODE, errorMessage, throwUserAbort } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { NEXT_STEPS } from "../../lib/next-steps.ts";
-import { attemptAutoclaim, type AutoclaimResult } from "../../lib/autoclaim.ts";
+import {
+  attemptAutoclaim,
+  claimWarning,
+  claimFailureKind,
+  reportClaimed,
+  type AutoclaimResult,
+} from "../../lib/autoclaim.ts";
 import { openBrowser } from "../../lib/open.ts";
 import { cyan, dim } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
@@ -31,6 +37,16 @@ import { ensureFirstApplication } from "../../lib/first-application.ts";
 interface LoginOptions {
   showNextSteps?: boolean;
   yes?: boolean;
+  /**
+   * `false` skips claiming the folder's keyless app after sign-in. `clerk link` passes it
+   * because it claims right after signing in and must see the claim's result itself.
+   */
+  claim?: boolean;
+  /**
+   * Refuse to link a claimed app when the folder holds another app's publishable key. Only the
+   * `clerk auth login` command sets it; `clerk init`, `clerk migrate` and `clerk doctor` must not.
+   */
+  checkClaimKeys?: boolean;
 }
 
 async function getExistingSession(): Promise<UserInfo | null> {
@@ -204,7 +220,7 @@ export async function login(options: LoginOptions = {}): Promise<UserInfo> {
 }
 
 async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
-  const { showNextSteps = true, yes } = options;
+  const { showNextSteps = true, yes, claim = true, checkClaimKeys = false } = options;
   intro("Signing in");
   setTelemetryStage("session_check");
   const existingSession = await withSpinner("Checking session...", async () =>
@@ -214,7 +230,9 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   if (existingSession && !isHuman()) {
     setTelemetryStage("done");
     log.success(`Logged in as ${existingSession.email}`);
-    const claimResult = await handleAutoclaim(process.cwd());
+    const claimResult: AutoclaimResult = claim
+      ? await handleAutoclaim(process.cwd(), checkClaimKeys)
+      : { status: "not_keyless" };
     if (showNextSteps) {
       await outro(await loginNextSteps(claimResult));
     } else {
@@ -263,7 +281,9 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   setTelemetryStage("done");
   log.success(`Logged in as ${userInfo.email}`);
 
-  const claimResult = await handleAutoclaim(process.cwd());
+  const claimResult: AutoclaimResult = claim
+    ? await handleAutoclaim(process.cwd(), checkClaimKeys)
+    : { status: "not_keyless" };
 
   if (showNextSteps) {
     await outro(await loginNextSteps(claimResult));
@@ -274,39 +294,11 @@ async function runLogin(options: LoginOptions = {}): Promise<UserInfo> {
   return userInfo;
 }
 
-const CLAIM_WARNINGS: Partial<Record<AutoclaimResult["status"], string>> = {
-  not_found:
-    "Claim token is no longer valid - the application may have been claimed from the dashboard.",
-  no_organization: "Unable to claim - your account does not have an active organization.",
-  failed:
-    "Auto-claim failed due to a temporary error. It will be retried on your next `clerk auth login`.",
-};
-
-function claimWarning(result: AutoclaimResult): string | undefined {
-  if (result.status === "managed_workspace") {
-    // The API message already names the provider and says what to do.
-    return `Unable to claim - ${result.longMessage ?? "this workspace is managed by an integration provider."}`;
-  }
-  return CLAIM_WARNINGS[result.status];
-}
-
-async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
-  const result = await attemptAutoclaim(cwd);
+async function handleAutoclaim(cwd: string, checkKeys: boolean): Promise<AutoclaimResult> {
+  const result = await attemptAutoclaim(cwd, { checkKeys });
 
   if (result.status === "claimed") {
-    const label = result.app.name || result.app.application_id;
-    log.success(`Claimed and linked application: \`${label}\``);
-    // First time this app has a home in an account; say where it is.
-    // Deserialized API JSON; a missing array must not fail a claim that
-    // already succeeded server-side.
-    const development = result.app.instances?.find(
-      (instance) => instance.environment_type === "development",
-    );
-    if (development) {
-      // URL on its own line: with it, the sentence is wider than the frame.
-      log.info("Your app now lives in your Clerk account:");
-      log.info(`  ${buildDashboardUrl(result.app.application_id, development.instance_id)}`);
-    }
+    reportClaimed(result, { unlinkedHint: "Run `clerk link` to finish setup." });
   }
 
   const warning = claimWarning(result);
@@ -315,12 +307,24 @@ async function handleAutoclaim(cwd: string): Promise<AutoclaimResult> {
   return result;
 }
 
-async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[]> {
+async function loginNextSteps(result: AutoclaimResult): Promise<readonly string[] | undefined> {
+  if (result.status === "claimed" && !result.linked) return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   if (result.status === "claimed") {
     return result.envPulled ? NEXT_STEPS.AUTOCLAIMED : NEXT_STEPS.AUTOCLAIMED_NO_ENV;
   }
-  if (result.status === "failed") return NEXT_STEPS.AUTOCLAIM_RETRY;
+  if (result.status === "failed") {
+    const kind = claimFailureKind(result.error);
+    if (kind === "temporary") return NEXT_STEPS.AUTOCLAIM_RETRY;
+    if (kind === "api_key") return NEXT_STEPS.AUTOCLAIM_API_KEY;
+    // The CLI's own error repeats on every run, and `--app` would hit it too. With the API key
+    // set it is usually that key's format; otherwise the error's own message is the only step.
+    if (kind === "cli") {
+      return process.env.CLERK_PLATFORM_API_KEY ? NEXT_STEPS.AUTOCLAIM_API_KEY : undefined;
+    }
+    return kind === "sign_in" ? NEXT_STEPS.AUTOCLAIM_SIGN_IN : NEXT_STEPS.AUTOCLAIM_REJECTED;
+  }
   if (result.status === "managed_workspace") return NEXT_STEPS.AUTOCLAIM_SWITCH_WORKSPACE;
+  if (result.status === "keys_mismatch") return NEXT_STEPS.AUTOCLAIM_KEYS_MISMATCH;
   if (result.status === "not_found" || result.status === "no_organization") {
     return NEXT_STEPS.AUTOCLAIM_MANUAL_LINK;
   }
