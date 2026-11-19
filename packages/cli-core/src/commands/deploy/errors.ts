@@ -137,12 +137,6 @@ function translatePlapiError<T>(
     );
   }
 
-  if (status === 422 && code === "clerk_managed_domain_refuses_email_links") {
-    return new CliError(EMAIL_LINKS_ON, {
-      code: ERROR_CODE.CLERK_MANAGED_DOMAIN_REFUSES_EMAIL_LINKS,
-    });
-  }
-
   if (status === 422 && code === "hosting_domain_needs_clerk_app") {
     return new CliError(HOSTING_DOMAIN_NEEDS_CLERK_APP, {
       code: ERROR_CODE.HOSTING_DOMAIN_NEEDS_CLERK_APP,
@@ -168,9 +162,9 @@ function translatePlapiError<T>(
 
   if (status === 403 && code === "primary_switch_not_allowed") {
     return new CliError(
-      "`clerk deploy use-domain` moves production off its clerk.app domain, or back to it, " +
-        "and production isn't on its clerk.app domain now. Nothing changed. " +
-        "Change the primary domain in the Clerk Dashboard instead.",
+      "`clerk deploy use-domain` moves production off its clerk.app domain to a domain you own, " +
+        "and production isn't on its clerk.app domain now. A clerk.app domain can't become the primary domain again. " +
+        "Nothing changed. Change the primary domain in the Clerk Dashboard instead.",
       { code: ERROR_CODE.PRIMARY_NOT_CLERK_MANAGED },
     );
   }
@@ -237,12 +231,7 @@ export const READINESS_LABELS = {
   dns: "DNS",
   ssl: "SSL",
   email: "email DNS",
-  email_links: "email links turned off",
 } as const;
-
-export const EMAIL_LINKS_ON =
-  "Email links are on, and a clerk.app domain can't send them, so it can't be the primary domain. Nothing changed. " +
-  "Turn off email links in the Clerk Dashboard under User & authentication > Email, then run this command again.";
 
 function readMissingChecks(meta: Record<string, unknown> | null): string[] {
   const missing = meta?.missing;

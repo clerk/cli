@@ -178,12 +178,10 @@ export type CnameTarget = {
   required: boolean;
 };
 
-/** `email_links` is false only on a clerk.app domain while email links are on. */
 export type MakePrimaryReadiness = {
   dns: boolean;
   ssl: boolean;
   email: boolean;
-  email_links: boolean;
 };
 
 export type ApplicationDomain = {

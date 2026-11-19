@@ -18,9 +18,9 @@ import { withSpinner } from "../../lib/spinner.ts";
 import { declareSoftExitOutcome } from "../../lib/telemetry.ts";
 import { clerkAppDomain, parseClerkAppSlug } from "./clerk-app.ts";
 import { dnsRecords, domainsDashboardUrl, pendingCnameTargets } from "./copy.ts";
-import { domainVerification, type DomainVerification } from "./domain-verification.ts";
+import { domainVerification } from "./domain-verification.ts";
 import { listDomains, sessionTokenIssuer } from "./domains.ts";
-import { EMAIL_LINKS_ON, mapDeployError, READINESS_LABELS } from "./errors.ts";
+import { mapDeployError, READINESS_LABELS } from "./errors.ts";
 import { validateDomain } from "./prompts.ts";
 import { resolveProductionApp, triggerDeployStatusCheck } from "./status.ts";
 
@@ -56,9 +56,9 @@ function refuseSwitch(): never {
  * PLAPI lists readiness on every non-satellite domain of an application that
  * may switch its primary domain, and on none otherwise.
  *
- * PLAPI switches only away from or back to a clerk.app domain. Anything else
- * is refused here, before a request changes production. Adding the domain is
- * `add-domain`'s job.
+ * PLAPI switches only away from a clerk.app domain, and a clerk.app domain
+ * can't become primary again. Anything else is refused here, before a request
+ * changes production. Adding the domain is `add-domain`'s job.
  */
 export function planUseDomain(
   domains: readonly ApplicationDomain[],
@@ -91,10 +91,19 @@ export function planUseDomain(
     );
   }
 
+  if (named?.is_clerk_managed || name.endsWith(".clerk.app")) {
+    throwUsageError(
+      `${name} is a clerk.app domain, and a clerk.app domain can't become the primary domain again. ` +
+        "Nothing changed. Run `clerk deploy use-domain <domain>` with a domain you own instead.",
+      undefined,
+      ERROR_CODE.DEPLOY_DOMAIN_CONFLICT,
+    );
+  }
+
   const primary = domains.find((candidate) => candidate.is_primary);
-  if (!primary?.is_clerk_managed && !named?.is_clerk_managed) {
+  if (!primary?.is_clerk_managed) {
     throw new CliError(
-      "`clerk deploy use-domain` moves production off its clerk.app domain, or back to it, " +
+      "`clerk deploy use-domain` moves production off its clerk.app domain, " +
         `and production uses ${primary?.name ?? "another domain"}. Nothing changed. ` +
         `Change the primary domain in the Clerk Dashboard instead: ${domainsUrl}`,
       { code: ERROR_CODE.PRIMARY_NOT_CLERK_MANAGED },
@@ -103,13 +112,6 @@ export function planUseDomain(
   if (!candidates.some((candidate) => candidate.make_primary_readiness)) refuseSwitch();
 
   if (!named) {
-    if (name.endsWith(".clerk.app")) {
-      throwUsageError(
-        `${name} is not this application's clerk.app domain.`,
-        undefined,
-        ERROR_CODE.DEPLOY_DOMAIN_CONFLICT,
-      );
-    }
     throw new CliError(
       `${name} isn't one of this application's domains yet. Nothing changed. ` +
         `Add it with \`clerk deploy add-domain ${name}\`, then run this command again.`,
@@ -117,11 +119,6 @@ export function planUseDomain(
     );
   }
   const readiness = named.make_primary_readiness ?? refuseSwitch();
-  if (!readiness.email_links) {
-    throw new CliError(EMAIL_LINKS_ON, {
-      code: ERROR_CODE.CLERK_MANAGED_DOMAIN_REFUSES_EMAIL_LINKS,
-    });
-  }
   if (readiness.dns && readiness.ssl && readiness.email) {
     return { kind: "ready", domain: named, current: primary, clerkApp, hasHostingDomains };
   }
@@ -169,7 +166,7 @@ export async function useDomain(rawDomain: string, options: { yes?: boolean } = 
     report = buildUseDomainReport(name, plan, domainsUrl);
   }
 
-  emitReport(report, domainVerification(plan.domain.is_clerk_managed));
+  emitReport(report);
   if (!report.primary) {
     process.exitCode = EXIT_CODE.GENERAL;
     declareSoftExitOutcome("incomplete");
@@ -198,12 +195,7 @@ async function recheckDomain(
   domainsUrl: string,
 ): Promise<UseDomainPlan> {
   const plan = planUseDomain(await listDomains(appId), name, domainsUrl);
-  if (
-    plan.kind === "not_ready" &&
-    domainVerification(plan.domain.is_clerk_managed).triggerDnsCheck
-  ) {
-    await triggerDeployStatusCheck(appId, plan.domain.id);
-  }
+  if (plan.kind === "not_ready") await triggerDeployStatusCheck(appId, plan.domain.id);
   return plan;
 }
 
@@ -289,7 +281,6 @@ export function buildUseDomainReport(
   }
 
   const { readiness } = plan;
-  const { clerkManaged } = domainVerification(plan.domain.is_clerk_managed);
   const pending = pendingCnameTargets(plan.domain.cname_targets ?? [], {
     dns: readiness.dns,
     ssl: readiness.ssl,
@@ -300,10 +291,6 @@ export function buildUseDomainReport(
     .map((check) => READINESS_LABELS[check]);
   const addRecords =
     pending.length > 0 ? "Add the DNS records listed for it at your DNS provider. " : "";
-  const waiting = clerkManaged
-    ? "Clerk is issuing its SSL certificate"
-    : "Clerk is checking it again";
-  const propagation = clerkManaged ? "" : "Propagation usually takes minutes. ";
   return {
     domain: name,
     primary: false,
@@ -316,13 +303,13 @@ export function buildUseDomainReport(
     })),
     nextAction:
       `${name} isn't ready to be the primary domain yet. Still pending: ${missing.join(", ")}. ` +
-      `${addRecords}${waiting}. Run \`clerk deploy use-domain ${name}\` in a few minutes to check again; ` +
+      `${addRecords}Clerk is checking it again. Run \`clerk deploy use-domain ${name}\` in a few minutes to check again; ` +
       "it doesn't switch without confirmation. " +
-      `${propagation}Domain status is also on the Clerk Dashboard: ${domainsUrl}`,
+      `Propagation usually takes minutes. Domain status is also on the Clerk Dashboard: ${domainsUrl}`,
   };
 }
 
-function emitReport(report: UseDomainReport, verification: DomainVerification): void {
+function emitReport(report: UseDomainReport): void {
   if (isAgent()) {
     log.data(JSON.stringify(report, null, 2));
     return;
@@ -330,7 +317,7 @@ function emitReport(report: UseDomainReport, verification: DomainVerification): 
   log.blank();
   if (report.readiness && !report.primary) {
     const { dns, ssl, email } = report.readiness;
-    const row = verification.statusRow({ dns, ssl, mail: email }, (ok) =>
+    const row = domainVerification(false).statusRow({ dns, ssl, mail: email }, (ok) =>
       ok ? "complete" : "pending",
     );
     log.info(`  ${report.domain}   ${row}`);

@@ -75,12 +75,9 @@ export const ERROR_CODE = {
   /**
    * `--clerk-app` names a domain other than the one production already uses,
    * `use-domain` names one of the application's satellite domains or a
-   * clerk.app domain that isn't the application's, or `add-domain` names a
-   * satellite.
+   * clerk.app domain that isn't primary, or `add-domain` names a satellite.
    */
   DEPLOY_DOMAIN_CONFLICT: "deploy_domain_conflict",
-  /** `use-domain` names a clerk.app domain while email links are on, which it can't send. */
-  CLERK_MANAGED_DOMAIN_REFUSES_EMAIL_LINKS: "clerk_managed_domain_refuses_email_links",
   /** `use-domain` names a hosting domain served through the Clerk proxy. */
   WEB_HOST_CANNOT_BE_PRIMARY: "web_host_cannot_be_primary",
   /** A hosting provider's URL Clerk doesn't support, such as acme.pages.dev. */
@@ -90,8 +87,8 @@ export const ERROR_CODE = {
   /** The domain is already added to a Clerk instance. */
   DOMAIN_TAKEN: "domain_taken",
   /**
-   * `use-domain` switches production off its clerk.app domain or back to it,
-   * and neither production's primary nor the target is Clerk-managed.
+   * `use-domain` switches production only off its clerk.app domain, and
+   * production's primary isn't Clerk-managed.
    */
   PRIMARY_NOT_CLERK_MANAGED: "primary_not_clerk_managed",
   /** `add-domain` adds domains only to an app with a clerk.app domain. */

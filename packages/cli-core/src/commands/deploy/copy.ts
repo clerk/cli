@@ -41,8 +41,8 @@ as acme.vercel.app, and prints how to serve Clerk there through a /__clerk
 route in your app.
 
 \`clerk deploy use-domain <domain>\` makes an added domain you own the
-primary domain, or switches back to clerk.app. Run it again until the domain
-is ready. \`clerk deploy domains\` lists the domains, and
+primary domain. Run it again until the domain is ready.
+\`clerk deploy domains\` lists the domains, and
 \`clerk deploy remove-domain <domain>\` removes one.`;
 
 const OWN_DOMAIN_NEED = `  - A domain you own where you can add DNS records (example.com, or a

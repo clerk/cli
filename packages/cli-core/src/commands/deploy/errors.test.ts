@@ -127,13 +127,6 @@ describe("mapDeployError", () => {
     [422, "home_url_taken", {}, ERROR_CODE.HOME_URL_TAKEN, "already using that domain"],
     [
       422,
-      "clerk_managed_domain_refuses_email_links",
-      {},
-      ERROR_CODE.CLERK_MANAGED_DOMAIN_REFUSES_EMAIL_LINKS,
-      "Turn off email links in the Clerk Dashboard",
-    ],
-    [
-      422,
       "web_host_cannot_be_primary",
       {},
       ERROR_CODE.WEB_HOST_CANNOT_BE_PRIMARY,
@@ -151,7 +144,7 @@ describe("mapDeployError", () => {
       "primary_switch_not_allowed",
       {},
       ERROR_CODE.PRIMARY_NOT_CLERK_MANAGED,
-      "production isn't on its clerk.app domain now. Nothing changed.",
+      "A clerk.app domain can't become the primary domain again. Nothing changed.",
     ],
     [
       422,

@@ -30,7 +30,7 @@ function domain(name: string, extra: Partial<Domain> = {}): Domain {
   };
 }
 
-const ready = { dns: true, ssl: true, email: true, email_links: true };
+const ready = { dns: true, ssl: true, email: true };
 // PLAPI sends readiness on every non-satellite domain of an application that may
 // switch its primary domain, and on none for one that may not.
 const managed = domain("acme.clerk.app", {
@@ -229,35 +229,6 @@ describe("clerk deploy use-domain", () => {
     },
   );
 
-  test("a clerk.app domain that isn't ready waits on SSL without a DNS check", async () => {
-    listReturns([
-      { ...managed, is_primary: false, make_primary_readiness: { ...ready, ssl: false } },
-      domain("example.com", { is_primary: true, make_primary_readiness: ready }),
-    ]);
-
-    await useDomain("acme.clerk.app");
-
-    expect(dnsCheck).not.toHaveBeenCalled();
-    expect(report().nextAction).toContain("Still pending: SSL.");
-    expect(report().nextAction).toContain("Clerk is issuing its SSL certificate");
-    expect(report().nextAction).not.toContain("checking it again");
-    expect(report().nextAction).not.toContain("Propagation");
-    expect(process.exitCode).toBe(EXIT_CODE.GENERAL);
-  });
-
-  test("refuses to switch back to clerk.app while email links are on", async () => {
-    listReturns([
-      { ...managed, is_primary: false, make_primary_readiness: { ...ready, email_links: false } },
-      domain("example.com", { is_primary: true, make_primary_readiness: ready }),
-    ]);
-
-    const error = await useDomain("acme.clerk.app", { yes: true }).catch((e: unknown) => e);
-
-    expect((error as CliError).code).toBe(ERROR_CODE.CLERK_MANAGED_DOMAIN_REFUSES_EMAIL_LINKS);
-    expect((error as CliError).message).toContain("Turn off email links");
-    expect(makePrimary).not.toHaveBeenCalled();
-  });
-
   test("an agent can't switch without --yes", async () => {
     listReturns([managed, domain("example.com", { make_primary_readiness: ready })]);
 
@@ -370,17 +341,19 @@ describe("clerk deploy use-domain", () => {
     expect(report().nextAction).toContain("example.com is already the primary domain");
   });
 
-  test("switches back to the clerk.app domain", async () => {
+  test("refuses to make the clerk.app domain primary again", async () => {
     listReturns([
       { ...managed, is_primary: false },
       domain("example.com", { is_primary: true, make_primary_readiness: ready }),
     ]);
-    makePrimary.mockResolvedValue(managed);
 
-    await useDomain("acme.clerk.app", { yes: true });
+    const error = await useDomain("acme.clerk.app", { yes: true }).catch((e: unknown) => e);
 
-    expect(makePrimary).toHaveBeenCalledWith("app_1", "dmn_acme.clerk.app");
-    expect(report().nextAction).not.toContain("shut it down");
+    expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_CONFLICT);
+    expect((error as CliError).message).toContain(
+      "a clerk.app domain can't become the primary domain again",
+    );
+    expect(makePrimary).not.toHaveBeenCalled();
   });
 
   test("refuses a satellite before adding or changing anything", async () => {
@@ -430,7 +403,9 @@ describe("clerk deploy use-domain", () => {
   test("refuses a clerk.app name that isn't this application's", async () => {
     listReturns([managed]);
 
-    await expect(useDomain("other.clerk.app")).rejects.toBeInstanceOf(CliError);
+    const error = await useDomain("other.clerk.app").catch((e: unknown) => e);
+
+    expect((error as CliError).code).toBe(ERROR_CODE.DEPLOY_DOMAIN_CONFLICT);
     expect(create).not.toHaveBeenCalled();
   });
 

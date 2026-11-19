@@ -104,22 +104,21 @@ The report follows the response's `is_web_host`, not the name:
 
 #### `clerk deploy use-domain <domain>`
 
-Makes an added domain you own the primary domain, or switches back to the app's clerk.app domain. It doesn't add domains. Each run reads the live domain list and does the next step:
+Makes an added domain you own the primary domain. It doesn't add domains, and the switch can't be undone: a clerk.app domain can't become the primary domain again. Each run reads the live domain list and does the next step:
 
 1. If the domain isn't added, it stops with `domain_not_found` and names `clerk deploy add-domain <domain>`. Nothing changes.
-2. If it is not ready, it prints which of DNS, SSL, and email DNS are still pending, plus the records still to add, and starts a new DNS check for the next run to read. A clerk.app domain has no records and gets no DNS check: only its SSL certificate can be pending.
+2. If it is not ready, it prints which of DNS, SSL, and email DNS are still pending, plus the records still to add, and starts a new DNS check for the next run to read.
 3. If it is ready, it asks for confirmation and calls `make_primary`. `--yes` skips the question. In agent mode the switch needs `--yes`: without it the command changes nothing, reports `primary: false` with a `nextAction` naming `clerk deploy use-domain <domain> --yes`, and exits 1. Rechecking a domain needs no flag, and the not-ready `nextAction` never names `--yes`.
 
-Readiness is `make_primary_readiness` on the domain list, which reflects the domain's last DNS check. PLAPI sends it on every non-satellite domain of an application that may switch its primary domain, and on none otherwise, so a list without it stops with `clerk_app_not_enabled` before anything changes, unless the `primary_not_clerk_managed` refusal below applies first. The command exits 0 once the domain is primary and 1 while it is still pending, so `clerk deploy use-domain example.com` can be rerun until it succeeds. In agent mode it prints a JSON report with `domain`, `primary`, `readiness`, `pendingDnsRecords`, and `nextAction`. Passing the app's own `<name>.clerk.app` switches back to it.
+Readiness is `make_primary_readiness` on the domain list, which reflects the domain's last DNS check. PLAPI sends it on every non-satellite domain of an application that may switch its primary domain, and on none otherwise, so a list without it stops with `clerk_app_not_enabled` before anything changes, unless the `primary_not_clerk_managed` refusal below applies first. The command exits 0 once the domain is primary and 1 while it is still pending, so `clerk deploy use-domain example.com` can be rerun until it succeeds. In agent mode it prints a JSON report with `domain`, `primary`, `readiness`, `pendingDnsRecords`, and `nextAction`.
 
 The command refuses, before any request that changes anything:
 
-- a domain that is one of the application's satellites (`deploy_domain_conflict`);
+- a domain that is one of the application's satellites, or any clerk.app domain that isn't already primary (`deploy_domain_conflict`);
 - a domain the list marks `is_web_host`, a hosting domain such as `acme.netlify.app` (`web_host_cannot_be_primary`);
-- any domain when neither the `is_primary` domain nor the target is Clerk-managed (`primary_not_clerk_managed`). PLAPI switches only away from or back to a clerk.app domain;
-- a switch back to the clerk.app domain while email links are on (`clerk_managed_domain_refuses_email_links`). Its readiness has `email_links: false`, since its shared sender can't send email links. The message says to turn them off in the Clerk Dashboard under User & authentication > Email. PLAPI's 422 `clerk_managed_domain_refuses_email_links` maps to the same code if email links were turned on after the list was read.
+- any domain when the `is_primary` domain isn't Clerk-managed (`primary_not_clerk_managed`). PLAPI switches only away from a clerk.app domain.
 
-If production leaves clerk.app after the list is read, PLAPI refuses the switch with 403 `primary_switch_not_allowed`, which maps to `primary_not_clerk_managed`.
+If production leaves clerk.app after the list is read, or the target is a clerk.app domain, PLAPI refuses the switch with 403 `primary_switch_not_allowed`, which maps to `primary_not_clerk_managed`.
 
 Before a ready switch, the report and the prompt name the new domain's session token issuer and say to accept it as well as the current one, because builds already shipped keep sending the old issuer.
 
@@ -265,7 +264,6 @@ PLAPI errors are translated to typed `CliError`s by `commands/deploy/errors.ts`.
 | 422 `custom_domain_beside_clerk_managed_exists` | `custom_domain_beside_clerk_managed_exists` |
 | 403 `primary_switch_not_allowed`                | `primary_not_clerk_managed`                 |
 | 422 `web_host_cannot_be_primary`                | `web_host_cannot_be_primary`                |
-| 422 `clerk_managed_domain_refuses_email_links`  | `clerk_managed_domain_refuses_email_links`  |
 
 The CLI does not auto-retry SSL issuance or email DNS verification beyond the shared DNS verification loop. When domain status polling times out with SSL or email DNS still incomplete, the CLI surfaces the component status and instructs the user to rerun `clerk deploy` once DNS propagates.
 
