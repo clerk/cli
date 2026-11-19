@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { formatSkillsPromptMessage, resolveUpstreamSkills } from "./skills.ts";
+import { formatSkillsPromptMessage, getFrameworkSkills, resolveUpstreamSkills } from "./skills.ts";
 
 const DEFAULTS = [
   "clerk-cli",
@@ -20,12 +20,8 @@ describe("resolveUpstreamSkills", () => {
     expect(resolveUpstreamSkills("next")).toEqual([...DEFAULTS, "clerk-nextjs-patterns"]);
   });
 
-  test("appends both the setup and patterns skills for expo", () => {
-    expect(resolveUpstreamSkills("expo")).toEqual([
-      ...DEFAULTS,
-      "clerk-expo",
-      "clerk-expo-patterns",
-    ]);
+  test("appends the clerk-expo skill for expo", () => {
+    expect(resolveUpstreamSkills("expo")).toEqual([...DEFAULTS, "clerk-expo"]);
   });
 
   test("returns just the defaults for express (clerk-backend-api is already a default)", () => {
@@ -55,8 +51,14 @@ describe("formatSkillsPromptMessage", () => {
   });
 
   test("lists every framework skill when a dep maps to more than one", () => {
-    expect(formatSkillsPromptMessage(["clerk-expo", "clerk-expo-patterns"])).toBe(
-      "Install agent skills? (clerk-cli + core + features + expo + expo-patterns)",
+    expect(formatSkillsPromptMessage(["clerk-first", "clerk-second"])).toBe(
+      "Install agent skills? (clerk-cli + core + features + first + second)",
+    );
+  });
+
+  test("lists only expo for an expo project", () => {
+    expect(formatSkillsPromptMessage(getFrameworkSkills("expo"))).toBe(
+      "Install agent skills? (clerk-cli + core + features + expo)",
     );
   });
 });

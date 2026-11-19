@@ -33,9 +33,18 @@ describe("generateCompletions", () => {
       expect(names).toContain("completion");
       expect(names).toContain("env");
       expect(names).toContain("doctor");
+      expect(names).toContain("feedback");
       // Options are also included
       expect(names).toContain("--verbose");
       expect(names).toContain("--mode");
+    });
+
+    test("completes the feedback outcomes without `.choices()` (so an invalid value gets the handler's usage error)", () => {
+      expect(completionNames("feedback", "--outcome", "")).toEqual([
+        "blocked",
+        "worked_around",
+        "succeeded_with_friction",
+      ]);
     });
 
     test("completes partial subcommand name", () => {
@@ -76,6 +85,18 @@ describe("generateCompletions", () => {
 
     test("completes deploy subcommands", () => {
       expect(completionNames("deploy", "")).toContain("status");
+    });
+
+    test("completes security subcommands", () => {
+      expect(completionNames("")).toContain("security");
+      const names = completionNames("security", "");
+      expect(names).toEqual(expect.arrayContaining(["audit", "fix", "checks"]));
+    });
+
+    test("completes logs subcommands", () => {
+      expect(completionNames("")).toContain("logs");
+      const names = completionNames("logs", "");
+      expect(names).toEqual(expect.arrayContaining(["list", "get", "schema"]));
     });
   });
 
@@ -221,28 +242,19 @@ describe("generateCompletions", () => {
     });
 
     test("completes --source with the built-in migrate sources", () => {
-      const saved = process.env.CLERK_EXPERIMENTAL;
-      process.env.CLERK_EXPERIMENTAL = "migrate";
-      try {
-        const names = generateCompletions(createProgram(), [
-          "migrate",
-          "import",
-          "--source",
-          "",
-        ]).completions.map((c) => c.name);
-        expect(names).toEqual([
-          "clerk",
-          "auth0",
-          "authjs",
-          "betterauth",
-          "firebase",
-          "supabase",
-          "workos",
-        ]);
-      } finally {
-        if (saved === undefined) delete process.env.CLERK_EXPERIMENTAL;
-        else process.env.CLERK_EXPERIMENTAL = saved;
-      }
+      const result = generateCompletions(createProgram(), ["migrate", "import", "--source", ""]);
+      // A source you wrote is a path, so the shell's file completion stays on.
+      expect(result.directive).toBe(0);
+      const names = result.completions.map((c) => c.name);
+      expect(names).toEqual([
+        "clerk",
+        "auth0",
+        "authjs",
+        "betterauth",
+        "firebase",
+        "supabase",
+        "workos",
+      ]);
     });
 
     test("returns empty for options with unknown values (file paths)", () => {
@@ -290,11 +302,48 @@ describe("generateCompletions", () => {
       expect(names).toContain("--method");
     });
 
+    test("security fix: hints --factors values and --strategy choices", () => {
+      expect(completionNames("security", "fix", "--factors", "")).toEqual(
+        expect.arrayContaining(["authenticator", "backup-code", "sms"]),
+      );
+      expect(completionNames("security", "fix", "--strategy", "")).toEqual(
+        expect.arrayContaining(["email-code", "email-link", "phone-code", "passkey"]),
+      );
+    });
+
+    test("security fix: keeps completing ids after the first one", () => {
+      const names = completionNames("security", "fix", "user-lockout", "");
+      expect(names).toContain("device-trust");
+      expect(names).toContain("--all");
+    });
+
+    test("security fix: suggests check ids", () => {
+      const names = completionNames("security", "fix", "");
+      expect(names).toContain("user-lockout");
+      expect(names).toContain("mfa-required");
+      expect(names).toContain("--all");
+    });
+
     test("open dashboard: suggests known subpaths", () => {
       const names = completionNames("open", "dashboard", "");
       expect(names).toContain("users");
       expect(names).toContain("api-keys");
       expect(names).toContain("settings");
+    });
+
+    test("migrate sources: suggests the built-in sources", () => {
+      const result = generateCompletions(createProgram(), ["migrate", "sources", ""]);
+      expect(result.directive).toBe(0);
+      const names = result.completions.map((c) => c.name);
+      expect(names).toContain("supabase");
+      expect(names).toContain("workos");
+    });
+
+    test("completes migrate subcommands", () => {
+      expect(completionNames("")).toContain("migrate");
+      expect(completionNames("migrate", "")).toEqual(
+        expect.arrayContaining(["import", "export", "undo", "runs", "sources"]),
+      );
     });
 
     test("open dashboard: filters subpaths by prefix", () => {

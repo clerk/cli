@@ -3,13 +3,13 @@
  *
  * Ported from the standalone migration-tool's `src/export/clerk.ts`, rewritten
  * onto `bapiRequest` instead of `@clerk/backend` so it shares the CLI's auth
- * resolution, `--verbose` request tracing and error taxonomy.
+ * resolution, `--verbose` request tracing, and error taxonomy.
  *
- * The output feeds `clerk migrate import --transformer clerk` unedited, which is
+ * The output feeds `clerk migrate import --source clerk` unedited, which is
  * what makes development → production a two-command operation.
  *
  * **Passwords do not come out of this endpoint.** Clerk never returns password
- * digests, TOTP secrets or backup codes over the API; only the `*_enabled`
+ * digests, TOTP secrets, or backup codes over the API; only the `*_enabled`
  * booleans. The coverage report says how many users *have* a password so the
  * gap is visible before the import, not after.
  */
@@ -28,6 +28,7 @@ import {
 } from "../lib/target.ts";
 import { resolveClerkSource } from "./clerk-source.ts";
 import { finishExport, startExportRun } from "./shared.ts";
+import { recordMigrateTarget } from "../telemetry.ts";
 
 /** BAPI's maximum page size for `GET /v1/users`. */
 const PAGE_SIZE = 500;
@@ -279,23 +280,30 @@ export async function exportClerk(options: ExportClerkOptions): Promise<void> {
   });
 
   await withGutter("Exporting users from Clerk", async () => {
-    const identity = await fetchInstanceIdentity(source.secretKey);
-    // A key picks the instance on its own and ignores --instance, so the two
-    // must agree, as on import: otherwise this reads the wrong user pool under
-    // the requested instance's name.
     const keyFrom = options.secretKey
       ? KEY_SOURCE.secretKeyFlag
       : !options.app && process.env.CLERK_SECRET_KEY
         ? KEY_SOURCE.envVar
         : undefined;
-    if (keyFrom) assertInstanceFlagMatches({ instance: options.instance }, keyFrom, identity);
     const keySource = keyFrom ?? source.target;
+    const identity = await fetchInstanceIdentity(source.secretKey, keySource);
+    // A key picks the instance on its own and ignores --instance, so the two
+    // must agree, as on import: otherwise this reads the wrong user pool under
+    // the requested instance's name.
+    if (keyFrom) assertInstanceFlagMatches({ instance: options.instance }, keyFrom, identity);
     const target = {
       platform: "clerk",
       env: identity.env,
       instanceId: identity.instanceId,
       ...(keySource ? { keySource } : {}),
     };
+    // The source instance: for this command, the one it acts on.
+    // `--app` named the app unless a key overrode it; a linked profile's app
+    // is filled in from its instances.
+    recordMigrateTarget({
+      appId: keyFrom ? undefined : options.app,
+      instanceId: identity.instanceId,
+    });
     if (!options.json) printTarget(target);
 
     const users = await withSpinner("Fetching users from Clerk...", async (spinner) =>

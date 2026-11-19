@@ -1,5 +1,5 @@
 /**
- * `clerk migrate runs [run-id]` — what every import, export and undo did.
+ * `clerk migrate runs [run-id]` — what every import, export, and undo did.
  *
  * Reads the run store and nothing else. `runs` alone lists every run, newest
  * first. `runs <id>` shows one: its header, counts, the error breakdown, the
@@ -9,14 +9,16 @@
 import path from "node:path";
 import { bold, dim, green, red, yellow } from "../../lib/color.ts";
 import { throwUsageError } from "../../lib/errors.ts";
+import { recordMigrateSource, recordMigrateTarget } from "./telemetry.ts";
 import { quoteArg } from "../../lib/json-body.ts";
 import { log } from "../../lib/log.ts";
-import { tallyError } from "./lib/failures.ts";
+import { tallyError, WITHOUT_IDENTIFIER_WARNING, WITHOUT_PHONE_WARNING } from "./lib/failures.ts";
 import {
   hasRetryableUsers,
   latestUserLines,
   listRuns,
   importsOfFile,
+  undoneInFull,
   undosOf,
   readRun,
   resolveRunsDir,
@@ -112,6 +114,22 @@ function errorBreakdown(lines: UserLine[]): { error: string; count: number }[] {
 }
 
 /**
+ * Users imported without their first phone, or an email or phone Clerk
+ * refused, by reason: worded as the import's `result.warnings`.
+ */
+function warningBreakdown(lines: UserLine[]): { warning: string; count: number }[] {
+  const counts = new Map<string, number>();
+  const add = (warning: string) => counts.set(warning, (counts.get(warning) ?? 0) + 1);
+  for (const line of lines) {
+    if (line.phoneRefused) add(`${WITHOUT_PHONE_WARNING}${line.phoneRefused}`);
+    for (const reason of line.refused ?? []) add(`${WITHOUT_IDENTIFIER_WARNING}${reason}`);
+  }
+  return [...counts]
+    .map(([warning, count]) => ({ warning, count }))
+    .sort((a, b) => b.count - a.count);
+}
+
+/**
  * The import that continues this run: its file (or export run) and source,
  * with the flags that reach the same runs folder and instance, ending in
  * `--yes`. None when the run has no file, or flags this build can't read.
@@ -124,16 +142,19 @@ function continueCommand(record: RunRecord, carry: string[]): string | undefined
   const input = record.fromExport ?? record.file?.path;
   if (!input) return undefined;
   const parts = ["clerk migrate import", quoteArg(input)];
-  if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
+  // A source you wrote is a file the record knows only by its hash. A name,
+  // not `<…>`: pasted as is, a shell reads `<file>` as a redirect.
+  if (record.sourceHash) parts.push("--source", "SOURCE_FILE");
+  else if (!record.fromExport && record.source) parts.push("--source", quoteArg(record.source));
   return withFlags(parts.join(" "), [...importFlags(record.flags), ...carry, "--yes"]);
 }
 
 /**
  * Whether importing the record's file again continues this run, rather than
- * starting another or refusing: no newer import of that file and source may
- * be for the same instance, the file is unchanged, and no undo of it exists.
- * An unfinished undo makes an import refuse; a finished one that never marked
- * the run makes it start a new one.
+ * starting another or refusing: no newer import of that file and source (and
+ * version of a source you wrote) may be for the same instance, the file is
+ * unchanged, and no undo of it exists. An unfinished undo makes an import
+ * refuse; a finished one that never marked the run makes it start a new one.
  */
 function continuesThisRun(runsDir: string, record: RunRecord): boolean {
   const file = record.file;
@@ -146,8 +167,8 @@ function continuesThisRun(runsDir: string, record: RunRecord): boolean {
     id === record.target.instanceId ||
     isStandInInstanceId(id) ||
     isStandInInstanceId(record.target.instanceId);
-  const newest = importsOfFile(runs, { sha256: file.sha256, source: record.source }).find((other) =>
-    mayBeSameInstance(other.target.instanceId),
+  const newest = importsOfFile(runs, { sha256: file.sha256, source: record.source }).find(
+    (other) => other.sourceHash === record.sourceHash && mayBeSameInstance(other.target.instanceId),
   );
   if (newest?.id !== record.id) return false;
   if (undosOf(runs, record.id).length > 0) return false;
@@ -176,10 +197,14 @@ function nextCommands(
     const again = continueCommand(record, carry);
     if (!again || state === "complete" || !continuesThisRun(runsDir, record)) return [undo];
     if (state === "partial" && !hasRetryableUsers(record, latest)) return [undo];
-    // Continuing is what a stopped run is for: the same file, source and
+    // Continuing is what a stopped run is for: the same file, source, and
     // target pick it up where it left off.
     const why = state === "interrupted" ? "continue it" : "retry the users it didn't finish";
-    return [`Run \`${again}\` to ${why}`, undo];
+    // The record knows a source you wrote only by its hash.
+    const placeholder = record.sourceHash
+      ? ", with SOURCE_FILE replaced by the path to the source you wrote"
+      : "";
+    return [`Run \`${again}\` to ${why}${placeholder}`, undo];
   }
   if (record.kind === "undo" && state !== "complete" && record.undoes) {
     return [`Run \`${undoCommand(record.undoes, carry)}\` to retry the users that failed`];
@@ -220,18 +245,81 @@ function printList(runsDir: string, records: RunRecord[]): void {
   log.info(dim(plural(records.length, "run")));
 }
 
+/**
+ * The users an undo of this import deleted. Undo writes its `deleted` lines to
+ * its own run: such a user is gone, whatever the import's last line says.
+ */
+function deletedByUndo(runsDir: string, records: RunRecord[], importId: string): Set<string> {
+  return new Set(
+    undosOf(records, importId).flatMap((undo) =>
+      [...latestUserLines(runsDir, undo.id).values()]
+        .filter((line) => line.status === "deleted")
+        .map((line) => line.sourceId),
+    ),
+  );
+}
+
+/**
+ * The run with the counts `runs` shows, which follow its lists: a user an undo
+ * deleted leaves the not-confirmed and left-to-attach counts, and once the run
+ * is undone in full, both are zero. An unconfirmed user an undo deleted was
+ * found by the run's marker, so the import did create it: it counts as created.
+ */
+function shownRun(runsDir: string, record: RunRecord, records: RunRecord[]): RunRecord {
+  const live = withLiveCounts(runsDir, record);
+  const deleted = deletedByUndo(runsDir, records, record.id);
+  const inFull = undoneInFull(runsDir, record, records);
+  if (deleted.size === 0 && !inFull) return live;
+  const lines = [...latestUserLines(runsDir, record.id).values()];
+  const kept = inFull ? [] : lines.filter((line) => !deleted.has(line.sourceId));
+  const creating = kept.filter((line) => line.status === "creating").length;
+  const pending = kept.filter(
+    (line) => line.status === "created" && (line.pending?.length ?? 0) > 0,
+  ).length;
+  const adopted = lines.filter(
+    (line) => line.status === "creating" && deleted.has(line.sourceId),
+  ).length;
+  const { creating: _creating, pending: _pending, ...counts } = live.counts;
+  return {
+    ...live,
+    counts: {
+      ...counts,
+      created: (counts.created ?? 0) + adopted,
+      ...(creating > 0 ? { creating } : {}),
+      ...(pending > 0 ? { pending } : {}),
+    },
+  };
+}
+
 /** One run in full: `--json` prints it, and `printRun` renders it. */
 function showJson(runsDir: string, record: RunRecord, carry: string[]) {
   const lines = [...latestUserLines(runsDir, record.id).values()];
   const state = runState(runsDir, record);
+  // The undo's `deleted` lines are its own run's: these users are gone, so
+  // nothing they were imported without is worth a warning. Once the run is
+  // undone in full, no user with the marker is left: undo looked up each
+  // in-flight one by the run's marker and deleted what it found.
+  const inFull = undoneInFull(runsDir, record);
+  const deleted = deletedByUndo(runsDir, listRuns(runsDir), record.id);
+  const left = (status: UserLine["status"]) =>
+    inFull ? [] : lines.filter((line) => line.status === status && !deleted.has(line.sourceId));
+  const created = left("created");
+  const unconfirmed = left("creating");
+  const failed = lines.filter((line) => line.status === "failed");
   return {
     runsDir,
     run: { ...record, state },
     next: nextCommands(runsDir, record, state, carry, lines),
-    errors: errorBreakdown(lines),
-    failed: lines.filter((line) => line.status === "failed"),
+    // Only the unconfirmed users still listed: for the rest, "a re-run checks" no longer holds.
+    errors: errorBreakdown([...failed, ...unconfirmed]),
+    warnings: warningBreakdown(created),
+    failed,
+    importedWithout: created.filter(
+      (line) => line.phoneRefused !== undefined || (line.refused?.length ?? 0) > 0,
+    ),
+    leftToAttach: created.filter((line) => (line.pending?.length ?? 0) > 0),
     skipped: lines.filter((line) => line.status === "skipped"),
-    unconfirmed: lines.filter((line) => line.status === "creating"),
+    unconfirmed,
   };
 }
 
@@ -281,9 +369,21 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
     }
   }
 
+  if (view.warnings.length > 0) {
+    log.blank();
+    log.info(bold("Warnings"));
+    for (const { warning, count } of view.warnings) {
+      log.info(`  ${yellow(String(count))} ${count === 1 ? "user" : "users"}: ${warning}`);
+    }
+  }
+
   printUsers("Failed", view.failed, usersFile);
+  printUsers("Imported without an email or phone Clerk refused", view.importedWithout, usersFile);
+  printUsers("Identifiers left to attach", view.leftToAttach, usersFile);
+  // A run with an undo is not continued: undoing again looks them up.
+  const checks = undosOf(listRuns(runsDir), record.id).length > 0 ? "the undo" : "a continue";
   printUsers(
-    "Not confirmed (Clerk may have created them; a continue checks)",
+    `Not confirmed (Clerk may have created them; ${checks} checks)`,
     view.unconfirmed,
     usersFile,
   );
@@ -297,8 +397,9 @@ function printRun(runsDir: string, record: RunRecord, carry: string[]): void {
 export async function runs(id: string | undefined, options: RunsOptions = {}): Promise<void> {
   const runsDir = await resolveRunsDir(options.runsDir);
 
+  const all = listRuns(runsDir);
   if (id === undefined) {
-    const records = listRuns(runsDir).map((record) => withLiveCounts(runsDir, record));
+    const records = all.map((record) => shownRun(runsDir, record, all));
     if (options.json) log.data(JSON.stringify(listJson(runsDir, records), null, 2));
     else printList(runsDir, records);
     return;
@@ -306,7 +407,9 @@ export async function runs(id: string | undefined, options: RunsOptions = {}): P
 
   const stored = readRun(runsDir, id);
   if (!stored) throwUsageError(noRunMessage(runsDir, id, carryFlags({ runsDir: options.runsDir })));
-  const record = withLiveCounts(runsDir, stored);
+  const record = shownRun(runsDir, stored, all);
+  recordMigrateSource(record.source, { custom: Boolean(record.sourceHash) });
+  recordMigrateTarget(record.target);
 
   // The record says where the import's key came from, and so which flags
   // reach that instance again.

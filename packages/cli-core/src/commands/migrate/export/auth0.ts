@@ -68,7 +68,7 @@ export function normalizeAuth0Domain(domain: string): string {
 
 /**
  * True for a bare host name. The client secret goes to this host, so userinfo
- * (`tenant.auth0.com@elsewhere`), a port, a path or a query is refused rather
+ * (`tenant.auth0.com@elsewhere`), a port, a path, or a query is refused rather
  * than letting URL parsing pick a different host.
  */
 export function isAuth0Domain(domain: string): boolean {
@@ -355,7 +355,7 @@ export async function fetchAllAuth0Users(options: {
  * Keeps the fields the `auth0` transformer maps from.
  *
  * Deliberately a copy rather than the raw record: an Auth0 user carries
- * identities, session counts and tenant internals that would bloat the export
+ * identities, session counts, and tenant internals that would bloat the export
  * and mean nothing to the import.
  */
 export function mapAuth0UserToExport(user: Auth0User): Record<string, unknown> {

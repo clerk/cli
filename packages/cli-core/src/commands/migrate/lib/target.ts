@@ -14,7 +14,7 @@ import { bapiRequest } from "../../../lib/bapi.ts";
 import { dim } from "../../../lib/color.ts";
 import { resolveBapiSecretKey } from "../../../lib/bapi-command.ts";
 import { INSTANCE_ALIASES, resolveAppContext } from "../../../lib/config.ts";
-import { throwUsageError } from "../../../lib/errors.ts";
+import { ApiError, CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
 import {
   ENV_VAR_SOURCE_SUFFIX,
   resolveKeylessTarget,
@@ -24,6 +24,7 @@ import { log } from "../../../lib/log.ts";
 import { isHuman } from "../../../mode.ts";
 import { detectInstanceType } from "./instance.ts";
 import { retryOn429 } from "./retry.ts";
+import { failureOf } from "./failures.ts";
 import { type CarryOptions, carryFlags } from "./carry-flags.ts";
 import type { RunTarget } from "./run-store.ts";
 
@@ -54,7 +55,24 @@ export const KEY_SOURCE = {
 
 type NamedKeySource = (typeof KEY_SOURCE)[keyof typeof KEY_SOURCE];
 
-type InstanceIdentity = { instanceId: string; env: string };
+type InstanceIdentity = {
+  instanceId: string;
+  env: string;
+  /**
+   * `max_allowed_users`: the user limit Clerk enforces, `null` for none.
+   * Absent when Clerk did not say: an API that predates the field, or a read
+   * that failed.
+   */
+  maxAllowedUsers?: number | null;
+};
+
+/** `max_allowed_users` as {@link InstanceIdentity} carries it. */
+function readUserLimit(value: unknown): { maxAllowedUsers?: number | null } {
+  if (value === null) return { maxAllowedUsers: null };
+  return Number.isInteger(value) && (value as number) >= 0
+    ? { maxAllowedUsers: value as number }
+    : {};
+}
 
 type KeySource = {
   keySource: string;
@@ -163,23 +181,45 @@ export function laterCarry(runsDir: string | undefined, target: RunTarget): stri
  * Falls back to a hash of the key when `GET /v1/instance` cannot be read: the
  * same key always addresses the same instance, so it still tells two
  * instances apart, and nothing is sent anywhere. A 429 is retried first: it is
- * most likely straight after a large import, which is when `undo` runs.
+ * most likely straight after a large import, which is when `undo` runs. A key
+ * Clerk refuses (401) throws instead, naming where the key came from.
+ *
+ * @param keySource - Where the key came from, such as `--secret-key`.
  */
-export async function fetchInstanceIdentity(secretKey: string): Promise<InstanceIdentity> {
+export async function fetchInstanceIdentity(
+  secretKey: string,
+  keySource?: string,
+): Promise<InstanceIdentity> {
   const fallbackEnv = detectInstanceType(secretKey) === "prod" ? "production" : "development";
   try {
     const { body } = await retryOn429(async () =>
       bapiRequest({ method: "GET", path: "/v1/instance", secretKey }),
     );
-    const instance = body as { id?: unknown; environment_type?: unknown };
+    const instance = body as {
+      id?: unknown;
+      environment_type?: unknown;
+      max_allowed_users?: unknown;
+    };
     if (typeof instance.id === "string" && isClerkInstanceId(instance.id)) {
       return {
         instanceId: instance.id,
         env:
           typeof instance.environment_type === "string" ? instance.environment_type : fallbackEnv,
+        ...readUserLimit(instance.max_allowed_users),
       };
     }
   } catch (error) {
+    // Clerk refused the key itself. Every later request would too, and a
+    // stand-in would only send the run checks after an instance that does not
+    // matter, with advice that leads back here.
+    if (error instanceof ApiError && error.status === 401) {
+      const from = keySource ? ` from ${keySource}` : "";
+      throw new CliError(
+        `Clerk rejected the secret key${from} (401): ${failureOf(error).message}\n` +
+          "Check the key, or copy a new one from the API keys page in the Clerk Dashboard.",
+        { code: ERROR_CODE.AUTH_REQUIRED },
+      );
+    }
     log.debug(`migrate: could not read the instance behind the key: ${String(error)}`);
   }
   return { instanceId: keyInstanceId(secretKey), env: fallbackEnv };
@@ -239,12 +279,15 @@ export function assertInstanceFlagMatches(
 }
 
 /** Resolves the key, then names the instance it addresses. */
-export async function resolveClerkTarget(
-  options: TargetOptions,
-): Promise<{ secretKey: string; target: ClerkTarget }> {
+export async function resolveClerkTarget(options: TargetOptions): Promise<{
+  secretKey: string;
+  target: ClerkTarget;
+  /** Kept off the target, which a run records: Clerk can raise it between runs. */
+  maxAllowedUsers?: number | null;
+}> {
   const secretKey = await resolveBapiSecretKey(options);
   const { instance: named, ...source } = await describeKeySource(options);
-  const fetched = await fetchInstanceIdentity(secretKey);
+  const fetched = await fetchInstanceIdentity(secretKey, source.keySource);
   // The Platform API or the profile already named the instance: recorded
   // instead of a stand-in, a run's commands can reach it with `--instance`.
   // Named by ID, its environment is unknown: the key prefix only guesses it.
@@ -262,6 +305,7 @@ export async function resolveClerkTarget(
       instanceType: detectInstanceType(secretKey),
       ...source,
     },
+    ...("maxAllowedUsers" in fetched ? { maxAllowedUsers: fetched.maxAllowedUsers } : {}),
   };
 }
 

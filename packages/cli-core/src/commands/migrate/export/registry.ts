@@ -6,7 +6,7 @@
  * registry uses.
  *
  * `run` takes no arguments on purpose: each platform resolves its own flags,
- * environment variables and prompts, because what Auth0 needs (a tenant domain
+ * environment variables, and prompts, because what Auth0 needs (a tenant domain
  * and M2M credentials) has nothing in common with what a database export needs.
  */
 
@@ -52,7 +52,7 @@ export const exportPlatforms: ExportRegistryEntry[] = [
   {
     key: "authjs",
     label: "Auth.js (NextAuth)",
-    description: "An Auth.js database — Postgres, MySQL or SQLite",
+    description: "An Auth.js database — Postgres, MySQL, or SQLite",
     sourceKey: "authjs",
     run: async (options) => exportAuthJs(options),
   },

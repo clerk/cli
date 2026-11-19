@@ -22,7 +22,13 @@ mock.module("../../lib/spinner.ts", () => ({
 const SECRET_KEY = "sk_test_keyless";
 const BAPI_URL = "https://test-bapi.clerk.com";
 
-const INSTANCE = { object: "instance", id: "ins_1", support_email: "old@example.com" };
+// `workspace_id` is null until the application is claimed.
+const INSTANCE = {
+  object: "instance",
+  id: "ins_1",
+  support_email: "old@example.com",
+  workspace_id: null,
+};
 const ORG_SETTINGS = { object: "organization_settings", enabled: false };
 const COMMUNICATION = { object: "instance_communication", blocked_country_codes: [] };
 const PROTECT = { object: "instance_protect", rules_enabled: false };
@@ -287,6 +293,24 @@ describe("keyless config", () => {
       await expect(resolveKeylessTarget({ instance: "prod", cwd: projectDir })).rejects.toThrow(
         /--instance is not supported for an unclaimed accountless application/,
       );
+    });
+
+    test("rejects --instance for a claimed application without calling it unclaimed", async () => {
+      await writeEnv(".env", `CLERK_SECRET_KEY=${SECRET_KEY}\n`);
+      stubFetch(
+        async () =>
+          new Response(JSON.stringify({ ...INSTANCE, workspace_id: "org_123" }), { status: 200 }),
+      );
+      const { resolveKeylessTarget } = await import("../../lib/keyless-target.ts");
+
+      const error = await resolveKeylessTarget({ instance: "prod", cwd: projectDir }).catch(
+        (e: unknown) => e,
+      );
+
+      expect((error as Error).message).toContain(
+        "--instance is not supported with only a secret key",
+      );
+      expect((error as Error).message).not.toContain("unclaimed");
     });
 
     test("rejects a key that is not a secret key", async () => {
@@ -661,10 +685,13 @@ describe("keyless config", () => {
       expect(captured.err).toContain("[dry-run] Nothing sent");
     });
 
+    // The refusal reads the instance once, to word itself; nothing else is sent.
     test("patch rejects unreachable keys before showing a diff or touching the API", async () => {
-      let requested = false;
-      stubFetch(async () => {
-        requested = true;
+      const requests: string[] = [];
+      stubFetch(async (input, init) => {
+        requests.push(
+          `${(init?.method ?? "GET").toUpperCase()} ${new URL(input.toString()).pathname}`,
+        );
         return new Response(JSON.stringify(INSTANCE), { status: 200 });
       });
       const { configPatch } = await import("./push.ts");
@@ -672,8 +699,162 @@ describe("keyless config", () => {
       await expect(configPatch({ json: '{"session":{"lifetime":1}}', yes: true })).rejects.toThrow(
         /Unsupported config key/,
       );
-      expect(requested).toBe(false);
+      expect(requests).toEqual(["GET /v1/instance"]);
       expect(captured.err).not.toContain("Updating config");
+    });
+
+    /** Answers GET /v1/instance with this `workspace_id`, or fails it. */
+    const stubWorkspace = (workspaceId: string | null | "fail") =>
+      stubFetch(async () =>
+        workspaceId === "fail"
+          ? new Response("{}", { status: 500 })
+          : new Response(JSON.stringify({ ...INSTANCE, workspace_id: workspaceId }), {
+              status: 200,
+            }),
+      );
+    const usernamePatch = '{"auth_username":{"allow_extended_special_characters":true}}';
+
+    // A secret key for a claimed application takes this path too.
+    test("patch tells a claimed application how to reach the setting, without calling it unclaimed", async () => {
+      stubWorkspace("org_123");
+      const { configPatch } = await import("./push.ts");
+
+      const error = await configPatch({ json: usernamePatch, yes: true }).catch((e: unknown) => e);
+
+      const message = (error as Error).message;
+      expect(message).not.toContain("unclaimed");
+      expect(message).toContain("Unsupported config key with only a secret key: auth_username");
+      expect(message).toContain("Supported top-level keys: instance");
+      expect(message).toContain(
+        "This application belongs to a Clerk account, so a secret key can't change auth_username.",
+      );
+      expect(message).toContain("Pass `--app <id> --instance <dev|prod>` (or run `clerk link`)");
+      expect(message).toContain("`clerk auth login` or `CLERK_PLATFORM_API_KEY`");
+      expect(message).toContain("A login alone isn't enough while the secret key from .env");
+    });
+
+    test("patch keeps the claim-the-app wording for an unclaimed application", async () => {
+      stubWorkspace(null);
+      const { configPatch } = await import("./push.ts");
+
+      const error = await configPatch({ json: usernamePatch, yes: true }).catch((e: unknown) => e);
+
+      const message = (error as Error).message;
+      expect(message).toContain("for an unclaimed accountless application: auth_username");
+      expect(message).toContain("Run `clerk auth login` to claim the application");
+      expect(message).not.toContain("belongs to a Clerk account");
+    });
+
+    // Without an answer, the message covers both, and never calls it unclaimed.
+    test("patch covers both cases when Clerk can't say whether the application is claimed", async () => {
+      stubWorkspace("fail");
+      const { configPatch } = await import("./push.ts");
+
+      const error = await configPatch({ json: usernamePatch, yes: true }).catch((e: unknown) => e);
+
+      const message = (error as Error).message;
+      expect(message).toContain("Unsupported config key with only a secret key: auth_username");
+      expect(message).toContain(
+        "If this application is unclaimed, run `clerk auth login` to claim it",
+      );
+      expect(message).toContain(
+        "If it belongs to a Clerk account, a secret key can't change auth_username.",
+      );
+      expect(message).not.toContain("for an unclaimed accountless application");
+    });
+
+    test("put on a claimed application points at the account, not at claiming it", async () => {
+      stubWorkspace("org_123");
+      const { configPut } = await import("./push.ts");
+
+      const error = await configPut({ json: "{}", yes: true }).catch((e: unknown) => e);
+
+      const message = (error as Error).message;
+      expect(message).toContain("a secret key can't replace the whole config");
+      expect(message).not.toContain("unclaimed");
+    });
+
+    test("pull of a claimed application says what the secret key left out", async () => {
+      bapiState["/v1/instance"] = { ...INSTANCE, workspace_id: "org_123" };
+      const { configPull } = await import("./pull.ts");
+
+      await configPull({});
+
+      expect(captured.err).toContain(
+        "This application belongs to a Clerk account, but the secret key from .env only reads instance",
+      );
+      expect(captured.err).toContain("A login alone isn't enough");
+    });
+
+    test("pull of an unclaimed application says nothing extra", async () => {
+      const { configPull } = await import("./pull.ts");
+
+      await configPull({});
+
+      expect(captured.err).not.toContain("belongs to a Clerk account");
+    });
+
+    // `--keys` names the groups, so "only reads" them is no news.
+    test("pull --keys of a claimed application says nothing extra", async () => {
+      bapiState["/v1/instance"] = { ...INSTANCE, workspace_id: "org_123" };
+      const { configPull } = await import("./pull.ts");
+
+      await configPull({ keys: ["protect"] });
+
+      expect(captured.err).not.toContain("belongs to a Clerk account");
+    });
+
+    // A patch diffs against a pull, but the warning is the pull command's alone.
+    test("patch of a claimed application's instance doesn't warn about the pull", async () => {
+      bapiState["/v1/instance"] = { ...INSTANCE, workspace_id: "org_123" };
+      const { configPatch } = await import("./push.ts");
+
+      await configPatch({ json: '{"instance":{"support_email":"new@example.com"}}', yes: true });
+
+      expect(captured.err).not.toContain("only reads");
+    });
+
+    test("a valid patch that doesn't touch instance never reads it", async () => {
+      const requests: string[] = [];
+      const answer = globalThis.fetch;
+      stubFetch(async (input, init) => {
+        requests.push(
+          `${(init?.method ?? "GET").toUpperCase()} ${new URL(input.toString()).pathname}`,
+        );
+        return answer(input, init);
+      });
+      const { configPatch } = await import("./push.ts");
+
+      await configPatch({ json: '{"organization_settings":{"enabled":true}}', yes: true });
+
+      expect(requests).not.toContain("GET /v1/instance");
+    });
+
+    test("billing on a claimed application points at the account, not at claiming it", async () => {
+      stubWorkspace("org_123");
+      const { billingEnable } = await import("../billing/index.ts");
+
+      const error = await billingEnable({ for: ["users"], yes: true }).catch((e: unknown) => e);
+
+      const message = (error as Error).message;
+      expect(message).toContain(
+        "This application belongs to a Clerk account, so a secret key can't configure billing.",
+      );
+      expect(message).toContain("A login alone isn't enough");
+      expect(message).not.toContain("unclaimed");
+    });
+
+    test("billing covers both cases when Clerk can't say whether the application is claimed", async () => {
+      stubWorkspace("fail");
+      const { billingEnable } = await import("../billing/index.ts");
+
+      const error = await billingEnable({ for: ["users"], yes: true }).catch((e: unknown) => e);
+
+      const message = (error as Error).message;
+      expect(message).toContain("If this application is unclaimed, run `clerk auth login`");
+      expect(message).toContain(
+        "If it belongs to a Clerk account, a secret key can't configure billing.",
+      );
     });
 
     test("patch rejects config keys BAPI cannot reach", async () => {

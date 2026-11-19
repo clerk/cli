@@ -12,6 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { dim, green, yellow } from "../../../lib/color.ts";
 import { CliError } from "../../../lib/errors.ts";
+import { declareSoftExitOutcome, setTelemetryStage } from "../../../lib/telemetry.ts";
 import { log } from "../../../lib/log.ts";
 import { carryFlags, withFlags } from "../lib/carry-flags.ts";
 import { ENVELOPE_VERSION, type ExportEnvelope } from "../lib/export-file.ts";
@@ -45,6 +46,7 @@ export async function startExportRun(
   options: ExportCommonOptions,
   target: RunTarget,
 ): Promise<Run> {
+  setTelemetryStage("migrate_export_write");
   const runsDir = await resolveRunsDir(options.runsDir, { write: true });
   return startRun(runsDir, { kind: "export", target, source: target.platform });
 }
@@ -125,7 +127,7 @@ export function formatSection(section: ExportSection): string[] {
  *
  * One command rather than a development and a production variant, because
  * there is no flag whose absence means "development": the key decides, through
- * `--secret-key`, `--app`, `CLERK_SECRET_KEY`, the keyless project and the
+ * `--secret-key`, `--app`, `CLERK_SECRET_KEY`, the keyless project, and the
  * linked profile in that order. A line labelled "development" would be wrong
  * for anyone holding `CLERK_SECRET_KEY=sk_live_…`, which is the reader who can
  * least afford it. So the note names what picks the instance instead.
@@ -192,14 +194,18 @@ export function finishExport(input: FinishExportInput): FinishedExport {
     ...(input.truncated ? { truncated: true } : {}),
   });
   const record = run.finish();
-  // Only the runs folder: the export's --secret-key, --app and --instance name
+  // Only the runs folder: the export's --secret-key, --app, and --instance name
   // the source, and would aim the import at it.
   const carry = carryFlags({ runsDir: options.runsDir });
   const next = withFlags(`clerk migrate import ${record.id}`, carry);
   const skipped = record.counts.skipped ?? 0;
   // Partial, like an import with failures: the file holds what came back, and
   // the exit says it is not everyone, where `truncated` alone is easy to miss.
-  if (input.truncated) process.exitCode = 1;
+  setTelemetryStage("done");
+  if (input.truncated) {
+    process.exitCode = 1;
+    declareSoftExitOutcome("error", "migrate_export_truncated");
+  }
 
   if (options.json) {
     log.data(

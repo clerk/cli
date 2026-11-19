@@ -7,7 +7,7 @@ import { closeStatusForError } from "../../lib/signals.ts";
 import { isInsideGutter, log } from "../../lib/log.ts";
 import { keylessCopy } from "../../lib/copy.ts";
 import { NEXT_STEPS, printNextSteps } from "../../lib/next-steps.ts";
-import { resolveInstanceTarget } from "../../lib/keyless-target.ts";
+import { keyAccess, resolveInstanceTarget } from "../../lib/keyless-target.ts";
 import { credentialPlaceholder, credentialPlaceholderPaths } from "../../lib/oauth-config.ts";
 import type { KeylessWriteVerification } from "./keyless.ts";
 import { REDACTED, redactSecrets, redactedSecretPaths } from "./redact.ts";
@@ -62,7 +62,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   const target = await resolveInstanceTarget(options);
 
   if (target.kind === "keyless" && op.method === "PUT") {
-    throw new CliError(keylessCopy.putNeedsClaimedApplication(), {
+    throw new CliError(keylessCopy.putNeedsClaimedApplication(await keyAccess(target.keyless)), {
       code: ERROR_CODE.AUTH_REQUIRED,
     });
   }
@@ -70,7 +70,7 @@ async function configPush(options: ConfigPushOptions, op: Operation): Promise<vo
   const configPayload = parsePayload(await readInput(options));
   assertNoCredentialPlaceholders(configPayload);
   assertNoRedactedSecrets(configPayload);
-  assertPayloadWritable(target, configPayload);
+  await assertPayloadWritable(target, configPayload);
 
   const shouldWrap = !isInsideGutter();
   if (shouldWrap) intro(op.title);

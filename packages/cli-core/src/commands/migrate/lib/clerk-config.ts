@@ -22,7 +22,7 @@ import { retryOn429 } from "./retry.ts";
  * Supabase provider keys whose Clerk strategy is not simply `oauth_<key>`.
  *
  * Everything not listed here maps by prefix, which covers google, github,
- * discord, spotify, twitch, notion, figma, gitlab, bitbucket and the rest.
+ * discord, spotify, twitch, notion, figma, gitlab, bitbucket, and the rest.
  */
 const CLERK_STRATEGY_ALIASES: Record<string, string> = {
   azure: "oauth_microsoft",
@@ -177,9 +177,9 @@ export async function fetchEnabledSocialProviders(secretKey: string): Promise<st
 /**
  * How many users the destination instance already holds.
  *
- * The closest thing to a live quota check the CLI has: `max_allowed_users` is
- * not exposed by any public API, so headroom on a development instance can
- * only be estimated from the count and {@link DEV_USER_LIMIT}.
+ * Measured against the instance's user limit for the headroom: unfiltered,
+ * this is the count Clerk's own quota check reads, though from a replica, so
+ * it can trail creates made a moment ago.
  *
  * @returns `null` when the count could not be read — an unknown count must not
  *   be reported as zero.

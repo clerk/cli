@@ -8,7 +8,11 @@ import {
   UserAbortError,
 } from "../../lib/errors.ts";
 import { log } from "../../lib/log.ts";
-import { credentialPlaceholder } from "../../lib/oauth-config.ts";
+import {
+  credentialPlaceholder,
+  discoverEnabledOAuthProviderSlugs,
+  OAUTH_KEY_PREFIX,
+} from "../../lib/oauth-config.ts";
 import { currentCliPrefix } from "../../lib/cli-invocation.ts";
 import {
   fetchApplication,
@@ -41,7 +45,6 @@ import {
 } from "./copy.ts";
 import { mapDeployError, type MapDeployErrorOptions } from "./errors.ts";
 import {
-  OAUTH_KEY_PREFIX,
   buildOAuthProviderDescriptors,
   hasProviderRequiredCredentials,
   oauthWalkthroughUrls,
@@ -1131,17 +1134,6 @@ export async function loadProductionDomain(
 ): Promise<ApplicationDomain | undefined> {
   const domains = await listApplicationDomains(ctx.appId);
   return domains.data.find((domain) => !domain.is_satellite) ?? domains.data[0];
-}
-
-export function discoverEnabledOAuthProviderSlugs(config: Record<string, unknown>): string[] {
-  const providers: string[] = [];
-  for (const [key, value] of Object.entries(config)) {
-    if (!key.startsWith(OAUTH_KEY_PREFIX)) continue;
-    if (!value || typeof value !== "object") continue;
-    if ((value as Record<string, unknown>).enabled !== true) continue;
-    providers.push(key.slice(OAUTH_KEY_PREFIX.length));
-  }
-  return providers;
 }
 
 export async function waitForDeployStatus(

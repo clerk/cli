@@ -136,6 +136,10 @@ export const ERROR_CODE = {
   DEPLOY_INSTANCE_UNRESOLVED: "deploy_instance_unresolved",
   /** Local publishable key and secret key address different applications. */
   KEY_PAIR_MISMATCH: "key_pair_mismatch",
+  /** `clerk logs get` found no log group with that ID in the targeted instance. */
+  LOG_GROUP_NOT_FOUND: "log_group_not_found",
+  /** The Backend API has no `GET /v1/logs/types` yet, so `clerk logs schema` can't list event types. */
+  LOG_TYPES_UNAVAILABLE: "log_types_unavailable",
   /** BAPI returned a response the CLI could not use. */
   BAPI_UNEXPECTED_RESPONSE: "bapi_unexpected_response",
   /** The command needs a TTY that isn't available. */
@@ -220,6 +224,13 @@ interface BillingErrorOptions extends CliErrorOptions {
   reason: BillingErrorReason;
 }
 
+/** In agent mode a Clerk docs link points at its raw markdown (`.md`) variant. */
+export function agentDocsUrl(url: string): string {
+  return isAgent() && url.startsWith("https://clerk.com/docs/") && !url.endsWith(".md")
+    ? `${url}.md`
+    : url;
+}
+
 /**
  * General-purpose CLI error for user-facing messages.
  *
@@ -252,19 +263,7 @@ export class CliError extends Error {
     this.exitCode = options?.exitCode ?? EXIT_CODE.GENERAL;
     this.examples = options?.examples;
 
-    if (options?.docsUrl) {
-      this.docsUrl = options.docsUrl;
-
-      // If we're running in agent mode and the docs URL is a Clerk docs link
-      // without a .md extension, add .md to get the raw markdown URL.
-      if (
-        isAgent() &&
-        this.docsUrl.startsWith("https://clerk.com/docs/") &&
-        !this.docsUrl.endsWith(".md")
-      ) {
-        this.docsUrl += ".md";
-      }
-    }
+    if (options?.docsUrl) this.docsUrl = agentDocsUrl(options.docsUrl);
   }
 }
 

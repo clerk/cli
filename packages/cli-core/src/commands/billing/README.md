@@ -8,7 +8,11 @@ billing` commands.
 commands cannot run against an unclaimed accountless application: billing settings
 exist only in the account-level config document, and Clerk's Backend API exposes
 no billing resource an instance secret key could reach. In an accountless project both
-commands exit with an `auth_required` error pointing at `clerk auth login`.
+commands exit with an `auth_required` error. The refusal reads `GET /v1/instance` once to word
+itself: an unclaimed application (`workspace_id` null) is pointed at `clerk auth login` to claim it,
+and a claimed one reached by its secret key is pointed at `--app <id> --instance <dev|prod>` (or
+`clerk link`) with `clerk auth login` or `CLERK_PLATFORM_API_KEY`. If the lookup fails, the
+message gives both.
 
 For arbitrary billing config edits (plans, trials, payment-method requirements)
 use `clerk config patch --json '{"billing":{...}}'` until a dedicated
@@ -71,3 +75,4 @@ The install runs via the user's package runner (`bunx`, `pnpm dlx`, `yarn dlx`, 
 | ------ | ----------------------------------------------------------------- | ------------------------------------------------------------- |
 | GET    | `/v1/platform/applications/{appId}/instances/{instanceId}/config` | Fetch current config for diff before mutation                 |
 | PATCH  | `/v1/platform/applications/{appId}/instances/{instanceId}/config` | Patch `billing.*` (with `?dry_run=true` when `--dry-run` set) |
+| GET    | `/v1/instance` (Backend API)                                      | Accountless refusal only: whether the key's app is claimed    |

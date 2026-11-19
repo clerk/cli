@@ -29,7 +29,7 @@ import { terminal } from "./terminal.ts";
  * already written a file, or a long fetch the credential has already been
  * accepted for, does not belong in here.
  *
- * `-y`, `--json`, agent mode and a non-TTY get the failure unchanged: there is
+ * `-y`, `--json`, agent mode, and a non-TTY get the failure unchanged: there is
  * nobody to ask, and a loop that cannot prompt is a loop that cannot end. A cancelled
  * prompt throws {@link UserAbortError}, which is not a `CliError` and so leaves
  * the loop — declining the question is an answer.
@@ -82,7 +82,7 @@ export function isCredentialStatus(status: number): boolean {
 /**
  * Throws an API failure: a usage error (exit 2, and a fresh prompt under
  * {@link withInputRetry}) when the status blames the credential; a plain
- * error (exit 1) for a 429, a 5xx or anything else another credential would
+ * error (exit 1) for a 429, a 5xx, or anything else another credential would
  * not fix.
  */
 export function throwApiFailure(status: number, message: string, docsUrl?: string): never {

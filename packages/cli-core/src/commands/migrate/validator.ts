@@ -29,9 +29,9 @@ export const passwordHasherEnum = z.enum(PASSWORD_HASHERS, {
  * Validates user data before sending it to Clerk.
  *
  * Everything is optional except:
- * - `userId`, required for tracking, re-runs and `undo`
+ * - `userId`, required for tracking, re-runs, and `undo`
  * - `passwordHasher`, required whenever `password` is present
- * - at least one identifier (email, phone or username)
+ * - at least one identifier (email, phone, or username)
  *
  * Identifier fields accept either a single value or an array.
  */
