@@ -145,6 +145,15 @@ export async function auditProduction(
             },
       );
     }
+    // With no prefix to check against, discovery takes production's own registration, which can
+    // still differ from the team signing the release build.
+    if (discovery.prefixMismatch)
+      checks.push({
+        name: "Production App ID Prefix",
+        status: "warn",
+        message: `${configurations}: ${discovery.prefixMismatch.message}`,
+        remedy: `${discovery.prefixMismatch.remedy} The production registrations are at ${dashboard("native-applications")}`,
+      });
   } catch (error) {
     signal?.throwIfAborted();
     checks.push({

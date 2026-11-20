@@ -105,6 +105,7 @@ export function printSetupPreview(preview: SetupPreview): void {
       log.info("  Register the native app in Clerk");
     if (preview.remote.actions.includes("enable-native-api")) log.info("  Enable Native API");
   }
+  for (const warning of preview.discovery?.warnings ?? []) log.warn(warning);
   if (preview.appleRequested) log.info("  Configure native Sign in with Apple");
   if (preview.appleWarning) log.warn(preview.appleWarning);
   if (preview.personalTeamNote) log.warn(preview.personalTeamNote);

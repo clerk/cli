@@ -10,7 +10,10 @@ const NAME = "Xcode project";
 /** Read-only checks for a native Apple app: Xcode project, packages, capabilities, registration. */
 export async function runIOSDoctorChecks(
   ctx: DoctorContext,
-  options: Pick<DoctorOptions, "xcodeProject" | "xcodeTarget" | "xcodeConfiguration"> & {
+  options: Pick<
+    DoctorOptions,
+    "xcodeProject" | "xcodeTarget" | "xcodeConfiguration" | "appIdPrefix"
+  > & {
     root?: string;
   },
   dependencies: Dependencies = {},
@@ -36,7 +39,9 @@ export async function runIOSDoctorChecks(
     minimumVersion: CLERK_SWIFT_MINIMUM_VERSION,
     inspectOnly: true,
     signal,
-    remote: profile ? { applicationId: profile.profile.appId } : undefined,
+    remote: profile
+      ? { applicationId: profile.profile.appId, appIdPrefix: options.appIdPrefix?.trim() }
+      : undefined,
   };
   let report: Awaited<ReturnType<typeof doctor>>;
   let remoteError: unknown;

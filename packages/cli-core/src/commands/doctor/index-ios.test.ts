@@ -60,6 +60,20 @@ describe("doctor for native Apple projects", () => {
     }
   });
 
+  test("--app-id-prefix selects the Apple checks like the Xcode flags", async () => {
+    const result = await names({ appIdPrefix: "LEGACY1234" });
+    expect(result).toContain("SDK project linkage");
+    expect(result).not.toContain(CHECK_NAME.envVars);
+  });
+
+  test("--app-id-prefix must be a 10-character App ID Prefix", async () => {
+    await expect(
+      doctor({ xcodeTarget: "MyApp", appIdPrefix: "short", json: true }),
+    ).rejects.toThrow(
+      "--app-id-prefix must be the 10-character App ID Prefix from Apple Developer.",
+    );
+  });
+
   test("other projects keep the usual checks", async () => {
     const result = await names({});
     expect(result).toContain(CHECK_NAME.envVars);

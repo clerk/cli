@@ -1352,7 +1352,10 @@ export function registerInit(program: Program): void {
       "--bundle-id <id>",
       "Bundle ID for a new iOS or macOS app with --starter, or to register when Xcode's is ambiguous",
     )
-    .option("--app-id-prefix <prefix>", "10-character Apple App ID Prefix for a new registration")
+    .option(
+      "--app-id-prefix <prefix>",
+      "10-character Apple App ID Prefix to register, or to confirm an existing registration's legacy prefix",
+    )
     .option(
       "--team-id <id>",
       "Apple Developer Team ID for a new iOS or macOS app with --starter (skips the team prompt)",
