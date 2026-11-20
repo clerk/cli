@@ -56,3 +56,23 @@ export async function useStarterSources(root: string) {
   );
   await writeFile(join(root, "MyApp/ContentView.swift"), STARTER_VIEW);
 }
+
+/** Moves the fixture's app sources into a synchronized folder, as Xcode 16+ templates have them. */
+export async function useSynchronizedFolder(root: string) {
+  const path = join(root, "MyApp.xcodeproj/project.pbxproj");
+  const graph = parse(await readFile(path, "utf8")),
+    objects = graph.objects as Record<string, any>;
+  graph.objectVersion = 77;
+  objects[ids.appGroup] = {
+    isa: "PBXFileSystemSynchronizedRootGroup",
+    path: "MyApp",
+    sourceTree: "<group>",
+  };
+  objects[ids.appTarget].fileSystemSynchronizedGroups = [ids.appGroup];
+  objects[ids.sourcesPhase].files = [];
+  objects[ids.mainGroup].children = objects[ids.mainGroup].children.filter(
+    (id: string) => id !== ids.entitlementsFile,
+  );
+  for (const id of [ids.appFile, ids.sourceBuildFile, ids.entitlementsFile]) delete objects[id];
+  await writeFile(path, build(graph));
+}
