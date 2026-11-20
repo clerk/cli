@@ -8,7 +8,7 @@ import {
   type NativeAPI,
   type RemoteInput,
 } from "./remote.ts";
-import type { Inspection } from "./xcode.ts";
+import { inspectedPlatforms, type Inspection } from "./xcode.ts";
 import { setupError } from "./types.ts";
 import { CliError, ERROR_CODE, EXIT_CODE } from "../../../lib/errors.ts";
 
@@ -85,6 +85,32 @@ export async function discoverBundleIdentifier(
   return new Set(values).size === 1 ? values[0] : undefined;
 }
 
+/**
+ * Why one Clerk registration can't cover a Multiplatform target: its iOS and macOS builds resolve
+ * different Bundle IDs in the same configuration. Undefined for a single-platform target, or when no
+ * configuration resolves one Bundle ID on each side.
+ */
+export async function platformBundleConflict(inspection: Inspection): Promise<string | undefined> {
+  if (inspectedPlatforms(inspection).length < 2) return undefined;
+  const configurations = new Set(
+    inspection.contexts.map(({ selection }) => selection.configuration),
+  );
+  for (const configuration of configurations) {
+    const side = async (mac: boolean) =>
+      discoverBundleIdentifier({
+        ...inspection,
+        contexts: inspection.contexts.filter(
+          ({ selection }) =>
+            selection.configuration === configuration && (selection.sdk === "macosx") === mac,
+        ),
+      });
+    const [iOS, macOS] = await Promise.all([side(false), side(true)]);
+    if (iOS && macOS && !bundleIdentifiersEqual(iOS, macOS))
+      return `This target builds ${iOS} for iOS and ${macOS} for macOS. Clerk registers one Bundle ID for both platforms of a Multiplatform target, so use the same Bundle ID for both in Xcode, then run this again.`;
+  }
+  return undefined;
+}
+
 export async function discoverRemote(
   input: RemoteSelection,
   inspection: Inspection,
@@ -99,9 +125,18 @@ export async function discoverRemote(
   ]);
   const registrations = applications;
   const nativeEnabled = native.api_enabled;
-  let bundleIdentifier = input.bundleIdentifier ?? (await discoverBundleIdentifier(inspection));
-  let bundleSource = input.bundleIdentifier ? "explicit" : bundleIdentifier ? "xcode" : "missing";
-  if (!bundleIdentifier && prompt) {
+  // No Bundle ID, explicit or entered, covers platforms that build different ones.
+  const platformConflict = await platformBundleConflict(inspection);
+  let bundleIdentifier = platformConflict
+    ? undefined
+    : (input.bundleIdentifier ?? (await discoverBundleIdentifier(inspection)));
+  let bundleSource =
+    input.bundleIdentifier && !platformConflict
+      ? "explicit"
+      : bundleIdentifier
+        ? "xcode"
+        : "missing";
+  if (!bundleIdentifier && prompt && !platformConflict) {
     bundleIdentifier = await prompt(
       "bundleIdentifier",
       "The Bundle ID is missing, customized, or differs across configurations. Enter the final Bundle ID to register:",
@@ -124,11 +159,12 @@ export async function discoverRemote(
     matches.length > 1 || matches.some((app) => appIdPrefix && app.app_id_prefix !== appIdPrefix);
   // Apple uses the Team ID as the App ID Prefix for every App ID created since 2011, so one
   // signing team across the inspected configurations is the best suggestion; a legacy prefix can still be entered.
-  // macOS never supported legacy prefixes, so there the signing team is the prefix.
+  // macOS never supported legacy prefixes, so there the signing team is the prefix, also for a
+  // Multiplatform target, whose one App ID covers its Mac build.
   const teams = new Set(inspection.contexts.map(({ settings }) => settings.DEVELOPMENT_TEAM ?? ""));
   const [team] = teams;
   const suggestedPrefix = teams.size === 1 && /^[A-Z0-9]{10}$/.test(team!) ? team : undefined;
-  const macOS = inspection.contexts.every(({ selection }) => selection.sdk === "macosx");
+  const macOS = inspection.contexts.some(({ selection }) => selection.sdk === "macosx");
   if (!appIdPrefix && bundleIdentifier && !conflict) {
     if (prompt && !(macOS && suggestedPrefix)) {
       appIdPrefix = await prompt(
@@ -148,7 +184,8 @@ export async function discoverRemote(
   if (invalidPrefix && prefixSource !== "clerk-registration")
     throw setupError("Supply a valid ten-character Apple App ID Prefix.");
   const issues = [
-    ...(!bundleIdentifier
+    ...(platformConflict ? [platformConflict] : []),
+    ...(!bundleIdentifier && !platformConflict
       ? [
           "Confirm the final Bundle ID; Xcode's inspected configurations do not establish one ordinary value.",
         ]

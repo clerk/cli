@@ -41,7 +41,8 @@ const IDS = {
 
 export interface IOSFixtureOptions {
   complete?: boolean;
-  platform?: "ios" | "macos";
+  /** `multiplatform` is Xcode's Multiplatform App template: one target, `SDKROOT = auto`, for iOS, macOS, and visionOS. */
+  platform?: "ios" | "macos" | "multiplatform";
   /** Override one configuration to exercise cross-configuration platform certainty. */
   releasePlatform?: "ios" | "macos" | "unresolved";
   secondTarget?: boolean | "watchos";
@@ -93,26 +94,28 @@ function secondTargetObjects(platform: "ios" | "watchos"): string {
 
 function pbxproj(options: IOSFixtureOptions): string {
   const platform = options.platform ?? "ios";
-  const sdkRoot = platform === "macos" ? "macosx" : "iphoneos";
-  const supportedPlatforms = platform === "macos" ? "macosx" : "iphoneos iphonesimulator";
-  const releasePlatform = options.releasePlatform ?? platform;
-  const releaseSDKRoot =
-    releasePlatform === "unresolved"
-      ? '"$(UNKNOWN_SDKROOT)"'
-      : releasePlatform === "macos"
-        ? "macosx"
-        : "iphoneos";
-  const releaseSupportedPlatforms =
-    releasePlatform === "unresolved"
-      ? "$(UNKNOWN_PLATFORMS)"
-      : releasePlatform === "macos"
+  const sdkRootFor = (value: "ios" | "macos" | "multiplatform") =>
+    value === "multiplatform" ? "auto" : value === "macos" ? "macosx" : "iphoneos";
+  const supportedFor = (value: "ios" | "macos" | "multiplatform") =>
+    value === "multiplatform"
+      ? "iphoneos iphonesimulator macosx xros xrsimulator"
+      : value === "macos"
         ? "macosx"
         : "iphoneos iphonesimulator";
+  const sdkRoot = sdkRootFor(platform);
+  const supportedPlatforms = supportedFor(platform);
+  const releasePlatform = options.releasePlatform ?? platform;
+  const releaseSDKRoot =
+    releasePlatform === "unresolved" ? '"$(UNKNOWN_SDKROOT)"' : sdkRootFor(releasePlatform);
+  const releaseSupportedPlatforms =
+    releasePlatform === "unresolved" ? "$(UNKNOWN_PLATFORMS)" : supportedFor(releasePlatform);
   const deploymentTargetSetting =
-    platform === "macos"
-      ? "MACOSX_DEPLOYMENT_TARGET = 14.0;"
-      : "IPHONEOS_DEPLOYMENT_TARGET = 17.0;";
-  const sandboxSettings = platform === "macos" ? "ENABLE_APP_SANDBOX = YES;" : "";
+    platform === "multiplatform"
+      ? 'IPHONEOS_DEPLOYMENT_TARGET = 17.0; MACOSX_DEPLOYMENT_TARGET = 14.0; XROS_DEPLOYMENT_TARGET = 1.0; TARGETED_DEVICE_FAMILY = "1,2,7";'
+      : platform === "macos"
+        ? "MACOSX_DEPLOYMENT_TARGET = 14.0;"
+        : "IPHONEOS_DEPLOYMENT_TARGET = 17.0;";
+  const sandboxSettings = platform === "ios" ? "" : "ENABLE_APP_SANDBOX = YES;";
   const includeClerkSDK = options.clerkSDK !== false;
   const includeClerkKitUI = includeClerkSDK && options.clerkSDK !== "core-only";
   const releaseBundle = options.conflictingBundle
@@ -259,6 +262,19 @@ const ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
 </dict></plist>
 `;
 
+// Xcode's Multiplatform App template before Xcode 27 shares one sandboxed file across platforms.
+const MULTIPLATFORM_ENTITLEMENTS = `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<key>com.apple.security.files.user-selected.read-only</key>
+	<true/>
+</dict>
+</plist>
+`;
+
 function macOSEntitlements(includeApple: boolean): string {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -281,9 +297,11 @@ export async function createIOSFixture(
   await Bun.write(join(root, "MyApp", "MyAppApp.swift"), swiftSource(options.complete === true));
   await Bun.write(
     join(root, "MyApp", "MyApp.entitlements"),
-    options.platform === "macos"
-      ? macOSEntitlements(options.macOSAppleEntitlement !== false)
-      : ENTITLEMENTS,
+    options.platform === "multiplatform"
+      ? MULTIPLATFORM_ENTITLEMENTS
+      : options.platform === "macos"
+        ? macOSEntitlements(options.macOSAppleEntitlement !== false)
+        : ENTITLEMENTS,
   );
   if (options.secondTarget) {
     const platform = options.secondTarget === "watchos" ? "watchos" : "ios";

@@ -8,7 +8,7 @@ import {
   type InstanceConfigSchema,
 } from "../../../lib/plapi.ts";
 import { withNativeSpinner as withSpinner } from "../native/progress.ts";
-import type { IOSNativePlatform } from "./types.ts";
+import { platformLabel, type IOSNativeTargetPlatform } from "./types.ts";
 
 const APPLE_CONNECTION_KEY = "connection_oauth_apple";
 const CONFIG_VERSION_PATTERN = /^v1_[0-9a-f]{8}$/;
@@ -31,7 +31,7 @@ export interface IOSNativeAppleBlocker {
 export interface IOSNativeAppleTarget {
   applicationId: string;
   instanceId: string;
-  platform?: IOSNativePlatform;
+  platform?: IOSNativeTargetPlatform;
   bundleIdentifier: string;
 }
 
@@ -83,10 +83,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function platformName(platform: IOSNativePlatform | undefined): "iOS" | "macOS" {
-  return platform === "macos" ? "macOS" : "iOS";
-}
-
 function parseConnection(
   container: unknown,
 ): { current: AppleConnectionState; bundleIdentifier?: string } | undefined {
@@ -110,7 +106,7 @@ function runtimeHealth(
   config: Record<string, unknown>,
 ): IOSNativeAppleHealthAudit["runtime"] {
   const bundleIdentifier = target.bundleIdentifier.trim();
-  const platform = platformName(target.platform);
+  const platform = platformLabel(target.platform);
   const parsed = parseConnection(config);
   const blockers: IOSNativeAppleBlocker[] = [];
   if (!bundleIdentifier)
