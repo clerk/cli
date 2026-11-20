@@ -44,6 +44,9 @@ export async function capabilityFixture(
         ],
       };
     },
+    async listApplications() {
+      return [];
+    },
     async getNativeSettings() {
       return { object: "native_settings", api_enabled: state.enabled };
     },

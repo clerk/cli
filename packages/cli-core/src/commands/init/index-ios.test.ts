@@ -53,6 +53,67 @@ describe("clerk init for native Apple projects", () => {
     expect(pullMod.pull).not.toHaveBeenCalled();
   });
 
+  test("passes the link's scope and a relink command that keeps the setup options", async () => {
+    const run = iosProject({ isAgent: true });
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      path: "/tmp/test",
+      profile: { appId: "app_test", appName: "Linked" },
+    } as never);
+    spyOn(gitMod, "getGitRepoRoot").mockResolvedValue("/repo");
+
+    await init({ json: true, appleSdk: "core" });
+
+    const [options] = run.mock.calls[0]! as [apple.AppleInitOptions, string];
+    expect(options.link).toEqual({
+      appName: "Linked",
+      scope: "/repo",
+      relinkEffect: "this switches the link for every project in /repo",
+    });
+    expect(options.retryCommand!("app_other")).toBe(
+      "clerk init --app app_other --json --relink --apple-sdk core",
+    );
+    // An unknown application stays a bare placeholder, not a quoted argument.
+    expect(options.retryCommand!()).toBe(
+      "clerk init --app <app_id> --json --relink --apple-sdk core",
+    );
+  });
+
+  test("the relink command keeps an explicit --framework, which chose the native app", async () => {
+    const run = iosProject({ isAgent: true });
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      path: "/tmp/test",
+      profile: { appId: "app_test" },
+    } as never);
+
+    await init({ json: true, framework: "ios" });
+
+    const [options] = run.mock.calls[0]! as [apple.AppleInitOptions, string];
+    expect(options.retryCommand!("app_other")).toBe(
+      "clerk init --app app_other --json --framework ios --relink",
+    );
+  });
+
+  test("outside a repository, relinking under a parent's link is described as a link of its own", async () => {
+    const run = iosProject();
+    spyOn(config, "resolveProfile").mockResolvedValue({
+      path: "/tmp",
+      profile: { appId: "app_test" },
+    } as never);
+    spyOn(gitMod, "getGitRepoRoot").mockResolvedValue(undefined);
+
+    await init({ xcodeProject: "ios/App.xcodeproj" });
+
+    const [options] = run.mock.calls[0]! as [apple.AppleInitOptions, string];
+    expect(options.link).toEqual({
+      scope: "/tmp",
+      relinkEffect: "this gives /tmp/test a link of its own, leaving /tmp's",
+    });
+    // A person's retry keeps the Xcode selection, without --json or --relink (`clerk link` asks).
+    expect(options.retryCommand!()).toBe(
+      "clerk init --app <app_id> --xcode-project ios/App.xcodeproj",
+    );
+  });
+
   test("links through the usual flow before native setup", async () => {
     const run = iosProject();
     spyOn(config, "resolveProfile")

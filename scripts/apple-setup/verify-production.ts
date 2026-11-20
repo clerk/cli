@@ -32,6 +32,9 @@ const LIVE = `pk_live_${btoa("clerk.example.com$")}`;
 if (DEV.includes("//") || LIVE.includes("//")) throw new Error("Choose fixture keys without //.");
 
 const api: NativeAPI = {
+  async listApplications() {
+    return [];
+  },
   async fetchApplication(id) {
     return {
       application_id: id,

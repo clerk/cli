@@ -29,6 +29,9 @@ for (const platform of ["ios", "macos"] as const)
         '<Workspace><FileRef location="group:App/MyApp.xcodeproj"/></Workspace>',
       );
       const api: NativeAPI = {
+        async listApplications() {
+          return [];
+        },
         async fetchApplication(id) {
           return {
             application_id: id,

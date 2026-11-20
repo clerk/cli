@@ -59,6 +59,9 @@ function registration(bundle: string, prefix = "ABCDE12345"): IOSApplication {
 }
 
 const api: NativeAPI = {
+  async listApplications() {
+    return [];
+  },
   async fetchApplication(id) {
     return {
       application_id: id,
