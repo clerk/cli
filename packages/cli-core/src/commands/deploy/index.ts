@@ -37,6 +37,7 @@ import {
   dnsHandoffNothingToAdd,
   dnsIntro,
   dnsRecords,
+  domainDnsTargets,
   domainsDashboardUrl,
   instanceDashboardUrl,
   nativeAppleGuidance,
@@ -417,7 +418,7 @@ async function startNewDeploy(ctx: DeployContext, options: DeployOptions): Promi
   log.blank();
 
   const productionDomain = production.active_domain.name;
-  const cnameTargets = production.active_domain.cname_targets ?? [];
+  const cnameTargets = domainDnsTargets(production.active_domain);
   let completedOAuthProviders: OAuthProvider[] = [];
   const operationState: DeployOperationState = {
     appId: ctx.appId,
