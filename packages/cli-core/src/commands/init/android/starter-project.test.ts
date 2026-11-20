@@ -95,7 +95,25 @@ describe("writeAndroidStarter", () => {
   });
 
   test("writes the executable wrapper and an initial commit", async () => {
-    const dir = await write();
+    // The initial commit is best effort and skipped without a commit identity, which CI
+    // runners don't configure, so give this one an identity through the environment.
+    const identity = {
+      GIT_AUTHOR_NAME: "t",
+      GIT_AUTHOR_EMAIL: "t@t",
+      GIT_COMMITTER_NAME: "t",
+      GIT_COMMITTER_EMAIL: "t@t",
+    };
+    const saved = Object.fromEntries(Object.keys(identity).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, identity);
+    let dir: string;
+    try {
+      dir = await write();
+    } finally {
+      for (const [key, value] of Object.entries(saved)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
     expect((await stat(join(dir, "gradlew"))).mode & 0o777).toBe(0o755);
     expect((await stat(join(dir, "gradlew.bat"))).mode & 0o777).toBe(0o644);
     // The initial commit records the executable bit, so a clone can run ./gradlew too.
