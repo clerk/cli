@@ -10,6 +10,7 @@
 
 import { throwUsageError } from "../../lib/errors.ts";
 import type { Example } from "../../lib/help.ts";
+import { log } from "../../lib/log.ts";
 
 export const FILTER_MATCH_CHOICES = ["all", "any"] as const;
 export type FilterMatch = (typeof FILTER_MATCH_CHOICES)[number];
@@ -183,6 +184,11 @@ export function resolveFilters(options: LogFilterOptions): LogFilters {
   if (fields) params.push(["payload_fields", fields.join(",")]);
   // "all" is the API's default, so it is left out.
   if (options.match === "any") params.push(["filter_match", "any"]);
-  if (options.endUserOnly) params.push(["end_user_facing_only", "true"]);
+  // The API still accepts end_user_facing_only but ignores it, so the flag
+  // filters nothing. It stays so existing scripts don't break.
+  if (options.endUserOnly) {
+    log.warn("`--end-user-only` is deprecated and has no effect.");
+    params.push(["end_user_facing_only", "true"]);
+  }
   return params;
 }

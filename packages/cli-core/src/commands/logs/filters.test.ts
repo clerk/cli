@@ -1,5 +1,6 @@
 import { test, expect, describe } from "bun:test";
 import { CliError, ERROR_CODE, EXIT_CODE } from "../../lib/errors.ts";
+import { captureLog } from "../../test/lib/stubs.ts";
 import { resolveFilters, type LogFilterOptions } from "./filters.ts";
 
 describe("resolveFilters", () => {
@@ -57,9 +58,21 @@ describe("resolveFilters", () => {
       ],
     ],
     ["--match all, the API default", { actor: "user_1", match: "all" }, [["actor", "user_1"]]],
-    ["--end-user-only", { endUserOnly: true }, [["end_user_facing_only", "true"]]],
   ])("maps %s", (_name, options, expected) => {
     expect(resolveFilters(options)).toEqual(expected);
+  });
+
+  test("--end-user-only still sends its parameter but warns that it does nothing", async () => {
+    const capture = captureLog();
+    const params = await capture.run(() => resolveFilters({ endUserOnly: true }));
+    expect(params).toEqual([["end_user_facing_only", "true"]]);
+    expect(capture.err).toContain("`--end-user-only` is deprecated and has no effect.");
+  });
+
+  test("no deprecation warning without --end-user-only", async () => {
+    const capture = captureLog();
+    await capture.run(() => resolveFilters({ actor: "user_1" }));
+    expect(capture.err).not.toContain("--end-user-only");
   });
 
   test.each<[string, LogFilterOptions, string]>([

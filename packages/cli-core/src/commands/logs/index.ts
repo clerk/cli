@@ -152,7 +152,7 @@ export function registerLogs(program: Program): void {
         FILTER_MATCH_CHOICES,
       ),
     )
-    .option("--end-user-only", "Only event types shown to end users")
+    .option("--end-user-only", "Deprecated: has no effect")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
@@ -245,7 +245,7 @@ export function registerLogs(program: Program): void {
         FILTER_MATCH_CHOICES,
       ),
     )
-    .option("--end-user-only", "Only event types shown to end users")
+    .option("--end-user-only", "Deprecated: has no effect")
     .option("--secret-key <key>", "Backend API secret key to use")
     .option("--app <id>", "Application ID to target (works from any directory)")
     .option("--instance <id>", "Instance to target (dev, prod, or a full instance ID)")
