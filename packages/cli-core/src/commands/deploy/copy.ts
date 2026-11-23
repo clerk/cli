@@ -1,5 +1,5 @@
 import { bold, cyan, dim, green, yellow } from "../../lib/color.ts";
-import type { CnameTarget } from "../../lib/plapi.ts";
+import type { ApplicationDomain, CnameTarget } from "../../lib/plapi.ts";
 import type { NativeAppleReadinessIssue } from "./providers.ts";
 import { buildDashboardUrl } from "../../lib/environment.ts";
 import { wrap } from "../../lib/wrap.ts";
@@ -141,7 +141,7 @@ export function dnsRecords(
     lines.push(
       "",
       `  ${label}${optional}`,
-      `    Type:  CNAME`,
+      `    Type:  ${dnsRecordType(target)}`,
       `    Host:  ${target.host}`,
       `    Value: ${target.value}`,
     );
@@ -155,6 +155,16 @@ export function dnsRecords(
       "",
       ...wrap(
         "The email records point at Clerk, so you don't need to create SPF or DKIM values yourself.",
+      ),
+    );
+  }
+  if (targets.some(isDmarcTarget)) {
+    // Two DMARC records at the same host invalidate each other, so adding
+    // Clerk's suggested policy next to an existing one would break both.
+    lines.push(
+      "",
+      ...wrap(
+        "If this domain already has a DMARC policy, keep it and skip the DMARC record: Clerk accepts any valid policy, and a second DMARC record would invalidate both.",
       ),
     );
   }
@@ -208,6 +218,9 @@ const CNAME_HOSTS = new Map<string, { label: string; mail: boolean }>([
   ["clkmail", { label: "Email", mail: true }],
   ["clk", { label: "Email (DKIM)", mail: true }],
   ["clk2", { label: "Email (DKIM)", mail: true }],
+  // DMARC is a TXT policy record, not a Clerk-hosted CNAME. It is verified by
+  // the DNS check rather than the email provider check, so it is not `mail`.
+  ["_dmarc", { label: "DMARC", mail: false }],
 ]);
 
 function cnameHostInfo(host: string): { label: string; mail: boolean } | undefined {
@@ -216,6 +229,27 @@ function cnameHostInfo(host: string): { label: string; mail: boolean } | undefin
 
 function isMailCnameTarget(target: CnameTarget): boolean {
   return cnameHostInfo(target.host)?.mail ?? false;
+}
+
+export function dnsRecordType(target: CnameTarget): string {
+  return target.record_type ?? "CNAME";
+}
+
+/**
+ * The DNS records to show for a domain. Prefers `dns_targets`, which includes
+ * the DMARC TXT record; `cname_targets` only lists CNAMEs, so a domain whose
+ * contract requires DMARC could never verify from that list alone. Falls back
+ * to `cname_targets` for responses that predate `dns_targets`.
+ */
+export function domainDnsTargets(
+  domain: Pick<ApplicationDomain, "cname_targets" | "dns_targets">,
+): CnameTarget[] {
+  if (domain.dns_targets && domain.dns_targets.length > 0) return domain.dns_targets;
+  return domain.cname_targets ?? [];
+}
+
+function isDmarcTarget(target: CnameTarget): boolean {
+  return dnsRecordType(target) === "TXT" && target.host.split(".", 1)[0] === "_dmarc";
 }
 
 /**
@@ -692,7 +726,31 @@ export function bindZoneFile(domain: string, targets: readonly CnameTarget[], no
     ``,
   ];
   for (const target of targets) {
-    lines.push(`${ensureTrailingDot(target.host)}\tIN\tCNAME\t${ensureTrailingDot(target.value)}`);
+    const host = ensureTrailingDot(target.host);
+    if (dnsRecordType(target) !== "TXT") {
+      lines.push(`${host}\tIN\tCNAME\t${ensureTrailingDot(target.value)}`);
+      continue;
+    }
+    const record = `${host}\tIN\tTXT\t"${target.value.replaceAll('"', '\\"')}"`;
+    if (!isDmarcTarget(target)) {
+      lines.push(record);
+      continue;
+    }
+    // Importing a second DMARC record next to an existing policy would
+    // invalidate both, so only emit it live when Clerk found none.
+    if (target.automation_disposition === "safe_to_create") {
+      lines.push(record);
+    } else if (target.automation_disposition === undefined) {
+      lines.push(
+        `; DMARC: skip this record if ${domain} already has a DMARC policy. Clerk accepts any valid policy.`,
+        record,
+      );
+    } else {
+      lines.push(
+        `; DMARC: ${domain} already has a DMARC record, so this one is commented out. Keep your existing policy.`,
+        `; ${record}`,
+      );
+    }
   }
   return `${lines.join("\n")}\n`;
 }

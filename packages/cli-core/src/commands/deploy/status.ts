@@ -30,6 +30,8 @@ import { sleep } from "../../lib/sleep.ts";
 import { withSpinner, type SpinnerControls } from "../../lib/spinner.ts";
 import {
   pendingCnameTargets,
+  dnsRecordType,
+  domainDnsTargets,
   deployComponentLabels,
   deployStatusRetryMessage,
   capitalizeFirst,
@@ -151,7 +153,7 @@ export interface DeployStatusReport {
     ssl: DomainComponentState;
     mail: DomainComponentState;
   } | null;
-  pendingDnsRecords: { type: "CNAME"; host: string; value: string; required: boolean }[];
+  pendingDnsRecords: { type: string; host: string; value: string; required: boolean }[];
   oauth: {
     complete: boolean;
     configured: string[];
@@ -553,7 +555,7 @@ export async function resolveLiveDeploySnapshot(
     oauthProviders,
     oauthProviderDescriptors,
     completedOAuthProviders,
-    cnameTargets: domain.cname_targets ?? [],
+    cnameTargets: domainDnsTargets(domain),
     componentStatus: deployComponentStatusFromDomainStatus(deployStatus),
     live,
     unsupportedOAuthProviderCount: unsupported.length,
@@ -695,7 +697,7 @@ function buildDeployStatusFacts(
 
   const pendingDnsRecords: DeployStatusReport["pendingDnsRecords"] = !domainComplete
     ? pendingCnameTargets(snapshot.cnameTargets ?? [], componentStatus).map((target) => ({
-        type: "CNAME" as const,
+        type: dnsRecordType(target),
         host: target.host,
         value: target.value,
         required: target.required,
