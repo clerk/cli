@@ -23,11 +23,17 @@ in both project formats. Builds are unsigned. It does not verify provisioning or
 actual sign-in. Build logs are written to `/tmp/clerk-setup-build-*.log`.
 
 The starter probe writes the `clerk init --starter` project for iOS and macOS,
-checks that setup recognizes it as an unchanged starter and registers it with
-the starter's team, then builds it unsigned.
+checks that setup recognizes it as an unchanged starter, registers it with the
+starter's team, and creates its entitlements in the app's folder, then builds it
+unsigned and checks the entitlements weren't copied into the app.
 
 Capability probes cover Debug/Release, existing/new entitlements, preservation,
-and no-op reruns. Both probes also exercise public `clerk init --dry-run --json`.
+and no-op reruns, for sources in groups and in a synchronized folder, where a new
+entitlements file must go. They then build the app: the iOS build is signed ad
+hoc for the simulator and must carry the edited entitlements, and neither build
+may copy a `.entitlements` file into the app. Their build logs are written to
+`/tmp/clerk-capability-build-*.log`. Both probes also exercise public
+`clerk init --dry-run --json`.
 The CLI selects a compatible installed Xcode for `.xcproj` when necessary.
 
 The ownership probe checks that Xcode's resolved settings, not file names, decide
