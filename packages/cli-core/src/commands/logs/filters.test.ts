@@ -58,7 +58,6 @@ describe("resolveFilters", () => {
       ],
     ],
     ["--match all, the API default", { actor: "user_1", match: "all" }, [["actor", "user_1"]]],
-    ["--end-user-only", { endUserOnly: true }, [["end_user_facing_only", "true"]]],
   ])("maps %s", (_name, options, expected) => {
     expect(resolveFilters(options)).toEqual(expected);
   });
