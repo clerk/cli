@@ -1,5 +1,19 @@
 # clerk
 
+## 4.4.0
+
+### Minor Changes
+
+- Native Android setup in `clerk init` and `clerk doctor`: on a linked application, init now configures a Kotlin Android module the way it configures an Xcode project. It adds `com.clerk:clerk-android-api` (or `clerk-android-ui` with `--android-sdk ui`) through the version catalog or a literal dependency, raises `minSdk` to 24, creates or extends the `Application` subclass with `Clerk.initialize`, registers it with the `INTERNET` permission in the manifest, writes the development publishable key to `src/main/res/values/clerk.xml`, then registers the `applicationId` and this machine's debug signing fingerprint with Clerk and enables Native API. `--android-module`, `--android-package`, `--android-fingerprint`, and `--android-sdk` select the module, package, extra certificates, and artifact; `--dry-run` and `--json` now cover Android, with an agent handoff of the remaining Kotlin tasks. `clerk doctor` checks an Android project's dependency, Kotlin version, `minSdk`, manifest, initialization, key, Native API, and registration, each with a remedy. ([#588](https://github.com/clerk/cli/pull/588)) by [@swolfand](https://github.com/swolfand)
+
+- Native Sign in with Google for Android: `clerk init --sign-in-with-google` (or a yes to the new prompt) enables Clerk's Google connection for authentication and sets a Google Web client as its custom credentials, which the Android SDK reads as the One Tap client ID. The client comes from `--google-client-id` and `--google-client-secret-file` (a path or `-` for standard input; never an argument) or from a prompt; a connection that already has a Web client is left alone. The write is a dry-run PATCH, then the same `If-Match` write, then a verifying read. The preview and the agent handoff carry the Google Cloud steps with the package name and the debug certificate's SHA-1, and `clerk doctor` checks the connection, its Web client ID, and notes the Android OAuth client it can't verify. ([#589](https://github.com/clerk/cli/pull/589)) by [@swolfand](https://github.com/swolfand)
+
+- `clerk init --starter` now creates an Android app: "Android (Jetpack Compose)" in the picker, or `--framework android` with `--name` and `--android-package`. It writes a project shaped like Android Studio's Empty Activity template (AGP 9.2.1, Kotlin 2.3.21, a Compose BOM, `minSdk` 24, an initial Git commit, and the embedded Gradle 9.4.1 wrapper), then runs the Android setup on it with the UI artifact by default, and with `--prebuilt-auth-ui` (or a yes to the prompt) replaces `MainActivity` with Clerk's prebuilt sign-in screen. `--json` reports `input-required`, `application-required`, and `setup-interrupted` with the new app's continuation, as for the Apple starters. ([#593](https://github.com/clerk/cli/pull/593)) by [@swolfand](https://github.com/swolfand)
+
+### Patch Changes
+
+- `clerk deploy` now lists the DMARC TXT record that new production domains require, prints each record's real type, and includes the record in the exported zone file. Previously it only listed CNAME records, so a domain without an existing DMARC policy could never finish DNS verification from the CLI. ([#642](https://github.com/clerk/cli/pull/642)) by [@jescalan](https://github.com/jescalan)
+
 ## 4.3.0
 
 ### Minor Changes

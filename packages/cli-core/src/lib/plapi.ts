@@ -172,10 +172,22 @@ export type DomainSummary = {
   name: string;
 };
 
+export type DnsRecordType = "CNAME" | "TXT";
+
 export type CnameTarget = {
   host: string;
   value: string;
   required: boolean;
+  /**
+   * Set on `dns_targets` entries. `cname_targets` entries are always CNAMEs,
+   * so a missing value means CNAME.
+   */
+  record_type?: DnsRecordType;
+  /**
+   * Only on the DMARC TXT, and only from endpoints that inspect live DNS:
+   * whether adding Clerk's suggested policy is safe.
+   */
+  automation_disposition?: "already_satisfied" | "safe_to_create" | "manual_resolution_required";
 };
 
 export type ApplicationDomain = {
@@ -189,6 +201,11 @@ export type ApplicationDomain = {
   proxy_url?: string;
   development_origin: string;
   cname_targets?: CnameTarget[];
+  /**
+   * Every DNS record the domain needs. Unlike `cname_targets`, this includes
+   * the DMARC TXT record new production domains require.
+   */
+  dns_targets?: CnameTarget[];
   created_at: string;
   updated_at: string;
 };
