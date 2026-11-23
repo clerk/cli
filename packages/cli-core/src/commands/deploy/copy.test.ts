@@ -13,6 +13,7 @@ import {
   dnsHandoffNothingToAdd,
   dnsRecords,
   domainAssociationSummary,
+  domainDnsTargets,
   domainsDashboardUrl,
   instanceDashboardUrl,
   nextStepsBody,
@@ -82,6 +83,48 @@ describe("bindZoneFile", () => {
     expect(output).toContain("clerk.example.com.\tIN\tCNAME\tfrontend-api.clerk.services.");
     expect(output).not.toContain("frontend-api.clerk.services..");
   });
+
+  const dmarc: CnameTarget = {
+    host: "_dmarc.example.com",
+    value: "v=DMARC1; p=none;",
+    required: true,
+    record_type: "TXT",
+  };
+
+  test("writes the DMARC record as a quoted TXT with a keep-your-policy comment", () => {
+    const output = bindZoneFile("example.com", [dmarc], fixedDate);
+
+    expect(output).toContain('_dmarc.example.com.\tIN\tTXT\t"v=DMARC1; p=none;"');
+    expect(output).toContain(
+      "; DMARC: skip this record if example.com already has a DMARC policy.",
+    );
+    expect(output).not.toContain("CNAME");
+  });
+
+  test("writes the DMARC record without a caveat when Clerk found no existing policy", () => {
+    const output = bindZoneFile(
+      "example.com",
+      [{ ...dmarc, automation_disposition: "safe_to_create" }],
+      fixedDate,
+    );
+
+    expect(output).toContain('_dmarc.example.com.\tIN\tTXT\t"v=DMARC1; p=none;"');
+    expect(output).not.toContain("; DMARC:");
+  });
+
+  test("comments out the DMARC record when the domain already has a DMARC record", () => {
+    for (const disposition of ["already_satisfied", "manual_resolution_required"] as const) {
+      const output = bindZoneFile(
+        "example.com",
+        [{ ...dmarc, automation_disposition: disposition }],
+        fixedDate,
+      );
+
+      expect(output).toContain('; _dmarc.example.com.\tIN\tTXT\t"v=DMARC1; p=none;"');
+      expect(output).toContain("Keep your existing policy.");
+      expect(output.split("\n").some((line) => line.startsWith("_dmarc."))).toBe(false);
+    }
+  });
 });
 
 describe("dnsRecords", () => {
@@ -98,6 +141,34 @@ describe("dnsRecords", () => {
     // generic "CNAME" default (the host's first label is "clk"/"clk2").
     expect(output.filter((line) => line.includes("Email (DKIM)"))).toHaveLength(2);
     expect(output.some((line) => line.trimStart().startsWith("CNAME"))).toBe(false);
+  });
+
+  test("prints the DMARC record as a TXT record with a keep-your-policy note", () => {
+    const output = dnsRecords([
+      { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+      {
+        host: "_dmarc.example.com",
+        value: "v=DMARC1; p=none;",
+        required: true,
+        record_type: "TXT",
+      },
+    ]);
+    const text = stripAnsi(output.join("\n"));
+
+    expect(text).toContain("  DMARC\n    Type:  TXT\n    Host:  _dmarc.example.com");
+    expect(text).toContain("    Value: v=DMARC1; p=none;");
+    expect(text).toContain("  Email\n    Type:  CNAME\n    Host:  clkmail.example.com");
+    expect(flat(output)).toContain(
+      "If this domain already has a DMARC policy, keep it and skip the DMARC record",
+    );
+  });
+
+  test("leaves out the DMARC note when no DMARC record is listed", () => {
+    const output = dnsRecords([
+      { host: "clkmail.example.com", value: "mail.clerk.services", required: true },
+    ]);
+
+    expect(flat(output)).not.toContain("DMARC");
   });
 });
 
@@ -459,6 +530,22 @@ describe("pendingCnameTargets", () => {
   test("returns nothing when only SSL is pending", () => {
     expect(pendingCnameTargets(targets, { dns: true, ssl: false, mail: true })).toEqual([]);
   });
+
+  test("keeps the DMARC record pending until the DNS check passes, even once email is verified", () => {
+    const dmarc: CnameTarget = {
+      host: "_dmarc.example.com",
+      value: "v=DMARC1; p=none;",
+      required: true,
+      record_type: "TXT",
+    };
+
+    expect(
+      pendingCnameTargets([...targets, dmarc], { dns: false, ssl: true, mail: true }).map(
+        (t) => t.host,
+      ),
+    ).toEqual(["clerk.example.com", "_dmarc.example.com"]);
+    expect(pendingCnameTargets([dmarc], { dns: true, ssl: true, mail: false })).toEqual([]);
+  });
 });
 
 describe("dashboard URLs", () => {
@@ -771,5 +858,30 @@ describe("every wizard screen fits inside the frame", () => {
       }
       expect(next).toBeGreaterThan(start + 1);
     }
+  });
+});
+
+describe("domainDnsTargets", () => {
+  const cname = { host: "clkmail.example.com", value: "mail.clerk.services", required: true };
+  const dmarc = {
+    host: "_dmarc.example.com",
+    value: "v=DMARC1; p=none;",
+    required: true,
+    record_type: "TXT" as const,
+  };
+
+  test("prefers dns_targets, which include the DMARC TXT that cname_targets omit", () => {
+    expect(
+      domainDnsTargets({
+        cname_targets: [cname],
+        dns_targets: [{ ...cname, record_type: "CNAME" }, dmarc],
+      }).map((target) => target.host),
+    ).toEqual(["clkmail.example.com", "_dmarc.example.com"]);
+  });
+
+  test("falls back to cname_targets when dns_targets is missing or empty", () => {
+    expect(domainDnsTargets({ cname_targets: [cname] })).toEqual([cname]);
+    expect(domainDnsTargets({ cname_targets: [cname], dns_targets: [] })).toEqual([cname]);
+    expect(domainDnsTargets({})).toEqual([]);
   });
 });
