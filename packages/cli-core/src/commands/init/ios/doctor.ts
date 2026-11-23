@@ -1,19 +1,23 @@
 import { auditIOSNativeAppleHealth } from "./native-apple.ts";
 import {
+  entitlementsPath,
   hasCapabilities,
   personalTeamConflictNote,
   personalTeamConflicts,
   planAllCapabilities,
+  sharedMacDomainsNote,
   readEntitlements,
 } from "./capabilities.ts";
 import { auditProduction } from "./production.ts";
 import { errorMessage } from "../../../lib/errors.ts";
 import { sdkLinked } from "./sdk.ts";
-import { discoverRemote, describeIdentity } from "./identity.ts";
+import { discoverRemote, describeIdentity, platformBundleConflict } from "./identity.ts";
 import { auditRemote, nativeAPI } from "./remote.ts";
 import { resolvedSDKHealth, type Check } from "./sdk-health.ts";
 import { signedByPersonalTeam } from "./teams.ts";
 import { describePreview, prepareSetup, type SetupOptions, type Dependencies } from "./workflow.ts";
+import { contextLabel, nativePlatform, unsupportedPlatformsLabel } from "./xcode.ts";
+import { platformLabel } from "./types.ts";
 
 export async function doctor(options: SetupOptions, dependencies: Dependencies = {}) {
   // Diagnosis is GET-only and does not require opting into provider activation.
@@ -35,11 +39,18 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
   if (discovery?.context)
     preview.remote = await auditRemote(discovery.context, dependencies.api ?? nativeAPI);
   const sdk = preview.sdk;
+  const { inspection } = preview;
+  const multiplatform = nativePlatform(inspection) === "multiplatform";
+  const label = (context: (typeof inspection.contexts)[number]) =>
+    contextLabel(inspection, context);
   const checks: Check[] = [
     {
       name: "Xcode configuration coverage",
-      status: preview.inspection.uncheckedConfigurations.length ? "warn" : "pass",
-      message: `Inspected ${preview.inspection.contexts.map((context) => context.selection.configuration).join(", ")}; unchecked configurations: ${preview.inspection.uncheckedConfigurations.join(", ") || "none"}. Other platforms and app builds remain unverified.`,
+      status:
+        inspection.uncheckedConfigurations.length || inspection.unsupportedPlatforms.length
+          ? "warn"
+          : "pass",
+      message: `Inspected ${[...new Set(inspection.contexts.map((context) => context.selection.configuration))].join(", ")}${multiplatform ? ` for ${platformLabel(nativePlatform(inspection))}` : ""}; unchecked configurations: ${inspection.uncheckedConfigurations.join(", ") || "none"}.${inspection.unsupportedPlatforms.length ? ` Clerk doesn't set up this target's other platforms: ${unsupportedPlatformsLabel(inspection)}.` : ""} Other platforms and app builds remain unverified.`,
     },
     {
       name: "SDK project linkage",
@@ -58,6 +69,10 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
         : "No confirmed native identity was supplied.",
     },
   ];
+  // With a Clerk application, the native identity check reports this instead.
+  const bundleConflict = discovery ? undefined : await platformBundleConflict(inspection);
+  if (bundleConflict)
+    checks.push({ name: "Bundle ID across platforms", status: "warn", message: bundleConflict });
   if (discovery)
     checks.push(
       {
@@ -74,44 +89,104 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
       },
     );
   // The same rule as setup: a Personal Team gets no Sign in with Apple, and no Associated Domain on macOS.
-  const personalTeam = signedByPersonalTeam(preview.inspection, dependencies.xcodeTeams);
-  const mac = preview.inspection.input.selection.sdk === "macosx";
+  const personalTeam = signedByPersonalTeam(inspection, dependencies.xcodeTeams);
+  const mac = inspection.contexts.some((context) => context.selection.sdk === "macosx");
   if (personalTeam)
     checks.push({
       name: "Personal Team",
       status: "warn",
       // Doctor changes nothing, so it says what's unavailable rather than what setup left out.
-      message: mac
-        ? "This app is signed by a Personal Team, which can't use Sign in with Apple, or Associated Domains for passkeys and password AutoFill on a Mac."
-        : "This app is signed by a Personal Team, which can't use Sign in with Apple.",
+      message: multiplatform
+        ? "This app is signed by a Personal Team, which can't use Sign in with Apple, or Associated Domains for passkeys and password AutoFill on a Mac, so those stay off in the macOS app. The iOS app keeps its Associated Domains for the iOS Simulator."
+        : mac
+          ? "This app is signed by a Personal Team, which can't use Sign in with Apple, or Associated Domains for passkeys and password AutoFill on a Mac."
+          : "This app is signed by a Personal Team, which can't use Sign in with Apple.",
     });
-  // Setup never removes entitlements, so one the team can't sign can still be there.
-  if (personalTeam)
-    for (const context of preview.inspection.contexts) {
+  const capabilities = await planAllCapabilities(
+    inspection,
+    inspection.document.source,
+    discovery?.instance.frontendHost,
+    false,
+    (selection) => !(personalTeam && selection.sdk === "macosx"),
+  );
+  // Setup never removes entitlements, so one the team can't sign can still be there. A file a
+  // Multiplatform target's iOS and macOS builds share is the exception: setup gives macOS a copy.
+  // One check per file in each configuration, naming what any platform that signs with it can't sign.
+  if (personalTeam) {
+    const files = new Map<
+      string,
+      {
+        file: string;
+        configuration: string;
+        contexts: typeof inspection.contexts;
+        conflicts: Set<string>;
+        sharedMacDomains: boolean;
+      }
+    >();
+    for (const context of inspection.contexts) {
+      const file = context.settings.CODE_SIGN_ENTITLEMENTS?.trim();
+      if (!file) continue;
+      const { configuration, sdk } = context.selection;
       let conflicts: string[];
       try {
         const source = await readEntitlements(context);
-        conflicts = source === undefined ? [] : personalTeamConflicts(source, mac);
+        conflicts = source === undefined ? [] : personalTeamConflicts(source, sdk === "macosx");
       } catch {
         continue;
       }
-      if (conflicts.length)
-        checks.push({
-          name: `Personal Team entitlements: ${context.selection.configuration}`,
-          status: "warn",
-          message: personalTeamConflictNote(
-            context.settings.CODE_SIGN_ENTITLEMENTS!.trim(),
-            conflicts,
+      const key = JSON.stringify([configuration, entitlementsPath(context) ?? file]);
+      const group = files.get(key) ?? {
+        file,
+        configuration,
+        contexts: [],
+        conflicts: new Set(),
+        sharedMacDomains: false,
+      };
+      files.set(key, group);
+      group.contexts.push(context);
+      const sharedWithIOS =
+        sdk === "macosx" &&
+        inspection.contexts.some(
+          (other) =>
+            other.selection.sdk !== "macosx" &&
+            entitlementsPath(other) === entitlementsPath(context),
+        );
+      if (sharedWithIOS && conflicts.includes("Associated Domains")) {
+        conflicts = conflicts.filter((conflict) => conflict !== "Associated Domains");
+        group.sharedMacDomains = true;
+      }
+      for (const conflict of conflicts) group.conflicts.add(conflict);
+    }
+    for (const { file, configuration, contexts, conflicts, sharedMacDomains } of files.values()) {
+      const notes = [];
+      if (conflicts.size)
+        notes.push(
+          personalTeamConflictNote(
+            file,
+            ["Sign in with Apple", "Associated Domains"].filter((name) => conflicts.has(name)),
+            multiplatform,
           ),
+        );
+      if (sharedMacDomains)
+        notes.push(
+          sharedMacDomainsNote(
+            file,
+            capabilities.contexts.some(
+              (planned) =>
+                planned.macCopyOf === entitlementsPath(contexts[0]!) &&
+                planned.configuration === configuration,
+            ),
+          ),
+        );
+      const platforms = new Set(contexts.map((context) => platformLabel(context.selection.sdk)));
+      if (notes.length)
+        checks.push({
+          name: `Personal Team entitlements: ${contexts.length === 1 ? label(contexts[0]!) : `${configuration} (${[...platforms].join(" and ")})`}`,
+          status: "warn",
+          message: notes.join(" "),
         });
     }
-  const capabilities = await planAllCapabilities(
-    preview.inspection,
-    preview.inspection.document.source,
-    discovery?.instance.frontendHost,
-    false,
-    !(personalTeam && mac),
-  );
+  }
   for (const context of capabilities.contexts)
     checks.push({
       name: `Capabilities: ${context.scope}`,
@@ -128,7 +203,7 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
         {
           ...discovery.instance,
           bundleIdentifier: discovery.bundleIdentifier,
-          platform: preview.inspection.input.selection.sdk === "macosx" ? "macos" : "ios",
+          platform: nativePlatform(inspection),
         },
         dependencies.appleAPI,
       );
@@ -150,21 +225,21 @@ export async function doctor(options: SetupOptions, dependencies: Dependencies =
                 "Native Apple sign-in still needs configuration in Clerk.",
       });
       if (required)
-        for (const context of preview.inspection.contexts) {
+        for (const context of inspection.contexts) {
           let status: Check["status"] = "fail";
-          let message = `Apple sign-in is requested or enabled in Clerk, but ${context.selection.configuration} has no Apple entitlement.`;
+          let message = `Apple sign-in is requested or enabled in Clerk, but ${label(context)} has no Apple entitlement.`;
           try {
             const source = await readEntitlements(context);
             if (source !== undefined && hasCapabilities(source, undefined, true)) {
               status = "pass";
-              message = `${context.selection.configuration} has the Apple entitlement. Provisioning and sign-in remain unverified.`;
+              message = `${label(context)} has the Apple entitlement. Provisioning and sign-in remain unverified.`;
             }
           } catch {
             status = "warn";
-            message = `The ${context.selection.configuration} Apple entitlement file could not be verified; inspect it in Xcode.`;
+            message = `The ${label(context)} Apple entitlement file could not be verified; inspect it in Xcode.`;
           }
           checks.push({
-            name: `Apple entitlement: ${context.selection.configuration}`,
+            name: `Apple entitlement: ${label(context)}`,
             status,
             message,
           });

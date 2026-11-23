@@ -12,7 +12,7 @@ import type { CommandRunner } from "./xcode.ts";
 const key = `pk_test_${btoa("fixture.clerk.accounts.dev$")}`;
 export async function capabilityFixture(
   root: string,
-  platform: "ios" | "macos" = "ios",
+  platform: "ios" | "macos" | "multiplatform" = "ios",
   secondTarget = false,
 ) {
   await createIOSFixture(root, {
@@ -116,13 +116,34 @@ export async function capabilityFixture(
     const objects = parse(await readFile(path, "utf8")).objects as Record<string, any>;
     const settings =
       objects[configuration === "Release" ? ids.targetRelease : ids.targetDebug].buildSettings;
-    const sdk = platform === "macos" ? "macosx" : "iphoneos";
+    // A Multiplatform target resolves a platform only when -sdk chooses one.
+    const requested = command.includes("-sdk") ? command[command.indexOf("-sdk") + 1] : undefined;
+    const sdk =
+      platform === "multiplatform" ? requested : platform === "macos" ? "macosx" : "iphoneos";
+    const mac = sdk === "macosx";
+    if (!sdk)
+      return JSON.stringify([
+        {
+          target: "MyApp",
+          buildSettings: {
+            TARGET_NAME: "MyApp",
+            CONFIGURATION: configuration,
+            SDKROOT: "auto",
+            SUPPORTED_PLATFORMS: "iphoneos iphonesimulator macosx xros xrsimulator",
+            PROJECT_FILE_PATH: join(root, "MyApp.xcodeproj"),
+            PRODUCT_TYPE: "com.apple.product-type.application",
+            CODE_SIGN_ENTITLEMENTS: settings.CODE_SIGN_ENTITLEMENTS ?? "",
+          },
+        },
+      ]);
+    const bundle = (settings[`PRODUCT_BUNDLE_IDENTIFIER[sdk=${mac ? "macosx*" : "iphone*"}]`] ??
+      "com.example.MyApp") as string;
     return JSON.stringify([
       {
         target: "MyApp",
         buildSettings: {
           TARGET_NAME: "MyApp",
-          PRODUCT_BUNDLE_IDENTIFIER: "com.example.MyApp",
+          PRODUCT_BUNDLE_IDENTIFIER: bundle,
           GENERATE_INFOPLIST_FILE: "YES",
           SRCROOT: root,
           DEVELOPER_DIR: "/Applications/Fixture Xcode.app/Contents/Developer",
@@ -132,15 +153,15 @@ export async function capabilityFixture(
           PRODUCT_TYPE: "com.apple.product-type.application",
           IPHONEOS_DEPLOYMENT_TARGET: "17.0",
           MACOSX_DEPLOYMENT_TARGET: "14.0",
-          ENABLE_APP_SANDBOX: platform === "macos" ? "YES" : "NO",
+          ENABLE_APP_SANDBOX: platform === "ios" ? "NO" : "YES",
+          ...(mac ? { IS_MACCATALYST: "NO" } : {}),
           CODE_SIGN_ENTITLEMENTS:
-            settings[
-              `CODE_SIGN_ENTITLEMENTS[sdk=${platform === "macos" ? "macosx*" : "iphone*"}]`
-            ] ??
+            settings[`CODE_SIGN_ENTITLEMENTS[sdk=${mac ? "macosx*" : "iphone*"}]`] ??
             settings.CODE_SIGN_ENTITLEMENTS ??
             "",
-          ENABLE_OUTGOING_NETWORK_CONNECTIONS:
-            settings["ENABLE_OUTGOING_NETWORK_CONNECTIONS[sdk=macosx*]"] ?? "NO",
+          ENABLE_OUTGOING_NETWORK_CONNECTIONS: mac
+            ? (settings["ENABLE_OUTGOING_NETWORK_CONNECTIONS[sdk=macosx*]"] ?? "NO")
+            : "NO",
         },
       },
     ]);

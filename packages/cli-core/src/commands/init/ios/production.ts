@@ -7,7 +7,7 @@ import { discoverRemote } from "./identity.ts";
 import { configuredPublishableKey, scanSwiftSources, type SwiftScan } from "./publishable-key.ts";
 import { remoteActions, type NativeAPI } from "./remote.ts";
 import type { Check } from "./sdk-health.ts";
-import type { Inspection } from "./xcode.ts";
+import { contextLabel, type Inspection } from "./xcode.ts";
 
 /** Entitlements as Xcode signs them: `$(SETTING)` and `${SETTING}` take the configuration's values. */
 function expandSettings(source: string, settings: Record<string, string>): string {
@@ -96,7 +96,9 @@ export async function auditProduction(
   }
   const dashboard = (path: string) =>
     buildDashboardUrl(applicationId, production.instance_id, path);
-  const configurations = contexts.map((context) => context.selection.configuration).join(", ");
+  const configurations = [
+    ...new Set(contexts.map((context) => context.selection.configuration)),
+  ].join(", ");
   const checks: Check[] = [];
 
   const registration = "Production native registration";
@@ -157,7 +159,7 @@ export async function auditProduction(
 
   const domain = `webcredentials:${host}`;
   for (const context of contexts) {
-    const configuration = context.selection.configuration;
+    const configuration = contextLabel(inspection, context);
     let check: Pick<Check, "status" | "message">;
     try {
       const source = await readEntitlements(context);
@@ -188,7 +190,7 @@ export async function auditProduction(
 
   let scan: SwiftScan | undefined;
   for (const context of contexts) {
-    const configuration = context.selection.configuration;
+    const configuration = contextLabel(inspection, context);
     scan ??= await scanSwiftSources(inspection);
     const configured = await configuredPublishableKey(context, scan);
     const name = `Production publishable key: ${configuration}`;

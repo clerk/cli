@@ -226,6 +226,20 @@ describe("native Sign in with Apple", () => {
     expect(runtime.blockers.map((item) => item.code)).toEqual(blocker ? [blocker] : []);
   });
 
+  test.each([
+    { platform: undefined, label: "iOS" },
+    { platform: "macos", label: "macOS" },
+    { platform: "multiplatform", label: "iOS and macOS" },
+  ] as const)("a blocker names the $label target", async ({ platform, label }) => {
+    const { api } = statefulAPI({
+      initial: connection(true, true, { bundle_id: "com.example.Other" }),
+    });
+    const { runtime } = await auditIOSNativeAppleHealth({ ...target, platform }, api);
+    expect(runtime.blockers.map((item) => item.message)).toEqual([
+      `The existing Apple connection references a different ${label} Bundle ID. clerk init will not replace it.`,
+    ]);
+  });
+
   test("a needed repair requires the patch schema and a config version", async () => {
     expect(
       (await auditIOSNativeAppleConnection(target, statefulAPI({ schema: {} }).api)).blockers,

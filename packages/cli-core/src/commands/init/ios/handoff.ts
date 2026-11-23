@@ -27,7 +27,13 @@ export function integrationHandoff(
     changedFiles: [],
     configurations: [selection.configuration],
   },
+  /** What the target builds for; a Multiplatform target lists iOS and macOS. */
+  target: { sdks: Selection["sdk"][]; unsupportedPlatforms: string[] } = {
+    sdks: [selection.sdk],
+    unsupportedPlatforms: [],
+  },
 ) {
+  const multiplatform = target.sdks.length > 1;
   const done = (id: string) => progress.completed.some((item) => item.id === id);
   return {
     schemaVersion: 2,
@@ -40,7 +46,7 @@ export function integrationHandoff(
         : "requires-cli-setup-and-source-integration",
     appIntegrationComplete: false,
     summary:
-      "Read the linked documentation before completing pending Swift tasks, using APIs compatible with the installed SDK. Follow only sections relevant to the remaining work. Preserve completed setup and existing app behavior. Then run doctor and make one Debug build. Runtime verification requires an explicit user request.",
+      "Read the linked documentation before completing pending Swift tasks, using APIs compatible with the installed SDK. Follow only sections relevant to the remaining work. Preserve completed setup and existing app behavior. Then run doctor and make one Debug build (one per platform in context.platforms for a Multiplatform target). Runtime verification requires an explicit user request.",
     ...progress,
     context: {
       project: selection.project,
@@ -48,6 +54,10 @@ export function integrationHandoff(
       targetName: selection.targetName,
       configuration: selection.configuration,
       platform: selection.sdk,
+      ...(multiplatform ? { platforms: target.sdks } : {}),
+      ...(target.unsupportedPlatforms.length
+        ? { unsupportedPlatforms: target.unsupportedPlatforms }
+        : {}),
     },
     publishableKey: publishableKey ?? "<development-publishable-key>",
     tasks: [
@@ -96,8 +106,7 @@ export function integrationHandoff(
       {
         id: "build-target",
         status: "pending",
-        instructions:
-          "Use xcode.developerDir as DEVELOPER_DIR for one unsigned Debug build of the selected target. For iOS, use one available simulator destination with ONLY_ACTIVE_ARCH=YES; for macOS, use the current Mac. Pass CODE_SIGNING_ALLOWED=NO as a command-line override, without editing project settings. Fix integration errors you introduced and retry; report environment or unrelated build blockers and stop. If Debug is unavailable, report that. Build other configurations only when explicitly requested.",
+        instructions: `Use xcode.developerDir as DEVELOPER_DIR for one unsigned Debug build of the selected target. For iOS, use one available simulator destination with ONLY_ACTIVE_ARCH=YES; for macOS, use the current Mac. Pass CODE_SIGNING_ALLOWED=NO as a command-line override, without editing project settings.${multiplatform ? " This target builds for every platform in context.platforms: make one Debug build for each, and leave any context.unsupportedPlatforms unbuilt." : ""} Fix integration errors you introduced and retry; report environment or unrelated build blockers and stop. If Debug is unavailable, report that. Build other configurations only when explicitly requested.`,
       },
       {
         id: "runtime-verification",
@@ -107,7 +116,6 @@ export function integrationHandoff(
           "Leave runtime verification untested unless the user explicitly requests it. Do not launch the app, automate sign-in/sign-out/relaunch, create test users, or troubleshoot simulator input as part of ordinary setup. Report signing and authentication as untested; this does not block completing the setup task.",
       },
     ],
-    completion:
-      "Stop after setup, pending source edits, doctor, and one Debug build (or a reported build blocker). Report completed setup, source edits, the build result, and unresolved setup requirements. When setup and source integration are complete, 'Setup complete; sign-in not tested' is a valid outcome. appIntegrationComplete remains false because the CLI does not verify application behavior; it does not require runtime testing. Release builds and runtime tests are separate, explicitly requested work.",
+    completion: `Stop after setup, pending source edits, doctor, and ${multiplatform ? "one Debug build for each platform in context.platforms" : "one Debug build of the selected target"} (or a reported build blocker). Report completed setup, source edits, the build result, and unresolved setup requirements. When setup and source integration are complete, 'Setup complete; sign-in not tested' is a valid outcome. appIntegrationComplete remains false because the CLI does not verify application behavior; it does not require runtime testing. Release builds and runtime tests are separate, explicitly requested work.`,
   };
 }
