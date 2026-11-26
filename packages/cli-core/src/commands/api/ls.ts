@@ -64,6 +64,10 @@ function printRequestBody(ep: EndpointInfo): void {
   const details = [body.contentType, body.type === "object" ? "" : body.type];
   if (body.required) details.push("required");
   log.data(`${indent}Body (${details.filter(Boolean).join(", ")}):`);
+  if (body.fields.length === 0) {
+    log.data(`${indent}  (no fields)`);
+    return;
+  }
 
   const nameWidth = Math.max(...body.fields.map((f) => f.name.length)) + 2;
   const typeWidth = Math.max(...body.fields.map((f) => f.type.length)) + 2;

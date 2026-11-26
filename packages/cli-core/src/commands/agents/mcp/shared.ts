@@ -8,10 +8,9 @@
  * workers/remote-mcp-server/src/tools/mcp-server.ts. Change them in step.
  */
 
-import { resolveAppContext, resolveFetchedApplicationInstance } from "../../../lib/config.ts";
+import { fetchApplicationInstance, resolveAppContext } from "../../../lib/config.ts";
 import { CliError, ERROR_CODE, PlapiError, withApiContext } from "../../../lib/errors.ts";
 import {
-  fetchApplication,
   fetchOAuthApplicationSettings,
   listOAuthResources,
   type OAuthApplicationSettings,
@@ -39,7 +38,6 @@ export interface McpTargetOptions {
 export interface McpInstance {
   applicationId: string;
   instanceId: string;
-  environmentType: string;
   /**
    * The instance's Frontend API origin, the issuer of its tokens.
    */
@@ -73,29 +71,17 @@ const BLOCKERS = {
 export async function resolveMcpInstance(options: McpTargetOptions): Promise<McpInstance> {
   const linked = options.app ? undefined : await resolveAppContext(options);
   const applicationId = options.app ?? linked!.appId;
-  const app = await withApiContext(
-    fetchApplication(applicationId, { includeSecretKeys: false }),
+  const { app, instance, instanceId, instanceLabel } = await withApiContext(
+    fetchApplicationInstance(applicationId, linked?.instanceId ?? options.instance, {
+      includeSecretKeys: false,
+    }),
     "Failed to fetch application",
   );
-  const resolved = resolveFetchedApplicationInstance(
-    applicationId,
-    app,
-    linked?.instanceId ?? options.instance,
-  );
-  if (!resolved.found) {
-    throw new CliError(
-      `Instance ${resolved.instanceId} not found in application ${applicationId}.`,
-      {
-        code: ERROR_CODE.INSTANCE_NOT_FOUND,
-      },
-    );
-  }
   return {
     applicationId,
-    instanceId: resolved.instanceId,
-    environmentType: resolved.instance.environment_type,
-    issuer: issuerFromPublishableKey(resolved.instance.publishable_key),
-    label: `${app.name || applicationId} (${resolved.instanceLabel})`,
+    instanceId,
+    issuer: issuerFromPublishableKey(instance.publishable_key),
+    label: `${app.name || applicationId} (${instanceLabel})`,
   };
 }
 
@@ -160,20 +146,20 @@ export function isLegacyMcpServer(resource: OAuthResource): boolean {
  * The saved settings that stop MCP clients from working with the instance.
  */
 export function mcpBlockers(settings: OAuthApplicationSettings): McpBlocker[] {
-  const found: McpBlocker[] = [];
+  const blockers: McpBlocker[] = [];
   if (!settings.aud_claim_enabled) {
-    found.push({ setting: "aud_claim_enabled", reason: BLOCKERS.aud_claim_enabled });
+    blockers.push({ setting: "aud_claim_enabled", reason: BLOCKERS.aud_claim_enabled });
   }
   if (
     !settings.client_id_metadata_documents_advertised &&
     !settings.dynamic_oauth_client_registration
   ) {
-    found.push({
+    blockers.push({
       setting: "client_id_metadata_documents_advertised",
       reason: BLOCKERS.client_id_metadata_documents_advertised,
     });
   }
-  return found;
+  return blockers;
 }
 
 /**

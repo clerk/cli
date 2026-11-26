@@ -61,10 +61,13 @@ function firstServerPatch(settings: OAuthApplicationSettings): FirstServerSettin
   };
 }
 
-function blockerSteps(found: McpBlocker[]): string[] {
-  if (!found.length) return [];
+const SETUP_STEP =
+  "Implement the setup_prompt in your MCP server and deploy it at the resource URL.";
+
+function blockerSteps(blockers: McpBlocker[]): string[] {
+  if (!blockers.length) return [];
   return [
-    `Existing OAuth settings block MCP clients: ${found.map(({ setting }) => setting).join(", ")}. \`clerk agents mcp configure\` only turns settings on for the first MCP server; change these on the OAuth applications settings page of the Clerk Dashboard.`,
+    `Existing OAuth settings block MCP clients: ${blockers.map(({ setting }) => setting).join(", ")}. \`clerk agents mcp configure\` only turns settings on for the first MCP server; change these on the OAuth applications settings page of the Clerk Dashboard.`,
   ];
 }
 
@@ -86,8 +89,8 @@ async function configureMcpServer(
   const servers = resources.filter((r) => r.mcp_server);
 
   const existing = servers.find((s) => sameResource(s.uri, requested));
-  const taken = existing ? undefined : resources.find((r) => sameResource(r.uri, requested));
-  const legacy = taken && isLegacyMcpServer(taken) ? taken : undefined;
+  const conflicting = existing ? undefined : resources.find((r) => sameResource(r.uri, requested));
+  const legacy = conflicting && isLegacyMcpServer(conflicting) ? conflicting : undefined;
 
   const report = (
     resource: ReturnType<typeof serverSummary>,
@@ -95,7 +98,7 @@ async function configureMcpServer(
     enabled: string[],
     saved: OAuthApplicationSettings,
   ): ConfigureResult => {
-    const found = mcpBlockers(saved);
+    const blockers = mcpBlockers(saved);
     return {
       application_id: target.applicationId,
       instance_id: target.instanceId,
@@ -107,22 +110,19 @@ async function configureMcpServer(
         status,
         enabled_settings: enabled,
         oauth_settings: oauthFlags(saved),
-        blockers: found,
+        blockers,
       },
       setup_prompt: setupPrompt(target, resource.uri),
-      next_steps: [
-        "Implement the setup_prompt in your MCP server and deploy it at the resource URL.",
-        ...blockerSteps(found),
-      ],
+      next_steps: [SETUP_STEP, ...blockerSteps(blockers)],
     };
   };
 
   if (existing) return report(serverSummary(existing), "unchanged", [], settings);
 
   // Refuse unrelated resources before changing first-server settings.
-  if (taken && !legacy) {
+  if (conflicting && !legacy) {
     throw new CliError(
-      `${requested} is already registered on this instance as an OAuth resource (${taken.id}) that is not marked as an MCP server.`,
+      `${requested} is already registered on this instance as an OAuth resource (${conflicting.id}) that is not marked as an MCP server.`,
       { code: ERROR_CODE.OAUTH_RESOURCE_CONFLICT },
     );
   }
@@ -183,7 +183,8 @@ function printHuman(result: ConfigureResult, target: McpInstance): void {
   log.blank();
   log.info("Setup prompt for your MCP server:");
   log.info(result.setup_prompt);
-  for (const step of result.next_steps.slice(1)) {
+  // The setup step is the prompt printed above; only the blocker steps follow it.
+  for (const step of blockerSteps(configuration.blockers)) {
     log.blank();
     log.warn(step);
   }

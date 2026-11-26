@@ -106,8 +106,8 @@ function registrationCheck(
   );
 }
 
-function settingChecks(found: McpBlocker[]): McpCheck[] {
-  const blocked = (setting: McpBlocker["setting"]) => found.find((b) => b.setting === setting);
+function settingChecks(blockers: McpBlocker[]): McpCheck[] {
+  const blocked = (setting: McpBlocker["setting"]) => blockers.find((b) => b.setting === setting);
   const audience = blocked("aud_claim_enabled");
   const registration = blocked("client_id_metadata_documents_advertised");
   return [
@@ -140,7 +140,7 @@ async function metadataCheck(
   let response: Response;
   try {
     response = await loggedFetch(url, {
-      tag: "mcp-metadata",
+      tag: "mcp",
       headers: { Accept: "application/json" },
       signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
     });
@@ -172,26 +172,20 @@ async function metadataCheck(
   return pass(name, `${url} names ${uri} and lists ${issuer ?? "its authorization servers"}`);
 }
 
+const SETTINGS_STEP =
+  "Turn on the failing OAuth settings on the OAuth applications settings page of the Clerk Dashboard.";
+
+const NEXT_STEPS: Record<CheckName, string> = {
+  resource_registered: "Register the MCP server with `clerk agents mcp configure <url>`.",
+  aud_claim_enabled: SETTINGS_STEP,
+  client_id_metadata_documents_advertised: SETTINGS_STEP,
+  protected_resource_metadata:
+    "Implement the setup_prompt in your MCP server, deploy it, then run `clerk agents mcp check` again.",
+};
+
 function nextSteps(checks: McpCheck[]): string[] {
-  const failed = checks.filter((c) => c.status === "fail").map((c) => c.name);
-  const steps: string[] = [];
-  if (failed.includes("resource_registered")) {
-    steps.push("Register the MCP server with `clerk agents mcp configure <url>`.");
-  }
-  if (
-    failed.includes("aud_claim_enabled") ||
-    failed.includes("client_id_metadata_documents_advertised")
-  ) {
-    steps.push(
-      "Turn on the failing OAuth settings on the OAuth applications settings page of the Clerk Dashboard.",
-    );
-  }
-  if (failed.includes("protected_resource_metadata")) {
-    steps.push(
-      "Implement the setup_prompt in your MCP server, deploy it, then run `clerk agents mcp check` again.",
-    );
-  }
-  return steps;
+  const steps = checks.filter((c) => c.status === "fail").map((c) => NEXT_STEPS[c.name]);
+  return [...new Set(steps)];
 }
 
 /**
@@ -212,7 +206,7 @@ async function checkMcpServer(
   const resources = await readOAuthResources(target);
   const servers = resources.filter((r) => r.mcp_server);
   const legacyServers = resources.filter(isLegacyMcpServer);
-  const found = mcpBlockers(settings);
+  const blockers = mcpBlockers(settings);
 
   const wanted = targetUrl(requested, servers, legacyServers);
   const server = wanted ? servers.find((s) => sameResource(s.uri, wanted)) : undefined;
@@ -223,7 +217,7 @@ async function checkMcpServer(
 
   const checks = [
     registrationCheck(uri, server, legacy),
-    ...settingChecks(found),
+    ...settingChecks(blockers),
     await metadataCheck(uri, target.issuer),
   ];
 
@@ -242,7 +236,7 @@ async function checkMcpServer(
       mcp_servers: servers.map(serverSummary),
       legacy_mcp_servers: legacyServers.map(serverSummary),
       oauth_settings: oauthFlags(settings),
-      blockers: found,
+      blockers,
     },
     checks,
     passed: checks.every((c) => c.status === "pass"),

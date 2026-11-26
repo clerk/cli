@@ -10,7 +10,7 @@ import { decodePublishableKey } from "../../../lib/fapi.ts";
 /**
  * Longest resource URL the registry accepts, in bytes.
  */
-export const MAX_RESOURCE_URL_BYTES = 2048;
+const MAX_RESOURCE_URL_BYTES = 2048;
 
 // The registry rejects names longer than 100 bytes.
 const MAX_RESOURCE_NAME_LENGTH = 100;

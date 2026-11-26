@@ -54,6 +54,16 @@ paths:
       parameters:
         - name: user_id
           in: path
+  /users/{user_id}/logout:
+    post:
+      tags: [Users]
+      summary: Log out a user
+      operationId: LogoutUser
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
   /invitations/bulk:
     post:
       tags: [Invitations]
@@ -213,6 +223,15 @@ describe("api ls <path> shows request body fields", () => {
 
     expect(http.requests.map((r) => r.url)).toEqual([SPEC_URLS.bapi]);
     expect(lines(stdout)).toContain("Body (application/json, required):");
+  });
+
+  test("marks a body that declares no fields", async () => {
+    const { stdout } = await clerk("api", "ls", "/users/{user_id}/logout");
+
+    const out = lines(stdout);
+    const post = out.indexOf("POST  /users/{user_id}/logout  Log out a user");
+    expect(post).toBeGreaterThan(-1);
+    expect(out.slice(post + 1, post + 3)).toEqual(["Body (application/json):", "(no fields)"]);
   });
 
   test("describes the items of an array body", async () => {

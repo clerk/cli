@@ -28,7 +28,7 @@ export interface EndpointInfo {
   operationId: string;
   pathParams: PathParam[];
   hasRequestBody: boolean;
-  /** Absent when the operation takes no body, or in a catalog cached before bodies were kept. */
+  /** Absent when the operation takes no body, or its body declares no content type. */
   requestBody?: RequestBodyInfo;
 }
 
