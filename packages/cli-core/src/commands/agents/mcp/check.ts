@@ -146,7 +146,8 @@ function settingChecks(blockers: McpBlocker[]): McpCheck[] {
  * Reads the server's protected resource metadata with one unauthenticated GET.
  * RFC 9728 §3 puts it at the well-known URL derived from the resource, and §3.3
  * says metadata whose `resource` is not identical to that resource must not be
- * used. No MCP request is sent.
+ * used. Redirects are not followed, so a redirect to the MCP endpoint is
+ * reported rather than sent: no MCP request is sent.
  */
 async function metadataCheck(
   uri: string | undefined,
@@ -163,6 +164,7 @@ async function metadataCheck(
     response = await loggedFetch(url, {
       tag: "mcp",
       headers: { Accept: "application/json" },
+      redirect: "manual",
       signal: AbortSignal.timeout(METADATA_TIMEOUT_MS),
     });
   } catch (error) {

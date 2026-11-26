@@ -23,7 +23,7 @@ let settings: Record<string, unknown>;
 let resources: Resource[];
 let application: typeof MOCK_APP;
 /** What the MCP server answers at its protected resource metadata URL. */
-let metadata: () => Response;
+let metadata: (init?: RequestInit) => Response;
 
 function resource(overrides: Partial<Resource> & { uri: string }): Resource {
   return {
@@ -52,7 +52,7 @@ function servePlapi() {
     if (pathname === "/v1/platform/applications/app_1" && method === "GET") {
       return json(application);
     }
-    if (new URL(url).host === "mcp.example.com") return metadata();
+    if (new URL(url).host === "mcp.example.com") return metadata(init);
     if (instance?.[2] === "oauth_application_settings") {
       if (method === "PATCH") settings = { ...settings, ...body };
       return json(settings);
@@ -520,6 +520,15 @@ describe("check", () => {
       serve: () =>
         json({ resource: SERVER_URL, authorization_servers: ["https://auth.example.com"] }),
       message: `does not list ${ISSUER}`,
+    },
+    {
+      // Followed, the redirect would reach a valid document; the check must not follow it.
+      problem: "a redirect",
+      serve: (init?: RequestInit) =>
+        init?.redirect === "manual"
+          ? new Response(null, { status: 307, headers: { Location: SERVER_URL } })
+          : json({ resource: SERVER_URL, authorization_servers: [ISSUER] }),
+      message: "HTTP 307",
     },
     {
       problem: "a network error",
