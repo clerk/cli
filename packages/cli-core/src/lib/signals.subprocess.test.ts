@@ -12,7 +12,7 @@ import { describe, expect, test } from "bun:test";
 
 const SIGNALS_MODULE = `${import.meta.dir}/signals.ts`;
 
-type Outcome = { exitCode: number | null; signalCode: string | null };
+type Outcome = { exitCode: number | null; signalCode: number | string | null };
 
 async function runInterrupted(mode: "work" | "wait"): Promise<Outcome> {
   const source = `
