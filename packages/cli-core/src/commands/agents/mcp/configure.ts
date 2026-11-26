@@ -197,7 +197,7 @@ function printHuman(result: ConfigureResult, target: McpInstance): void {
  */
 export async function configure(url: string, options: McpTargetOptions = {}): Promise<void> {
   await runMcpCommand(url, options, {
-    spinner: (target) => `Configuring ${url} on ${target.label}...`,
+    spinnerText: (target) => `Configuring ${url} on ${target.label}...`,
     run: async (target, state) => configureMcpServer(target, url, state),
     printHuman,
   });

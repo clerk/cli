@@ -1,11 +1,13 @@
 /**
- * The Platform API reads and rules `clerk agents mcp` subcommands share:
- * which instance a command targets, its OAuth settings and resources, and which
- * of those settings still block MCP clients.
+ * What every `clerk agents mcp` subcommand shares: the entry flow
+ * (`runMcpCommand`: check the URL, resolve the instance, read its OAuth state,
+ * run, print), and the rules for which resources are MCP servers and which
+ * settings still block MCP clients.
  *
- * Mirrors `resolveTrustedInstance`, `readSettings`, `listResources`,
- * `isLegacyMcpServer` and `blockers` in clerk/cloudflare-workers
- * workers/remote-mcp-server/src/tools/mcp-server.ts. Change them in step.
+ * Mirrors clerk/cloudflare-workers workers/remote-mcp-server/src/tools/mcp-server.ts:
+ * `resolveMcpInstance` is its `resolveTrustedInstance`, `readOAuthState` its
+ * `readSettings` plus `listResources`, and `isLegacyMcpServer` and `mcpBlockers`
+ * its `isLegacyMcpServer` and `blockers`. Change them in step.
  */
 
 import { fetchApplicationInstance, resolveAppContext } from "../../../lib/config.ts";
@@ -145,7 +147,7 @@ async function readOAuthState(target: McpInstance): Promise<McpOAuthState> {
  */
 export interface McpCommand<T> {
   /** The spinner text while the command runs. */
-  spinner: (target: McpInstance) => string;
+  spinnerText: (target: McpInstance) => string;
   run: (target: McpInstance, state: McpOAuthState) => Promise<T>;
   printHuman: (result: T, target: McpInstance) => void;
 }
@@ -165,7 +167,7 @@ export async function runMcpCommand<T>(
   if (problem) throwUsageError(`The MCP server URL ${problem}.`);
 
   const target = await resolveMcpInstance(options);
-  const result = await withSpinner(command.spinner(target), async () =>
+  const result = await withSpinner(command.spinnerText(target), async () =>
     command.run(target, await readOAuthState(target)),
   );
 

@@ -293,7 +293,7 @@ export async function check(
   options: McpTargetOptions = {},
 ): Promise<void> {
   const result = await runMcpCommand(url, options, {
-    spinner: (target) => `Checking MCP server setup on ${target.label}...`,
+    spinnerText: (target) => `Checking MCP server setup on ${target.label}...`,
     run: async (target, state) => checkMcpServer(target, url, state),
     printHuman,
   });
