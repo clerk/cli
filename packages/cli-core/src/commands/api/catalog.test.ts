@@ -381,6 +381,17 @@ describe("flattenSchema", () => {
     expect(flat.description).toBe("Derived");
   });
 
+  test("combines a property several allOf parts define instead of replacing it", () => {
+    const flat = flattenSchema(SPEC, {
+      allOf: [
+        { properties: { mode: { enum: ["api", "mcp"] } } },
+        { properties: { mode: { type: "string", description: "The mode" } } },
+      ],
+    });
+    expect(formatType(SPEC, flat.properties.mode)).toBe('"api" | "mcp"');
+    expect(flattenSchema(SPEC, flat.properties.mode).description).toBe("The mode");
+  });
+
   test.each([
     { label: "a schema without allOf", schema: { type: "string" }, expected: { type: "string" } },
     {

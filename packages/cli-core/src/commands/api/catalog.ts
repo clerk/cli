@@ -131,7 +131,11 @@ export function resolveRef(spec: Schema, schema: unknown, depth = 0): Schema {
   return resolveRef(spec, target, depth + 1);
 }
 
-/** Resolve a schema and merge its `allOf` parts into one set of properties and required names. */
+/**
+ * Resolve a schema and merge its `allOf` parts into one set of properties and
+ * required names. A property several parts define becomes an `allOf` of its
+ * definitions, so each part's constraints (such as an `enum`) survive.
+ */
 export function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema {
   const resolved = resolveRef(spec, schema);
   if (!Array.isArray(resolved.allOf) || depth > MAX_SCHEMA_DEPTH) return resolved;
@@ -139,7 +143,15 @@ export function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema 
   const merged = [...parts, { ...resolved, allOf: undefined }];
   return {
     ...Object.assign({}, ...merged),
-    properties: Object.assign({}, ...merged.map((p) => p.properties ?? {})),
+    properties: merged
+      .flatMap((p) => Object.entries<unknown>(p.properties ?? {}))
+      .reduce<Schema>(
+        (acc, [name, prop]) => ({
+          ...acc,
+          [name]: name in acc ? { allOf: [acc[name], prop] } : prop,
+        }),
+        {},
+      ),
     required: merged.flatMap((p) => (Array.isArray(p.required) ? p.required : [])),
   };
 }
@@ -180,7 +192,7 @@ function bodyFields(spec: Schema, schema: Schema): BodyField[] {
     name,
     type: formatType(spec, prop),
     required: required.has(name),
-    description: String(resolveRef(spec, prop).description ?? "")
+    description: String(flattenSchema(spec, prop).description ?? "")
       .split("\n")[0]!
       .trim(),
   }));
