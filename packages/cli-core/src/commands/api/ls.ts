@@ -61,9 +61,10 @@ function printRequestBody(ep: EndpointInfo): void {
   if (!body) return;
 
   const indent = " ".repeat(METHOD_WIDTH);
-  const details = [body.contentType, body.type === "object" ? "" : body.type];
+  const details = [body.contentType];
+  if (body.type !== "object") details.push(body.type);
   if (body.required) details.push("required");
-  log.data(`${indent}Body (${details.filter(Boolean).join(", ")}):`);
+  log.data(`${indent}Body (${details.join(", ")}):`);
   if (body.fields.length === 0) {
     log.data(`${indent}  (no fields)`);
     return;

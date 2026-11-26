@@ -114,11 +114,16 @@ const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
 
 type Schema = Record<string, any>;
 
+/** How deep `$ref` chains and `allOf` nesting are followed before giving up. */
+const MAX_SCHEMA_DEPTH = 20;
+/** How deep `formatType` descends into items and alternatives before printing `object`. */
+const MAX_TYPE_DEPTH = 10;
+
 /** Follow local `$ref`s (`#/components/...`) until a concrete schema is reached. */
 export function resolveRef(spec: Schema, schema: unknown, depth = 0): Schema {
   if (!schema || typeof schema !== "object") return {};
   const ref = (schema as Schema).$ref;
-  if (typeof ref !== "string" || depth > 20) return schema as Schema;
+  if (typeof ref !== "string" || depth > MAX_SCHEMA_DEPTH) return schema as Schema;
   const target = ref
     .replace(/^#\//, "")
     .split("/")
@@ -129,7 +134,7 @@ export function resolveRef(spec: Schema, schema: unknown, depth = 0): Schema {
 /** Resolve a schema and merge its `allOf` parts into one set of properties and required names. */
 export function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema {
   const resolved = resolveRef(spec, schema);
-  if (!Array.isArray(resolved.allOf) || depth > 20) return resolved;
+  if (!Array.isArray(resolved.allOf) || depth > MAX_SCHEMA_DEPTH) return resolved;
   const parts = resolved.allOf.map((part: unknown) => flattenSchema(spec, part, depth + 1));
   const merged = [...parts, { ...resolved, allOf: undefined }];
   return {
@@ -141,8 +146,8 @@ export function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema 
 
 /** A schema's type as `api ls` prints it, such as `string | null` or `("a" | "b")[]`. */
 export function formatType(spec: Schema, schema: unknown, depth = 0): string {
+  if (depth > MAX_TYPE_DEPTH) return "object";
   const s = flattenSchema(spec, schema);
-  if (depth > 10) return "object";
   const nullable = s.nullable === true ? " | null" : "";
   if (Array.isArray(s.enum) && s.enum.length > 0) {
     return s.enum.map((v: unknown) => JSON.stringify(v)).join(" | ") + nullable;
@@ -222,7 +227,7 @@ export function parseSpec(yamlText: string): Catalog {
         operationId: (op.operationId as string) ?? "",
         pathParams,
         hasRequestBody: !!op.requestBody,
-        requestBody: op.requestBody ? parseRequestBody(spec, op.requestBody) : undefined,
+        requestBody: parseRequestBody(spec, op.requestBody),
       });
     }
   }
