@@ -3,21 +3,20 @@ import { green, red } from "../../../lib/color.ts";
 import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../../lib/errors.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import type { OAuthResource } from "../../../lib/plapi.ts";
-import { withSpinner } from "../../../lib/spinner.ts";
-import { isAgent } from "../../../mode.ts";
-import { protectedResourceMetadataUrl, resourceUrlProblem, sameResource } from "./resource-url.ts";
+import { protectedResourceMetadataUrl, sameResource } from "./resource-url.ts";
 import {
   authorizationServer,
   isLegacyMcpServer,
   mcpBlockers,
   oauthFlags,
-  readOAuthResources,
-  readOAuthSettings,
-  resolveMcpInstance,
+  runMcpCommand,
   serverSummary,
   setupPrompt,
+  type AuthorizationServer,
   type McpBlocker,
   type McpInstance,
+  type McpOAuthState,
+  type McpServerSummary,
   type McpTargetOptions,
 } from "./shared.ts";
 
@@ -45,12 +44,12 @@ export interface CheckResult {
   application_id: string;
   instance_id: string;
   resource_url: string | null;
-  mcp_server: ReturnType<typeof serverSummary> | null;
-  authorization_server: ReturnType<typeof authorizationServer> | null;
+  mcp_server: McpServerSummary | null;
+  authorization_server: AuthorizationServer | null;
   configuration: {
     status: "configured" | "not_configured" | "migration_required";
-    mcp_servers: ReturnType<typeof serverSummary>[];
-    legacy_mcp_servers: ReturnType<typeof serverSummary>[];
+    mcp_servers: McpServerSummary[];
+    legacy_mcp_servers: McpServerSummary[];
     oauth_settings: Record<string, boolean>;
     blockers: McpBlocker[];
   };
@@ -206,9 +205,8 @@ function nextSteps(checks: McpCheck[]): string[] {
 async function checkMcpServer(
   target: McpInstance,
   requested: string | undefined,
+  { settings, resources }: McpOAuthState,
 ): Promise<CheckResult> {
-  const settings = await readOAuthSettings(target);
-  const resources = await readOAuthResources(target);
   const servers = resources.filter((r) => r.mcp_server);
   const legacyServers = resources.filter(isLegacyMcpServer);
   const blockers = mcpBlockers(settings);
@@ -278,19 +276,11 @@ export async function check(
   url: string | undefined,
   options: McpTargetOptions = {},
 ): Promise<void> {
-  const problem = url ? resourceUrlProblem(url) : undefined;
-  if (problem) throwUsageError(`The MCP server URL ${problem}.`);
-
-  const target = await resolveMcpInstance(options);
-  const result = await withSpinner(`Checking MCP server setup on ${target.label}...`, async () =>
-    checkMcpServer(target, url),
-  );
-
-  if (options.json || isAgent()) {
-    log.data(JSON.stringify(result, null, 2));
-  } else {
-    printHuman(result, target);
-  }
+  const result = await runMcpCommand(url, options, {
+    spinner: (target) => `Checking MCP server setup on ${target.label}...`,
+    run: async (target, state) => checkMcpServer(target, url, state),
+    printHuman,
+  });
 
   if (!result.passed) {
     const failed = result.checks.filter((c) => c.status === "fail").map((c) => c.name);

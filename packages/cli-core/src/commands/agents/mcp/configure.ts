@@ -1,27 +1,26 @@
 import { log } from "../../../lib/log.ts";
-import { CliError, ERROR_CODE, throwUsageError } from "../../../lib/errors.ts";
+import { CliError, ERROR_CODE } from "../../../lib/errors.ts";
 import {
   createOAuthResource,
   patchOAuthApplicationSettings,
   updateOAuthResource,
   type OAuthApplicationSettings,
 } from "../../../lib/plapi.ts";
-import { withSpinner } from "../../../lib/spinner.ts";
-import { isAgent } from "../../../mode.ts";
-import { mcpResourceName, resourceUrlProblem, sameResource } from "./resource-url.ts";
+import { mcpResourceName, sameResource } from "./resource-url.ts";
 import {
   authorizationServer,
   isLegacyMcpServer,
   mcpBlockers,
   oauthFlags,
-  readOAuthResources,
-  readOAuthSettings,
-  resolveMcpInstance,
+  runMcpCommand,
   serverSummary,
   setupPrompt,
   withProviderGuard,
+  type AuthorizationServer,
   type McpBlocker,
   type McpInstance,
+  type McpOAuthState,
+  type McpServerSummary,
   type McpTargetOptions,
 } from "./shared.ts";
 
@@ -37,8 +36,8 @@ export interface ConfigureResult {
   application_id: string;
   instance_id: string;
   resource_url: string;
-  authorization_server: ReturnType<typeof authorizationServer>;
-  mcp_server: ReturnType<typeof serverSummary>;
+  authorization_server: AuthorizationServer;
+  mcp_server: McpServerSummary;
   configuration: {
     status: "unchanged" | "created" | "marked";
     enabled_settings: string[];
@@ -83,9 +82,8 @@ function blockerSteps(blockers: McpBlocker[]): string[] {
 async function configureMcpServer(
   target: McpInstance,
   requested: string,
+  { settings, resources }: McpOAuthState,
 ): Promise<ConfigureResult> {
-  const settings = await readOAuthSettings(target);
-  const resources = await readOAuthResources(target);
   const servers = resources.filter((r) => r.mcp_server);
 
   const existing = servers.find((s) => sameResource(s.uri, requested));
@@ -93,7 +91,7 @@ async function configureMcpServer(
   const legacy = conflicting && isLegacyMcpServer(conflicting) ? conflicting : undefined;
 
   const report = (
-    resource: ReturnType<typeof serverSummary>,
+    resource: McpServerSummary,
     status: ConfigureResult["configuration"]["status"],
     enabled: string[],
     saved: OAuthApplicationSettings,
@@ -198,17 +196,9 @@ function printHuman(result: ConfigureResult, target: McpInstance): void {
  * `clerk agents mcp configure <url>`: registers a user's MCP server with Clerk.
  */
 export async function configure(url: string, options: McpTargetOptions = {}): Promise<void> {
-  const problem = resourceUrlProblem(url);
-  if (problem) throwUsageError(`The MCP server URL ${problem}.`);
-
-  const target = await resolveMcpInstance(options);
-  const result = await withSpinner(`Configuring ${url} on ${target.label}...`, async () =>
-    configureMcpServer(target, url),
-  );
-
-  if (options.json || isAgent()) {
-    log.data(JSON.stringify(result, null, 2));
-    return;
-  }
-  printHuman(result, target);
+  await runMcpCommand(url, options, {
+    spinner: (target) => `Configuring ${url} on ${target.label}...`,
+    run: async (target, state) => configureMcpServer(target, url, state),
+    printHuman,
+  });
 }

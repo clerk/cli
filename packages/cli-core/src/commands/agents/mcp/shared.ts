@@ -9,7 +9,14 @@
  */
 
 import { fetchApplicationInstance, resolveAppContext } from "../../../lib/config.ts";
-import { CliError, ERROR_CODE, PlapiError, withApiContext } from "../../../lib/errors.ts";
+import {
+  CliError,
+  ERROR_CODE,
+  PlapiError,
+  throwUsageError,
+  withApiContext,
+} from "../../../lib/errors.ts";
+import { log } from "../../../lib/log.ts";
 import {
   fetchOAuthApplicationSettings,
   listOAuthResources,
@@ -20,7 +27,10 @@ import {
   issuerFromPublishableKey,
   mcpResourceName,
   protectedResourceMetadataUrl,
+  resourceUrlProblem,
 } from "./resource-url.ts";
+import { withSpinner } from "../../../lib/spinner.ts";
+import { isAgent } from "../../../mode.ts";
 
 /**
  * The `--app` / `--instance` / `--json` options every `clerk agents mcp`
@@ -108,23 +118,60 @@ export async function withProviderGuard<T>(run: Promise<T>, context: string): Pr
 }
 
 /**
- * The instance's OAuth application settings.
+ * The instance's OAuth application settings and every OAuth resource
+ * registered on it, as one read.
  */
-export async function readOAuthSettings(target: McpInstance): Promise<OAuthApplicationSettings> {
-  return withProviderGuard(
-    fetchOAuthApplicationSettings(target.applicationId, target.instanceId),
-    "Failed to fetch OAuth settings",
-  );
+export interface McpOAuthState {
+  settings: OAuthApplicationSettings;
+  resources: OAuthResource[];
+}
+
+async function readOAuthState(target: McpInstance): Promise<McpOAuthState> {
+  const [settings, resources] = await Promise.all([
+    withProviderGuard(
+      fetchOAuthApplicationSettings(target.applicationId, target.instanceId),
+      "Failed to fetch OAuth settings",
+    ),
+    withProviderGuard(
+      listOAuthResources(target.applicationId, target.instanceId),
+      "Failed to list OAuth resources",
+    ),
+  ]);
+  return { settings, resources };
 }
 
 /**
- * Every OAuth resource registered on the instance.
+ * How a `clerk agents mcp` subcommand runs on its target.
  */
-export async function readOAuthResources(target: McpInstance): Promise<OAuthResource[]> {
-  return withProviderGuard(
-    listOAuthResources(target.applicationId, target.instanceId),
-    "Failed to list OAuth resources",
+export interface McpCommand<T> {
+  /** The spinner text while the command runs. */
+  spinner: (target: McpInstance) => string;
+  run: (target: McpInstance, state: McpOAuthState) => Promise<T>;
+  printHuman: (result: T, target: McpInstance) => void;
+}
+
+/**
+ * The flow every `clerk agents mcp` subcommand shares: check the URL (when one
+ * is given), resolve the instance, read its OAuth state and run the command
+ * under a spinner, then print the result as JSON (`--json` or agent mode) or
+ * for a person. Returns the result for the caller to act on.
+ */
+export async function runMcpCommand<T>(
+  url: string | undefined,
+  options: McpTargetOptions,
+  command: McpCommand<T>,
+): Promise<T> {
+  const problem = url === undefined ? undefined : resourceUrlProblem(url);
+  if (problem) throwUsageError(`The MCP server URL ${problem}.`);
+
+  const target = await resolveMcpInstance(options);
+  const result = await withSpinner(command.spinner(target), async () =>
+    command.run(target, await readOAuthState(target)),
   );
+
+  if (options.json || isAgent()) log.data(JSON.stringify(result, null, 2));
+  else command.printHuman(result, target);
+  return result;
 }
 
 /**
@@ -176,14 +223,29 @@ export function oauthFlags(settings: OAuthApplicationSettings): Record<string, b
 /**
  * A resource as the commands report it.
  */
-export function serverSummary(resource: OAuthResource): { id: string; uri: string; name: string } {
+export interface McpServerSummary {
+  id: string;
+  uri: string;
+  name: string;
+}
+
+export function serverSummary(resource: OAuthResource): McpServerSummary {
   return { id: resource.id, uri: resource.uri, name: resource.name };
+}
+
+/**
+ * The authorization server an MCP server should point clients to.
+ */
+export interface AuthorizationServer {
+  issuer: string | null;
+  audience: string;
+  protected_resource_metadata_url: string;
 }
 
 /**
  * The authorization server an MCP server at `resource` should point clients to.
  */
-export function authorizationServer(target: McpInstance, resource: string) {
+export function authorizationServer(target: McpInstance, resource: string): AuthorizationServer {
   return {
     issuer: target.issuer ?? null,
     audience: resource,
