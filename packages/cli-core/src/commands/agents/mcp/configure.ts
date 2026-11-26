@@ -52,12 +52,12 @@ export interface ConfigureResult {
 // Dashboard does. PKCE and dynamic client registration are left alone: PKCE is instance-wide
 // and may break existing clients, and CIMD is the registration the MCP spec prefers.
 function firstServerPatch(settings: OAuthApplicationSettings): FirstServerSettings {
-  return {
-    ...(!settings.client_id_metadata_documents_advertised && {
-      client_id_metadata_documents_advertised: true,
-    }),
-    ...(!settings.aud_claim_enabled && { aud_claim_enabled: true }),
-  };
+  const patch: FirstServerSettings = {};
+  if (!settings.client_id_metadata_documents_advertised) {
+    patch.client_id_metadata_documents_advertised = true;
+  }
+  if (!settings.aud_claim_enabled) patch.aud_claim_enabled = true;
+  return patch;
 }
 
 const SETUP_STEP =
@@ -84,12 +84,6 @@ async function configureMcpServer(
   requested: string,
   { settings, resources }: McpOAuthState,
 ): Promise<ConfigureResult> {
-  const servers = resources.filter((r) => r.mcp_server);
-
-  const existing = servers.find((s) => sameResource(s.uri, requested));
-  const conflicting = existing ? undefined : resources.find((r) => sameResource(r.uri, requested));
-  const legacy = conflicting && isLegacyMcpServer(conflicting) ? conflicting : undefined;
-
   const report = (
     resource: McpServerSummary,
     status: ConfigureResult["configuration"]["status"],
@@ -115,15 +109,19 @@ async function configureMcpServer(
     };
   };
 
+  const existing = resources.find((r) => r.mcp_server && sameResource(r.uri, requested));
   if (existing) return report(serverSummary(existing), "unchanged", [], settings);
 
   // Refuse unrelated resources before changing first-server settings.
-  if (conflicting && !legacy) {
+  const conflicting = resources.find((r) => sameResource(r.uri, requested));
+  if (conflicting && !isLegacyMcpServer(conflicting)) {
     throw new CliError(
       `${requested} is already registered on this instance as an OAuth resource (${conflicting.id}) that is not marked as an MCP server.`,
       { code: ERROR_CODE.OAUTH_RESOURCE_CONFLICT },
     );
   }
+
+  const legacy = conflicting;
 
   // The connector counts only marked servers here. This counts legacy Dashboard registrations
   // too, so a second server leaves instance settings alone, except the registration this call

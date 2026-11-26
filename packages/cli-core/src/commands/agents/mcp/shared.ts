@@ -64,7 +64,7 @@ export interface McpInstance {
  * A blocker: a saved OAuth setting that stops MCP clients from working.
  */
 export interface McpBlocker {
-  setting: "aud_claim_enabled" | "client_id_metadata_documents_advertised";
+  setting: keyof typeof BLOCKERS;
   reason: string;
 }
 
@@ -81,10 +81,15 @@ const BLOCKERS = {
  * selector names, and the instance's publishable key gives its issuer.
  */
 export async function resolveMcpInstance(options: McpTargetOptions): Promise<McpInstance> {
-  const linked = options.app ? undefined : await resolveAppContext(options);
-  const applicationId = options.app ?? linked!.appId;
+  let applicationId = options.app;
+  let selector = options.instance;
+  if (!applicationId) {
+    const linked = await resolveAppContext(options);
+    applicationId = linked.appId;
+    selector = linked.instanceId;
+  }
   const { app, instance, instanceId, instanceLabel } = await withApiContext(
-    fetchApplicationInstance(applicationId, linked?.instanceId ?? options.instance, {
+    fetchApplicationInstance(applicationId, selector, {
       includeSecretKeys: false,
     }),
     "Failed to fetch application",
@@ -195,18 +200,17 @@ export function isLegacyMcpServer(resource: OAuthResource): boolean {
  * The saved settings that stop MCP clients from working with the instance.
  */
 export function mcpBlockers(settings: OAuthApplicationSettings): McpBlocker[] {
+  const blocker = (setting: McpBlocker["setting"]): McpBlocker => ({
+    setting,
+    reason: BLOCKERS[setting],
+  });
   const blockers: McpBlocker[] = [];
-  if (!settings.aud_claim_enabled) {
-    blockers.push({ setting: "aud_claim_enabled", reason: BLOCKERS.aud_claim_enabled });
-  }
+  if (!settings.aud_claim_enabled) blockers.push(blocker("aud_claim_enabled"));
   if (
     !settings.client_id_metadata_documents_advertised &&
     !settings.dynamic_oauth_client_registration
   ) {
-    blockers.push({
-      setting: "client_id_metadata_documents_advertised",
-      reason: BLOCKERS.client_id_metadata_documents_advertised,
-    });
+    blockers.push(blocker("client_id_metadata_documents_advertised"));
   }
   return blockers;
 }

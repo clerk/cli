@@ -59,8 +59,17 @@ export interface CheckResult {
   setup_prompt: string | null;
 }
 
-const pass = (name: CheckName, message: string): McpCheck => ({ name, status: "pass", message });
-const fail = (name: CheckName, message: string): McpCheck => ({ name, status: "fail", message });
+function pass(name: CheckName, message: string): McpCheck {
+  return { name, status: "pass", message };
+}
+
+function fail(name: CheckName, message: string): McpCheck {
+  return { name, status: "fail", message };
+}
+
+function uriList(resources: OAuthResource[]): string {
+  return resources.map((r) => r.uri).join(", ");
+}
 
 /**
  * The URL to check: the one asked for, or else the instance's only MCP server
@@ -77,20 +86,16 @@ function targetUrl(
     const known = [...servers, ...legacy].some((s) => sameResource(s.uri, requested));
     if (known) return requested;
     throw new CliError(
-      `${requested} is not a registered MCP server URL on this instance. Registered: ${servers.map((s) => s.uri).join(", ") || "none"}.`,
+      `${requested} is not a registered MCP server URL on this instance. Registered: ${uriList(servers) || "none"}.`,
       { code: ERROR_CODE.MCP_SERVER_NOT_REGISTERED },
     );
   }
   if (servers.length > 1) {
     throwUsageError(
-      `Pass the MCP server URL to check. Registered MCP server URLs: ${servers.map((s) => s.uri).join(", ")}.`,
+      `Pass the MCP server URL to check. Registered MCP server URLs: ${uriList(servers)}.`,
     );
   }
   return servers[0]?.uri ?? (legacy.length === 1 ? legacy[0]!.uri : undefined);
-}
-
-function legacyList(legacy: OAuthResource[]): string {
-  return legacy.map((s) => s.uri).join(", ");
 }
 
 function registrationCheck(
@@ -109,7 +114,7 @@ function registrationCheck(
   if (legacyServers.length) {
     return fail(
       "resource_registered",
-      `No MCP server is marked on this instance. Legacy Dashboard registrations: ${legacyList(legacyServers)}. Run \`clerk agents mcp configure <url>\` with one of them to mark it.`,
+      `No MCP server is marked on this instance. Legacy Dashboard registrations: ${uriList(legacyServers)}. Run \`clerk agents mcp configure <url>\` with one of them to mark it.`,
     );
   }
   return fail(
@@ -163,8 +168,9 @@ async function metadataCheck(
   } catch (error) {
     return fail(name, `Could not reach ${url}: ${errorMessage(error)}`);
   }
-  if (response.status !== 200)
+  if (response.status !== 200) {
     return fail(name, `${url} answered HTTP ${response.status}, not 200.`);
+  }
 
   let body: unknown;
   try {
@@ -202,10 +208,19 @@ const NEXT_STEPS: Record<CheckName, string> = {
 function nextSteps(checks: McpCheck[], legacy: OAuthResource[]): string[] {
   const step = (name: CheckName) =>
     name === "resource_registered" && legacy.length
-      ? `Mark a legacy Dashboard registration (${legacyList(legacy)}) with \`clerk agents mcp configure <url>\`.`
+      ? `Mark a legacy Dashboard registration (${uriList(legacy)}) with \`clerk agents mcp configure <url>\`.`
       : NEXT_STEPS[name];
   const steps = checks.filter((c) => c.status === "fail").map((c) => step(c.name));
   return [...new Set(steps)];
+}
+
+function configurationStatus(
+  servers: OAuthResource[],
+  legacy: OAuthResource[],
+): CheckResult["configuration"]["status"] {
+  if (servers.length) return "configured";
+  if (legacy.length) return "migration_required";
+  return "not_configured";
 }
 
 /**
@@ -247,11 +262,7 @@ async function checkMcpServer(
     mcp_server: server ? serverSummary(server) : null,
     authorization_server: uri ? authorizationServer(target, uri) : null,
     configuration: {
-      status: servers.length
-        ? "configured"
-        : legacyServers.length
-          ? "migration_required"
-          : "not_configured",
+      status: configurationStatus(servers, legacyServers),
       mcp_servers: servers.map(serverSummary),
       legacy_mcp_servers: legacyServers.map(serverSummary),
       oauth_settings: oauthFlags(settings),
