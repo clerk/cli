@@ -202,7 +202,7 @@ export function setupPrompt(target: McpInstance, resource: string): string {
     `Serve OAuth protected resource metadata (RFC 9728) at ${protectedResourceMetadataUrl(resource)} with "resource": ${JSON.stringify(resource)} and "authorization_servers": [${JSON.stringify(issuer)}].`,
     "Answer unauthenticated MCP requests with HTTP 401 and a WWW-Authenticate: Bearer header whose resource_metadata parameter points to that metadata URL.",
     `Accept only Clerk OAuth access tokens whose issuer is ${issuer} and whose audience is exactly ${resource}.`,
-    `In an Express, Hono, or Next.js server, use @clerk/mcp-tools 0.10.0 or newer: pass one options object with resourceUrl ${JSON.stringify(resource)} to protectedResourceMetadataHandler for the metadata response and to mcpAuth (withClerkMcpAuth in Next.js), which verifies bearer tokens with Clerk, checks the audience, and sends the challenge.`,
-    `In any other server, verify bearer tokens using a configured createClerkClient from @clerk/backend 3.19.0 or newer: const result = await clerkClient.authenticateRequest(request, { acceptsToken: 'oauth_token', audience: ${JSON.stringify(resource)} }). Reject requests unless result.isAuthenticated is true before processing MCP requests.`,
+    `In an Express, Hono, or Next.js server, use @clerk/mcp-tools: pass one options object with resourceUrl ${JSON.stringify(resource)} to protectedResourceMetadataHandler for the metadata response and to mcpAuth (withClerkMcpAuth in Next.js), which verifies bearer tokens with Clerk, checks the audience, and sends the challenge.`,
+    `In any other server, verify bearer tokens using a configured createClerkClient from @clerk/backend: const result = await clerkClient.authenticateRequest(request, { acceptsToken: 'oauth_token', audience: ${JSON.stringify(resource)} }). Reject requests unless result.isAuthenticated is true before processing MCP requests.`,
   ].join(" ");
 }

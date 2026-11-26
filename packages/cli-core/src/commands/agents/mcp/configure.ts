@@ -127,7 +127,11 @@ async function configureMcpServer(
     );
   }
 
-  const patch = servers.length === 0 ? firstServerPatch(settings) : {};
+  // The connector counts only marked servers here. This counts legacy Dashboard registrations
+  // too, so a second server leaves instance settings alone, except the registration this call
+  // marks: marking the instance's only server still makes it the first.
+  const others = resources.filter((r) => r !== legacy && (r.mcp_server || isLegacyMcpServer(r)));
+  const patch = others.length === 0 ? firstServerPatch(settings) : {};
   const enabled = Object.keys(patch);
   const { applicationId, instanceId } = target;
 

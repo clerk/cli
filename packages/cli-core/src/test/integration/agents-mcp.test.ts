@@ -154,6 +154,26 @@ test("configure leaves instance settings alone for a second server", async () =>
   ]);
 });
 
+test("configure counts a legacy Dashboard registration as an existing server", async () => {
+  resources = [
+    resource({
+      id: "oauthres_legacy",
+      uri: "https://other.example.com/mcp",
+      name: "other.example.com/mcp",
+      mcp_server: false,
+    }),
+  ];
+
+  const { stdout } = await clerk("--mode", "agent", "agents", "mcp", "configure", SERVER_URL);
+
+  expect(sent("PATCH", "/oauth_application_settings")).toHaveLength(0);
+  expect(sent("POST", "/oauth_resources")).toHaveLength(1);
+  expect(JSON.parse(stdout).configuration).toMatchObject({
+    status: "created",
+    enabled_settings: [],
+  });
+});
+
 test("configure turns on only the first-server switches that are off", async () => {
   settings = { ...OFF_SETTINGS, aud_claim_enabled: true };
 
@@ -349,11 +369,10 @@ describe("check", () => {
   beforeEach(() => {
     application = {
       ...MOCK_APP,
-      instances: MOCK_APP.instances.map((instance) =>
-        instance.environment_type === "development"
-          ? { ...instance, publishable_key: `pk_test_${btoa("clerk.example.com$")}` }
-          : instance,
-      ),
+      instances: MOCK_APP.instances.map((instance) => ({
+        ...instance,
+        publishable_key: `pk_test_${btoa("clerk.example.com$")}`,
+      })),
     };
     settings = {
       ...OFF_SETTINGS,
@@ -370,7 +389,7 @@ describe("check", () => {
     expect(statuses(stdout)).toEqual({
       resource_registered: "pass",
       aud_claim_enabled: "pass",
-      client_id_metadata_documents_advertised: "pass",
+      client_registration: "pass",
       protected_resource_metadata: "pass",
     });
     expect(JSON.parse(stdout)).toMatchObject({
@@ -394,7 +413,7 @@ describe("check", () => {
     {
       setting: "client registration",
       saved: { client_id_metadata_documents_advertised: false },
-      failed: "client_id_metadata_documents_advertised",
+      failed: "client_registration",
     },
   ])("check fails $failed when $setting is off", async ({ saved, failed }) => {
     settings = { ...settings, ...saved };
@@ -409,6 +428,23 @@ describe("check", () => {
     expect(JSON.parse(result.stdout).passed).toBe(false);
   });
 
+  test("check reports client_registration as failed with CIMD and DCR both off", async () => {
+    settings = { ...settings, client_id_metadata_documents_advertised: false };
+
+    const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
+
+    const output = JSON.parse(result.stdout);
+    const registration = output.checks.find(
+      (c: { name: string }) => c.name === "client_registration",
+    );
+    expect(registration.message).toContain("client ID metadata documents");
+    expect(registration.message).toContain("dynamic client registration");
+    // The blockers key stays the setting name, as the connector reports it.
+    expect(output.configuration.blockers.map((b: { setting: string }) => b.setting)).toEqual([
+      "client_id_metadata_documents_advertised",
+    ]);
+  });
+
   test("check counts dynamic client registration as client registration", async () => {
     settings = {
       ...settings,
@@ -418,7 +454,7 @@ describe("check", () => {
 
     const { stdout } = await clerk("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
 
-    expect(statuses(stdout).client_id_metadata_documents_advertised).toBe("pass");
+    expect(statuses(stdout).client_registration).toBe("pass");
   });
 
   test("check fails registration for a legacy Dashboard registration and says to run configure", async () => {
@@ -437,18 +473,31 @@ describe("check", () => {
     expect(output.mcp_server).toBeNull();
   });
 
-  test("check fails registration for an unregistered URL and still reads its metadata", async () => {
-    resources = [];
+  test.each([
+    { registered: "none", servers: () => [] },
+    {
+      registered: "https://other.example.com/mcp",
+      servers: () => [resource({ id: "oauthres_other", uri: "https://other.example.com/mcp" })],
+    },
+  ])(
+    "check refuses an unregistered URL before reading its metadata (registered: $registered)",
+    async ({ registered, servers }) => {
+      resources = servers();
 
-    const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
+      const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
 
-    expect(result.exitCode).toBe(1);
-    expect(statuses(result.stdout)).toMatchObject({
-      resource_registered: "fail",
-      protected_resource_metadata: "pass",
-    });
-    expect(JSON.parse(result.stdout).configuration.status).toBe("not_configured");
-  });
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      const error = JSON.parse(result.stderr).error;
+      expect(error.code).toBe("mcp_server_not_registered");
+      expect(error.message).toBe(
+        `${SERVER_URL} is not a registered MCP server URL on this instance. Registered: ${registered}.`,
+      );
+      expect(http.requests.filter((r) => new URL(r.url).host === "mcp.example.com")).toHaveLength(
+        0,
+      );
+    },
+  );
 
   test.each([
     { problem: "a 404", serve: () => json({}, 404), message: "HTTP 404" },
@@ -488,6 +537,23 @@ describe("check", () => {
     expect(probe.status).toBe("fail");
     expect(probe.message).toContain(message);
     expect(statuses(result.stdout).resource_registered).toBe("pass");
+  });
+
+  test("check fails protected_resource_metadata when the issuer can't be determined", async () => {
+    application = MOCK_APP;
+
+    const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
+
+    expect(result.exitCode).toBe(1);
+    const probe = JSON.parse(result.stdout).checks.find(
+      (c: { name: string }) => c.name === "protected_resource_metadata",
+    );
+    expect(probe).toEqual({
+      name: "protected_resource_metadata",
+      status: "fail",
+      message: "This instance's issuer could not be determined.",
+    });
+    expect(http.requests.filter((r) => new URL(r.url).host === "mcp.example.com")).toHaveLength(0);
   });
 
   test("check without a URL checks the instance's only MCP server", async () => {

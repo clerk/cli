@@ -97,12 +97,16 @@ export function mcpResourceName(uri: string): string {
 
 /**
  * Where an MCP server serves its OAuth protected resource metadata: the
- * well-known string inserted between the host and the path (RFC 9728 §3).
+ * well-known string inserted between the host and the path and/or query
+ * (RFC 9728 §3).
+ *
+ * This deliberately diverges from the connector's `protectedResourceMetadataUrl`,
+ * which drops the query, until the connector is fixed to keep it too.
  */
 export function protectedResourceMetadataUrl(resource: string): string {
   const url = new URL(resource);
   const path = url.pathname === "/" ? "" : url.pathname;
-  return `${url.origin}/.well-known/oauth-protected-resource${path}`;
+  return `${url.origin}/.well-known/oauth-protected-resource${path}${url.search}`;
 }
 
 /**

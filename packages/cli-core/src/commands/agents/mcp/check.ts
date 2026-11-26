@@ -26,7 +26,7 @@ const METADATA_TIMEOUT_MS = 10_000;
 type CheckName =
   | "resource_registered"
   | "aud_claim_enabled"
-  | "client_id_metadata_documents_advertised"
+  | "client_registration"
   | "protected_resource_metadata";
 
 /**
@@ -66,14 +66,22 @@ const fail = (name: CheckName, message: string): McpCheck => ({ name, status: "f
 /**
  * The URL to check: the one asked for, or else the instance's only MCP server
  * (or, with none, its only legacy registration). Several servers and no URL is
- * a usage error, as the connector refuses it.
+ * a usage error, and a requested URL that is neither a server nor a legacy
+ * registration is refused, as the connector refuses both.
  */
 function targetUrl(
   requested: string | undefined,
   servers: OAuthResource[],
   legacy: OAuthResource[],
 ): string | undefined {
-  if (requested) return requested;
+  if (requested) {
+    const known = [...servers, ...legacy].some((s) => sameResource(s.uri, requested));
+    if (known) return requested;
+    throw new CliError(
+      `${requested} is not a registered MCP server URL on this instance. Registered: ${servers.map((s) => s.uri).join(", ") || "none"}.`,
+      { code: ERROR_CODE.MCP_SERVER_NOT_REGISTERED },
+    );
+  }
   if (servers.length > 1) {
     throwUsageError(
       `Pass the MCP server URL to check. Registered MCP server URLs: ${servers.map((s) => s.uri).join(", ")}.`,
@@ -83,7 +91,6 @@ function targetUrl(
 }
 
 function registrationCheck(
-  uri: string | undefined,
   server: OAuthResource | undefined,
   legacy: OAuthResource | undefined,
 ): McpCheck {
@@ -94,15 +101,9 @@ function registrationCheck(
       `${legacy.uri} is a legacy Dashboard registration not yet marked as an MCP server. Run \`clerk agents mcp configure ${legacy.uri}\` to mark it.`,
     );
   }
-  if (!uri) {
-    return fail(
-      "resource_registered",
-      "No MCP server is registered on this instance. Run `clerk agents mcp configure <url>` to register one.",
-    );
-  }
   return fail(
     "resource_registered",
-    `${uri} is not a registered MCP server URL on this instance. Run \`clerk agents mcp configure ${uri}\` to register it.`,
+    "No MCP server is registered on this instance. Run `clerk agents mcp configure <url>` to register one.",
   );
 }
 
@@ -114,10 +115,12 @@ function settingChecks(blockers: McpBlocker[]): McpCheck[] {
     audience
       ? fail("aud_claim_enabled", audience.reason)
       : pass("aud_claim_enabled", "Access tokens carry an audience claim"),
+    // The connector's blocker for this is keyed client_id_metadata_documents_advertised but
+    // passes when either CIMD or DCR is on, so the check is named for what it tests.
     registration
-      ? fail("client_id_metadata_documents_advertised", registration.reason)
+      ? fail("client_registration", registration.reason)
       : pass(
-          "client_id_metadata_documents_advertised",
+          "client_registration",
           "MCP clients can register with client ID metadata documents or dynamic client registration",
         ),
   ];
@@ -135,6 +138,8 @@ async function metadataCheck(
 ): Promise<McpCheck> {
   const name = "protected_resource_metadata";
   if (!uri) return fail(name, "No MCP server URL to read protected resource metadata for.");
+  // Without the issuer the metadata can't be validated, so fail as the connector does.
+  if (!issuer) return fail(name, "This instance's issuer could not be determined.");
   const url = protectedResourceMetadataUrl(uri);
 
   let response: Response;
@@ -166,10 +171,10 @@ async function metadataCheck(
       `${url} names resource ${JSON.stringify(resource)}, which is not identical to ${uri} (RFC 9728 §3.3).`,
     );
   }
-  if (issuer && !(Array.isArray(servers) && servers.includes(issuer))) {
+  if (!(Array.isArray(servers) && servers.includes(issuer))) {
     return fail(name, `${url} does not list ${issuer} in authorization_servers.`);
   }
-  return pass(name, `${url} names ${uri} and lists ${issuer ?? "its authorization servers"}`);
+  return pass(name, `${url} names ${uri} and lists ${issuer}`);
 }
 
 const SETTINGS_STEP =
@@ -178,7 +183,7 @@ const SETTINGS_STEP =
 const NEXT_STEPS: Record<CheckName, string> = {
   resource_registered: "Register the MCP server with `clerk agents mcp configure <url>`.",
   aud_claim_enabled: SETTINGS_STEP,
-  client_id_metadata_documents_advertised: SETTINGS_STEP,
+  client_registration: SETTINGS_STEP,
   protected_resource_metadata:
     "Implement the setup_prompt in your MCP server, deploy it, then run `clerk agents mcp check` again.",
 };
@@ -216,7 +221,7 @@ async function checkMcpServer(
   const uri = server?.uri ?? legacy?.uri ?? wanted;
 
   const checks = [
-    registrationCheck(uri, server, legacy),
+    registrationCheck(server, legacy),
     ...settingChecks(blockers),
     await metadataCheck(uri, target.issuer),
   ];
