@@ -23,6 +23,13 @@ describe("setupPrompt", () => {
     expect(prompt).toContain(`resourceUrl ${JSON.stringify(resource)}`);
   });
 
+  test.each(["express", "hono", "next"])(
+    "names the @clerk/mcp-tools/%s subpath to import from",
+    (framework) => {
+      expect(prompt).toContain(`@clerk/mcp-tools/${framework}`);
+    },
+  );
+
   test("routes the metadata URL to the fetch entry's clerkInstrumentHandler", () => {
     expect(prompt).toContain("@clerk/mcp-tools/fetch");
     expect(prompt).toContain("https://mcp.example.com/.well-known/oauth-protected-resource/mcp");
