@@ -115,7 +115,7 @@ const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
 type Schema = Record<string, any>;
 
 /** Follow local `$ref`s (`#/components/...`) until a concrete schema is reached. */
-function resolveRef(spec: Schema, schema: unknown, depth = 0): Schema {
+export function resolveRef(spec: Schema, schema: unknown, depth = 0): Schema {
   if (!schema || typeof schema !== "object") return {};
   const ref = (schema as Schema).$ref;
   if (typeof ref !== "string" || depth > 20) return schema as Schema;
@@ -127,7 +127,7 @@ function resolveRef(spec: Schema, schema: unknown, depth = 0): Schema {
 }
 
 /** Resolve a schema and merge its `allOf` parts into one set of properties and required names. */
-function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema {
+export function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema {
   const resolved = resolveRef(spec, schema);
   if (!Array.isArray(resolved.allOf) || depth > 20) return resolved;
   const parts = resolved.allOf.map((part: unknown) => flattenSchema(spec, part, depth + 1));
@@ -139,7 +139,8 @@ function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema {
   };
 }
 
-function formatType(spec: Schema, schema: unknown, depth = 0): string {
+/** A schema's type as `api ls` prints it, such as `string | null` or `("a" | "b")[]`. */
+export function formatType(spec: Schema, schema: unknown, depth = 0): string {
   const s = flattenSchema(spec, schema);
   if (depth > 10) return "object";
   const nullable = s.nullable === true ? " | null" : "";
