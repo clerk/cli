@@ -89,15 +89,27 @@ function targetUrl(
   return servers[0]?.uri ?? (legacy.length === 1 ? legacy[0]!.uri : undefined);
 }
 
+function legacyList(legacy: OAuthResource[]): string {
+  return legacy.map((s) => s.uri).join(", ");
+}
+
 function registrationCheck(
   server: OAuthResource | undefined,
   legacy: OAuthResource | undefined,
+  legacyServers: OAuthResource[],
 ): McpCheck {
   if (server) return pass("resource_registered", `${server.uri} is registered as an MCP server`);
   if (legacy) {
     return fail(
       "resource_registered",
       `${legacy.uri} is a legacy Dashboard registration not yet marked as an MCP server. Run \`clerk agents mcp configure ${legacy.uri}\` to mark it.`,
+    );
+  }
+  // Several legacy registrations and no URL: name them, as the connector does.
+  if (legacyServers.length) {
+    return fail(
+      "resource_registered",
+      `No MCP server is marked on this instance. Legacy Dashboard registrations: ${legacyList(legacyServers)}. Run \`clerk agents mcp configure <url>\` with one of them to mark it.`,
     );
   }
   return fail(
@@ -136,7 +148,7 @@ async function metadataCheck(
   issuer: string | undefined,
 ): Promise<McpCheck> {
   const name = "protected_resource_metadata";
-  if (!uri) return fail(name, "No MCP server URL to read protected resource metadata for.");
+  if (!uri) return fail(name, "No marked MCP server to read protected resource metadata for.");
   // Without the issuer the metadata can't be validated, so fail as the connector does.
   if (!issuer) return fail(name, "This instance's issuer could not be determined.");
   const url = protectedResourceMetadataUrl(uri);
@@ -187,8 +199,12 @@ const NEXT_STEPS: Record<CheckName, string> = {
     "Implement the setup_prompt in your MCP server, deploy it, then run `clerk agents mcp check` again.",
 };
 
-function nextSteps(checks: McpCheck[]): string[] {
-  const steps = checks.filter((c) => c.status === "fail").map((c) => NEXT_STEPS[c.name]);
+function nextSteps(checks: McpCheck[], legacy: OAuthResource[]): string[] {
+  const step = (name: CheckName) =>
+    name === "resource_registered" && legacy.length
+      ? `Mark a legacy Dashboard registration (${legacyList(legacy)}) with \`clerk agents mcp configure <url>\`.`
+      : NEXT_STEPS[name];
+  const steps = checks.filter((c) => c.status === "fail").map((c) => step(c.name));
   return [...new Set(steps)];
 }
 
@@ -219,7 +235,7 @@ async function checkMcpServer(
   const uri = server?.uri ?? legacy?.uri ?? wanted;
 
   const checks = [
-    registrationCheck(server, legacy),
+    registrationCheck(server, legacy, legacyServers),
     ...settingChecks(blockers),
     await metadataCheck(uri, target.issuer),
   ];
@@ -243,7 +259,7 @@ async function checkMcpServer(
     },
     checks,
     passed: checks.every((c) => c.status === "pass"),
-    next_steps: nextSteps(checks),
+    next_steps: nextSteps(checks, legacyServers),
     setup_prompt: uri ? setupPrompt(target, uri) : null,
   };
 }

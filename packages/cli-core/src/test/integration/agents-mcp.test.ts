@@ -562,6 +562,40 @@ describe("check", () => {
     expect(JSON.parse(stdout)).toMatchObject({ resource_url: SERVER_URL, passed: true });
   });
 
+  test("check without a URL names the legacy registrations when no server is marked", async () => {
+    const OTHER_URL = "https://other.example.com/mcp";
+    resources = [
+      resource({ id: "oauthres_legacy", uri: SERVER_URL, mcp_server: false }),
+      resource({
+        id: "oauthres_legacy_other",
+        uri: OTHER_URL,
+        name: "other.example.com/mcp",
+        mcp_server: false,
+      }),
+    ];
+
+    const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check");
+
+    expect(result.exitCode).toBe(1);
+    const output = JSON.parse(result.stdout);
+    expect(output.configuration.status).toBe("migration_required");
+    expect(output.resource_url).toBeNull();
+    const registered = output.checks.find(
+      (c: { name: string }) => c.name === "resource_registered",
+    );
+    expect(registered.status).toBe("fail");
+    expect(registered.message).not.toContain("No MCP server is registered");
+    expect(registered.message).toContain(`${SERVER_URL}, ${OTHER_URL}`);
+    expect(registered.message).toContain("clerk agents mcp configure <url>");
+    const probe = output.checks.find(
+      (c: { name: string }) => c.name === "protected_resource_metadata",
+    );
+    expect(probe.status).toBe("fail");
+    expect(probe.message).not.toContain("No MCP server URL");
+    expect(output.next_steps.join(" ")).toContain(`${SERVER_URL}, ${OTHER_URL}`);
+    expect(http.requests.filter((r) => new URL(r.url).host === "mcp.example.com")).toHaveLength(0);
+  });
+
   test("check without a URL refuses when several MCP servers are registered", async () => {
     resources.push(resource({ id: "oauthres_other", uri: "https://other.example.com/mcp" }));
 

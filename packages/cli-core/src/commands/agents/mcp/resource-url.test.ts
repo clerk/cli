@@ -1,5 +1,10 @@
 import { test, expect, describe } from "bun:test";
-import { protectedResourceMetadataUrl, resourceIdentity, sameResource } from "./resource-url.ts";
+import {
+  protectedResourceMetadataUrl,
+  resourceIdentity,
+  resourceUrlProblem,
+  sameResource,
+} from "./resource-url.ts";
 
 describe("resourceIdentity", () => {
   test.each([
@@ -23,6 +28,44 @@ describe("resourceIdentity", () => {
     "mcp.example.com/mcp",
   ])("%s is not a resource the registry stores", (value) => {
     expect(resourceIdentity(value)).toBeUndefined();
+  });
+});
+
+describe("resourceUrlProblem", () => {
+  // The well-known URL (RFC 9728 §3) is built from the parsed URL, and the
+  // metadata's resource is compared to the URL as given (§3.3), so a URL the
+  // parser would rewrite could never pass.
+  test.each([
+    "https://mcp.example.com/a/../mcp",
+    "https://mcp.example.com/./mcp",
+    "https://mcp.example.com/mcp/..",
+    "https://mcp.example.com/%2e%2e/mcp",
+    "https://mcp.example.com/mcp/%2E",
+    "https://mcp.example.com/mécp",
+    "https://mcp.example.com/mcp?q=é",
+    "https://mcp.example.com/mcp?q='",
+    "https://mcp.example.com/{mcp}",
+    "https://mcp.example.com/mcp?",
+  ])("rejects %s, which the URL parser rewrites", (value) => {
+    expect(resourceUrlProblem(value)).toBe(
+      "must not contain dot segments or characters the URL parser rewrites",
+    );
+  });
+
+  test.each([
+    "https://mcp.example.com/mcp",
+    "https://mcp.example.com",
+    "https://mcp.example.com/",
+    "https://mcp.example.com?tenant=a",
+    "HTTPS://MCP.Example.COM/mcp",
+    "https://mcp.example.com:443/mcp",
+    "https://mcp.example.com:/mcp",
+    "https://mcp.example.com/mcp/",
+    "https://mcp.example.com/m%C3%A9cp",
+    "https://mcp.example.com/mcp?b=2&a=1",
+    "https://mcp.example.com/a..b/mcp",
+  ])("accepts %s", (value) => {
+    expect(resourceUrlProblem(value)).toBeUndefined();
   });
 });
 

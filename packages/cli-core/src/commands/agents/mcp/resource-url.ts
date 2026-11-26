@@ -29,7 +29,12 @@ function hasControlCharacter(value: string): boolean {
  *
  * Checks the raw string as well as the parsed URL, because the URL parser
  * silently drops empty fragments and credentials (`https://@host`) and
- * rewrites backslashes and control characters.
+ * rewrites backslashes and control characters. A path or query the parser
+ * would rewrite (dot segments, characters it percent-encodes, an empty `?`) is
+ * refused too, so the well-known URL built from the parsed URL (RFC 9728 §3)
+ * and the `resource` compared to the URL as given (§3.3) name the same thing.
+ * The scheme and host case and a `:443` port may differ; the registry folds
+ * those itself.
  */
 export function resourceUrlProblem(value: string): string | undefined {
   if (new TextEncoder().encode(value).length > MAX_RESOURCE_URL_BYTES) {
@@ -49,6 +54,10 @@ export function resourceUrlProblem(value: string): string | undefined {
   if (!/^https:\/\/[^/?#]+(?:[/?#]|$)/i.test(value)) return "must be an absolute URL";
   if (url.username || url.password || /^[a-z][a-z0-9+.-]*:\/\/[^/?]*@/i.test(value)) {
     return "must not contain credentials";
+  }
+  const [, path = "", query = ""] = /^https:\/\/[^/?#]+([^?#]*)(\?[^#]*)?$/i.exec(value) ?? [];
+  if ((path || "/") !== url.pathname || query !== url.search) {
+    return "must not contain dot segments or characters the URL parser rewrites";
   }
   return undefined;
 }
