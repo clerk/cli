@@ -266,7 +266,8 @@ export function setupPrompt(target: McpInstance, resource: string): string {
     `Serve OAuth protected resource metadata (RFC 9728) at ${protectedResourceMetadataUrl(resource)} with "resource": ${JSON.stringify(resource)} and "authorization_servers": [${JSON.stringify(issuer)}].`,
     "Answer unauthenticated MCP requests with HTTP 401 and a WWW-Authenticate: Bearer header whose resource_metadata parameter points to that metadata URL.",
     `Accept only Clerk OAuth access tokens whose issuer is ${issuer} and whose audience is exactly ${resource}.`,
-    `In an Express, Hono, or Next.js server, use @clerk/mcp-tools: pass one options object with resourceUrl ${JSON.stringify(resource)} to protectedResourceMetadataHandler for the metadata response and to mcpAuth (withClerkMcpAuth in Next.js), which verifies bearer tokens with Clerk, checks the audience, and sends the challenge.`,
+    `In an Express, Hono, or Next.js server, use @clerk/mcp-tools: wrap the MCP handler with clerkInstrumentHandler(handler, options), which verifies bearer tokens with Clerk, checks the audience, and sends the challenge, and pass the same options object, with resourceUrl ${JSON.stringify(resource)}, to protectedResourceMetadataHandler for the metadata response.`,
+    `In a fetch Worker, such as on Cloudflare Workers, wrap the MCP handler with clerkInstrumentHandler from @clerk/mcp-tools/fetch with resourceUrl ${JSON.stringify(resource)} and route both ${resource} and ${protectedResourceMetadataUrl(resource)} to it: it serves the metadata as well as verifying tokens.`,
     `In any other server, verify bearer tokens using a configured createClerkClient from @clerk/backend: const result = await clerkClient.authenticateRequest(request, { acceptsToken: 'oauth_token', audience: ${JSON.stringify(resource)} }). Reject requests unless result.isAuthenticated is true before processing MCP requests.`,
   ].join(" ");
 }
