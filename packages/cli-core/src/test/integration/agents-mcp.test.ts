@@ -3,7 +3,7 @@
  * stubbed Platform API that keeps an instance's OAuth settings and resources.
  */
 
-import { test, expect, beforeEach } from "bun:test";
+import { test, expect, beforeEach, describe } from "bun:test";
 import { useIntegrationTestHarness, http, setProfile, clerk, MOCK_APP } from "./lib/harness.ts";
 
 useIntegrationTestHarness();
@@ -29,6 +29,9 @@ const OFF_SETTINGS = {
 
 let settings: Record<string, unknown>;
 let resources: Resource[];
+let application: typeof MOCK_APP;
+/** What the MCP server answers at its protected resource metadata URL. */
+let metadata: () => Response;
 
 function resource(overrides: Partial<Resource> & { uri: string }): Resource {
   return {
@@ -54,7 +57,9 @@ function servePlapi() {
     const instance =
       /^\/v1\/platform\/applications\/app_1\/instances\/(ins_dev|ins_prod)\/(.+)$/.exec(pathname);
 
-    if (pathname === "/v1/platform/applications/app_1" && method === "GET") return json(MOCK_APP);
+    if (pathname === "/v1/platform/applications/app_1" && method === "GET")
+      return json(application);
+    if (new URL(url).host === "mcp.example.com") return metadata();
     if (instance?.[2] === "oauth_application_settings") {
       if (method === "PATCH") settings = { ...settings, ...body };
       return json(settings);
@@ -84,6 +89,8 @@ function sent(method: string, path: string) {
 beforeEach(async () => {
   settings = { ...OFF_SETTINGS };
   resources = [];
+  application = MOCK_APP;
+  metadata = () => json({ errors: [{ message: "not found" }] }, 404);
   await setProfile("github.com/test/project", {
     workspaceId: "",
     appId: MOCK_APP.application_id,
@@ -326,5 +333,242 @@ test("configure reports the issuer from the instance's publishable key", async (
     audience: SERVER_URL,
     protected_resource_metadata_url:
       "https://mcp.example.com/.well-known/oauth-protected-resource/mcp",
+  });
+});
+
+describe("check", () => {
+  const ISSUER = "https://clerk.example.com";
+  const METADATA_URL = "https://mcp.example.com/.well-known/oauth-protected-resource/mcp";
+
+  function statuses(stdout: string) {
+    return Object.fromEntries(
+      JSON.parse(stdout).checks.map((c: { name: string; status: string }) => [c.name, c.status]),
+    );
+  }
+
+  beforeEach(() => {
+    application = {
+      ...MOCK_APP,
+      instances: MOCK_APP.instances.map((instance) =>
+        instance.environment_type === "development"
+          ? { ...instance, publishable_key: `pk_test_${btoa("clerk.example.com$")}` }
+          : instance,
+      ),
+    };
+    settings = {
+      ...OFF_SETTINGS,
+      aud_claim_enabled: true,
+      client_id_metadata_documents_advertised: true,
+    };
+    resources = [resource({ id: "oauthres_mcp", uri: SERVER_URL })];
+    metadata = () => json({ resource: SERVER_URL, authorization_servers: [ISSUER] });
+  });
+
+  test("check passes every check for a configured server and sends no MCP request", async () => {
+    const { stdout } = await clerk("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
+
+    expect(statuses(stdout)).toEqual({
+      resource_registered: "pass",
+      aud_claim_enabled: "pass",
+      client_id_metadata_documents_advertised: "pass",
+      protected_resource_metadata: "pass",
+    });
+    expect(JSON.parse(stdout)).toMatchObject({
+      application_id: "app_1",
+      instance_id: "ins_dev",
+      resource_url: SERVER_URL,
+      passed: true,
+      mcp_server: { id: "oauthres_mcp", uri: SERVER_URL },
+    });
+    expect(http.requests.filter((r) => r.method !== "GET")).toHaveLength(0);
+    const toServer = http.requests.filter((r) => new URL(r.url).host === "mcp.example.com");
+    expect(toServer.map((r) => r.url)).toEqual([METADATA_URL]);
+  });
+
+  test.each([
+    {
+      setting: "aud_claim_enabled",
+      saved: { aud_claim_enabled: false },
+      failed: "aud_claim_enabled",
+    },
+    {
+      setting: "client registration",
+      saved: { client_id_metadata_documents_advertised: false },
+      failed: "client_id_metadata_documents_advertised",
+    },
+  ])("check fails $failed when $setting is off", async ({ saved, failed }) => {
+    settings = { ...settings, ...saved };
+
+    const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
+
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stderr).error.code).toBe("mcp_check_failed");
+    const checks = statuses(result.stdout);
+    expect(checks[failed]).toBe("fail");
+    expect(Object.values(checks).filter((s) => s === "fail")).toHaveLength(1);
+    expect(JSON.parse(result.stdout).passed).toBe(false);
+  });
+
+  test("check counts dynamic client registration as client registration", async () => {
+    settings = {
+      ...settings,
+      client_id_metadata_documents_advertised: false,
+      dynamic_oauth_client_registration: true,
+    };
+
+    const { stdout } = await clerk("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
+
+    expect(statuses(stdout).client_id_metadata_documents_advertised).toBe("pass");
+  });
+
+  test("check fails registration for a legacy Dashboard registration and says to run configure", async () => {
+    resources = [resource({ id: "oauthres_legacy", uri: SERVER_URL, mcp_server: false })];
+
+    const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
+
+    expect(result.exitCode).toBe(1);
+    const output = JSON.parse(result.stdout);
+    expect(output.configuration.status).toBe("migration_required");
+    const registered = output.checks.find(
+      (c: { name: string }) => c.name === "resource_registered",
+    );
+    expect(registered.status).toBe("fail");
+    expect(registered.message).toContain(`clerk agents mcp configure ${SERVER_URL}`);
+    expect(output.mcp_server).toBeNull();
+  });
+
+  test("check fails registration for an unregistered URL and still reads its metadata", async () => {
+    resources = [];
+
+    const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
+
+    expect(result.exitCode).toBe(1);
+    expect(statuses(result.stdout)).toMatchObject({
+      resource_registered: "fail",
+      protected_resource_metadata: "pass",
+    });
+    expect(JSON.parse(result.stdout).configuration.status).toBe("not_configured");
+  });
+
+  test.each([
+    { problem: "a 404", serve: () => json({}, 404), message: "HTTP 404" },
+    {
+      problem: "a non-JSON body",
+      serve: () => new Response("<html>"),
+      message: "did not return JSON",
+    },
+    {
+      problem: "a different resource",
+      serve: () => json({ resource: `${SERVER_URL}/`, authorization_servers: [ISSUER] }),
+      message: "not identical",
+    },
+    {
+      problem: "another authorization server",
+      serve: () =>
+        json({ resource: SERVER_URL, authorization_servers: ["https://auth.example.com"] }),
+      message: `does not list ${ISSUER}`,
+    },
+    {
+      problem: "a network error",
+      serve: () => {
+        throw new TypeError("connection refused");
+      },
+      message: "Could not reach",
+    },
+  ])("check fails protected_resource_metadata on $problem", async ({ serve, message }) => {
+    metadata = serve;
+
+    const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check", SERVER_URL);
+
+    expect(result.exitCode).toBe(1);
+    const output = JSON.parse(result.stdout);
+    const probe = output.checks.find(
+      (c: { name: string }) => c.name === "protected_resource_metadata",
+    );
+    expect(probe.status).toBe("fail");
+    expect(probe.message).toContain(message);
+    expect(statuses(result.stdout).resource_registered).toBe("pass");
+  });
+
+  test("check without a URL checks the instance's only MCP server", async () => {
+    const { stdout } = await clerk("--mode", "agent", "agents", "mcp", "check");
+
+    expect(JSON.parse(stdout)).toMatchObject({ resource_url: SERVER_URL, passed: true });
+  });
+
+  test("check without a URL refuses when several MCP servers are registered", async () => {
+    resources.push(resource({ id: "oauthres_other", uri: "https://other.example.com/mcp" }));
+
+    const result = await clerk.raw("--mode", "agent", "agents", "mcp", "check");
+
+    expect(result.exitCode).toBe(2);
+    expect(JSON.parse(result.stderr).error.message).toContain("https://other.example.com/mcp");
+  });
+
+  test("check rejects an invalid URL without a request", async () => {
+    const result = await clerk.raw(
+      "--mode",
+      "agent",
+      "agents",
+      "mcp",
+      "check",
+      "http://mcp.example.com/mcp",
+    );
+
+    expect(result.exitCode).toBe(2);
+    expect(http.requests).toHaveLength(0);
+  });
+
+  test.each([
+    { flag: "prod", instance: "ins_prod" },
+    { flag: "ins_dev", instance: "ins_dev" },
+  ])("check --app app_1 --instance $flag reads $instance", async ({ flag, instance }) => {
+    await setProfile("github.com/test/project", {
+      workspaceId: "",
+      appId: "app_other",
+      instances: { development: "ins_other" },
+    });
+
+    const { stdout } = await clerk(
+      "--mode",
+      "agent",
+      "agents",
+      "mcp",
+      "check",
+      SERVER_URL,
+      "--app",
+      "app_1",
+      "--instance",
+      flag,
+    );
+
+    expect(sent("GET", `/instances/${instance}/oauth_application_settings`)).toHaveLength(1);
+    expect(sent("GET", `/instances/${instance}/oauth_resources`)).toHaveLength(1);
+    expect(JSON.parse(stdout)).toMatchObject({ application_id: "app_1", instance_id: instance });
+  });
+
+  test("check in human mode lists each check on stderr", async () => {
+    settings = { ...settings, aud_claim_enabled: false };
+
+    const result = await clerk.raw("--mode", "human", "agents", "mcp", "check", SERVER_URL);
+
+    expect(result.exitCode).toBe(1);
+    expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("resource_registered:");
+    expect(result.stderr).toContain("aud_claim_enabled: Access tokens carry no audience claim");
+  });
+
+  test("check --json prints JSON in human mode", async () => {
+    const { stdout } = await clerk(
+      "--mode",
+      "human",
+      "agents",
+      "mcp",
+      "check",
+      SERVER_URL,
+      "--json",
+    );
+
+    expect(JSON.parse(stdout).passed).toBe(true);
   });
 });
