@@ -279,7 +279,10 @@ export function registerApi(program: Program): void {
       "[endpoint]",
       "API endpoint path, 'ls' to list endpoints, or omit for interactive mode",
     )
-    .argument("[filter]", "Filter keyword (used with 'ls')")
+    .argument(
+      "[filter]",
+      "Filter keyword, or an endpoint path to also show its request body fields (used with 'ls')",
+    )
     .option("-X, --method <method>", "HTTP method (default: GET, or POST if body provided)")
     .option("-d, --data <json>", "JSON request body")
     .option("--file <path>", "Read request body from a file")
@@ -300,6 +303,10 @@ export function registerApi(program: Program): void {
     .setExamples([
       { command: "clerk api ls", description: "List Backend API endpoints" },
       { command: "clerk api ls users", description: 'List Backend API endpoints matching "users"' },
+      {
+        command: "clerk api ls /users",
+        description: "List the endpoints at /users with their request body fields",
+      },
       {
         command: "clerk api ls --platform",
         description: "List Platform API endpoints (applications, instances)",
