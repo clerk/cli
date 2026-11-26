@@ -23,6 +23,9 @@ function hasControlCharacter(value: string): boolean {
   return false;
 }
 
+/** The `https://` authority, path and query of a URL with no fragment. */
+const RESOURCE_URL = /^https:\/\/([^/?#]+)([^?#]*)(\?[^#]*)?$/i;
+
 /**
  * Why a value can't be registered as an MCP server URL, worded to follow the
  * URL ("must use https"), or `undefined` when it can.
@@ -51,11 +54,11 @@ export function resourceUrlProblem(value: string): string | undefined {
     return "must be an absolute URL";
   }
   if (url.protocol !== "https:") return "must use https";
-  if (!/^https:\/\/[^/?#]+(?:[/?#]|$)/i.test(value)) return "must be an absolute URL";
-  if (url.username || url.password || /^[a-z][a-z0-9+.-]*:\/\/[^/?]*@/i.test(value)) {
-    return "must not contain credentials";
-  }
-  const [, path = "", query = ""] = /^https:\/\/[^/?#]+([^?#]*)(\?[^#]*)?$/i.exec(value) ?? [];
+  const match = RESOURCE_URL.exec(value);
+  if (!match) return "must be an absolute URL";
+  const [, authority, path, query = ""] = match;
+  // With backslashes refused, the parser finds credentials exactly when the raw authority has an `@`.
+  if (authority!.includes("@")) return "must not contain credentials";
   if ((path || "/") !== url.pathname || query !== url.search) {
     return "must not contain dot segments or characters the URL parser rewrites";
   }
@@ -73,7 +76,7 @@ export function resourceUrlProblem(value: string): string | undefined {
  * `:0443`.
  */
 export function resourceIdentity(value: string): string | undefined {
-  const match = /^https:\/\/([^/?#]+)([^?#]*)(\?[^#]*)?$/i.exec(value);
+  const match = RESOURCE_URL.exec(value);
   if (!match) return undefined;
   let parsed: URL;
   try {
@@ -81,7 +84,7 @@ export function resourceIdentity(value: string): string | undefined {
   } catch {
     return undefined;
   }
-  if (parsed.protocol !== "https:" || parsed.username || parsed.password) return undefined;
+  if (parsed.username || parsed.password) return undefined;
   const authority = match[1]!.toLowerCase().replace(/:(?:443)?$/, "");
   return `https://${authority}${match[2]}${match[3] ?? ""}`;
 }
