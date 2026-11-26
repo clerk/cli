@@ -6,6 +6,7 @@
 import { test, expect, describe, beforeEach, afterEach } from "bun:test";
 import { join } from "node:path";
 import { useIntegrationTestHarness, http, clerk } from "./lib/harness.ts";
+import { _setCacheDir } from "../../commands/api/catalog.ts";
 
 const h = useIntegrationTestHarness();
 
@@ -149,14 +150,12 @@ function lines(stdout: string): string[] {
 }
 
 describe("api ls <path> shows request body fields", () => {
-  beforeEach(async () => {
-    const { _setCacheDir } = await import("../../commands/api/catalog.ts");
+  beforeEach(() => {
     _setCacheDir(h.tempDir);
     stubSpecs();
   });
 
-  afterEach(async () => {
-    const { _setCacheDir } = await import("../../commands/api/catalog.ts");
+  afterEach(() => {
     _setCacheDir(undefined);
   });
 
@@ -239,6 +238,7 @@ describe("api ls <path> shows request body fields", () => {
 
     const out = lines(stdout);
     const post = out.indexOf("POST  /invitations/bulk  Create multiple invitations");
+    expect(post).toBeGreaterThan(-1);
     expect(out.slice(post + 1, post + 4)).toEqual([
       "Body (application/json, array of object):",
       "email_address  string  required",

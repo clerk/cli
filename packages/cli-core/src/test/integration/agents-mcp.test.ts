@@ -1,24 +1,16 @@
 /**
- * `clerk agents mcp configure` end to end through the real program, against a
- * stubbed Platform API that keeps an instance's OAuth settings and resources.
+ * `clerk agents mcp configure` and `clerk agents mcp check` end to end through
+ * the real program, against a stubbed Platform API that keeps an instance's
+ * OAuth settings and resources.
  */
 
 import { test, expect, beforeEach, describe } from "bun:test";
+import type { OAuthResource as Resource } from "../../lib/plapi.ts";
 import { useIntegrationTestHarness, http, setProfile, clerk, MOCK_APP } from "./lib/harness.ts";
 
 useIntegrationTestHarness();
 
 const SERVER_URL = "https://mcp.example.com/mcp";
-
-interface Resource {
-  id: string;
-  uri: string;
-  name: string;
-  mcp_server: boolean;
-  scopes: string[];
-  oauth_application_id: string | null;
-  reserved_oauth_application_id: string | null;
-}
 
 const OFF_SETTINGS = {
   aud_claim_enabled: false,
@@ -57,8 +49,9 @@ function servePlapi() {
     const instance =
       /^\/v1\/platform\/applications\/app_1\/instances\/(ins_dev|ins_prod)\/(.+)$/.exec(pathname);
 
-    if (pathname === "/v1/platform/applications/app_1" && method === "GET")
+    if (pathname === "/v1/platform/applications/app_1" && method === "GET") {
       return json(application);
+    }
     if (new URL(url).host === "mcp.example.com") return metadata();
     if (instance?.[2] === "oauth_application_settings") {
       if (method === "PATCH") settings = { ...settings, ...body };
