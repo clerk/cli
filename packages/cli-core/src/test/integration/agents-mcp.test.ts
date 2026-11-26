@@ -472,6 +472,17 @@ describe("check", () => {
       registered: "https://other.example.com/mcp",
       servers: () => [resource({ id: "oauthres_other", uri: "https://other.example.com/mcp" })],
     },
+    {
+      registered: "none. Legacy Dashboard registrations: https://legacy.example.com/mcp",
+      servers: () => [
+        resource({
+          id: "oauthres_legacy",
+          uri: "https://legacy.example.com/mcp",
+          name: "legacy.example.com/mcp",
+          mcp_server: false,
+        }),
+      ],
+    },
   ])(
     "check refuses an unregistered URL before reading its metadata (registered: $registered)",
     async ({ registered, servers }) => {

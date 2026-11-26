@@ -86,7 +86,7 @@ function targetUrl(
     const known = [...servers, ...legacy].some((s) => sameResource(s.uri, requested));
     if (known) return requested;
     throw new CliError(
-      `${requested} is not a registered MCP server URL on this instance. Registered: ${uriList(servers) || "none"}.`,
+      `${requested} is not a registered MCP server URL on this instance. Registered: ${uriList(servers) || "none"}.${legacy.length ? ` Legacy Dashboard registrations: ${uriList(legacy)}.` : ""}`,
       { code: ERROR_CODE.MCP_SERVER_NOT_REGISTERED },
     );
   }
