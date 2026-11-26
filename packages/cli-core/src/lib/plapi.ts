@@ -341,6 +341,92 @@ export const patchInstanceConfig = async (
   options?: { destructive?: boolean; dryRun?: boolean; ifMatch?: string },
 ) => sendInstanceConfig("PATCH", applicationId, instanceId, config, options);
 
+/**
+ * An instance's OAuth application settings. Only the switches MCP server setup
+ * reads are typed; PLAPI returns more, all kept as they arrive.
+ */
+export type OAuthApplicationSettings = Record<string, unknown> & {
+  aud_claim_enabled?: boolean;
+  client_id_metadata_documents_advertised?: boolean;
+  dynamic_oauth_client_registration?: boolean;
+};
+
+/**
+ * A URL registered on an instance as an OAuth resource, the audience Clerk
+ * puts in the access tokens it issues for it.
+ */
+export interface OAuthResource {
+  id: string;
+  uri: string;
+  name: string;
+  mcp_server: boolean;
+  scopes: string[];
+  oauth_application_id: string | null;
+  reserved_oauth_application_id: string | null;
+}
+
+function oauthInstanceUrl(applicationId: string, instanceId: string, path: string): URL {
+  return new URL(
+    `/v1/platform/applications/${applicationId}/instances/${instanceId}/${path}`,
+    getPlapiBaseUrl(),
+  );
+}
+
+export async function fetchOAuthApplicationSettings(
+  applicationId: string,
+  instanceId: string,
+): Promise<OAuthApplicationSettings> {
+  const url = oauthInstanceUrl(applicationId, instanceId, "oauth_application_settings");
+  const response = await plapiFetch("GET", url);
+  return response.json() as Promise<OAuthApplicationSettings>;
+}
+
+export async function patchOAuthApplicationSettings(
+  applicationId: string,
+  instanceId: string,
+  patch: Partial<OAuthApplicationSettings>,
+): Promise<OAuthApplicationSettings> {
+  const url = oauthInstanceUrl(applicationId, instanceId, "oauth_application_settings");
+  const response = await plapiFetch("PATCH", url, { body: JSON.stringify(patch) });
+  return response.json() as Promise<OAuthApplicationSettings>;
+}
+
+/**
+ * Every OAuth resource on an instance. The per-instance cap is 50, so one page
+ * of 100 holds them all.
+ */
+export async function listOAuthResources(
+  applicationId: string,
+  instanceId: string,
+): Promise<OAuthResource[]> {
+  const url = oauthInstanceUrl(applicationId, instanceId, "oauth_resources");
+  url.searchParams.set("limit", "100");
+  const response = await plapiFetch("GET", url);
+  const page = (await response.json()) as { data: OAuthResource[] };
+  return page.data;
+}
+
+export async function createOAuthResource(
+  applicationId: string,
+  instanceId: string,
+  params: { uri: string; name: string; mcp_server: boolean },
+): Promise<OAuthResource> {
+  const url = oauthInstanceUrl(applicationId, instanceId, "oauth_resources");
+  const response = await plapiFetch("POST", url, { body: JSON.stringify(params) });
+  return response.json() as Promise<OAuthResource>;
+}
+
+export async function updateOAuthResource(
+  applicationId: string,
+  instanceId: string,
+  resourceId: string,
+  params: { mcp_server: boolean },
+): Promise<OAuthResource> {
+  const url = oauthInstanceUrl(applicationId, instanceId, `oauth_resources/${resourceId}`);
+  const response = await plapiFetch("PATCH", url, { body: JSON.stringify(params) });
+  return response.json() as Promise<OAuthResource>;
+}
+
 export async function createApplication(name: string): Promise<Application> {
   const url = new URL("/v1/platform/applications", getPlapiBaseUrl());
   const response = await plapiFetch("POST", url, {
