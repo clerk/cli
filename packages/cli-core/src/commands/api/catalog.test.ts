@@ -97,6 +97,31 @@ describe("parseSpec", () => {
     expect(noTag!.tag).toBe("Other");
   });
 
+  test("lists the item fields of a body typed as a nullable array", () => {
+    const catalog = parseSpec(`
+openapi: "3.1.0"
+paths:
+  /items:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: [array, "null"]
+              items:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string, description: The name }
+`);
+    expect(catalog.endpoints[0]!.requestBody).toEqual({
+      contentType: "application/json",
+      required: false,
+      type: "array of object",
+      fields: [{ name: "name", type: "string", required: true, description: "The name" }],
+    });
+  });
+
   test("produces sorted unique tags", () => {
     const catalog = parseSpec(MINIMAL_SPEC);
     expect(catalog.tags).toEqual(["Organizations", "Other", "Users"]);
@@ -391,6 +416,14 @@ describe("formatType", () => {
       {
         schema: { type: "array", items: { type: "string" }, nullable: true },
         expected: "string[] | null",
+      },
+      {
+        schema: { type: ["array", "null"], items: { type: "string" } },
+        expected: "string[] | null",
+      },
+      {
+        schema: { type: ["array", "null"], items: { enum: ["a", "b"] } },
+        expected: '("a" | "b")[] | null',
       },
       { schema: { $ref: "#/components/schemas/Derived" }, expected: "object" },
       { schema: { properties: { a: { type: "string" } } }, expected: "object" },

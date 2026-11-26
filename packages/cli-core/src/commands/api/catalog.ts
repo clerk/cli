@@ -144,13 +144,17 @@ export function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema 
   };
 }
 
+/** Whether a schema's `type`, a name or a 3.1 type list, includes `name`. */
+function hasType(schema: Schema, name: string): boolean {
+  return Array.isArray(schema.type) ? schema.type.includes(name) : schema.type === name;
+}
+
 /** A schema's type as `api ls` prints it, such as `string | null` or `("a" | "b")[]`. */
 export function formatType(spec: Schema, schema: unknown, depth = 0): string {
   if (depth > MAX_TYPE_DEPTH) return "object";
   const s = flattenSchema(spec, schema);
   // A 3.1 type list that already has "null" doesn't need 3.0's `nullable` too.
-  const typeHasNull = Array.isArray(s.type) && s.type.includes("null");
-  const nullable = s.nullable === true && !typeHasNull ? " | null" : "";
+  const nullable = s.nullable === true && !hasType(s, "null") ? " | null" : "";
   if (Array.isArray(s.enum) && s.enum.length > 0) {
     return s.enum.map((v: unknown) => JSON.stringify(v)).join(" | ") + nullable;
   }
@@ -159,12 +163,15 @@ export function formatType(spec: Schema, schema: unknown, depth = 0): string {
     const types = alternatives.map((alt: unknown) => formatType(spec, alt, depth + 1));
     return [...new Set(types)].join(" | ") + nullable;
   }
-  const type = Array.isArray(s.type) ? s.type.join(" | ") : s.type;
-  if (type === "array") {
+  const types: unknown[] = Array.isArray(s.type) ? s.type : s.type ? [s.type] : [];
+  if (types.length === 0) return (s.properties ? "object" : "any") + nullable;
+  // Format an "array" member with its items, so ["array", "null"] reads `string[] | null`.
+  const member = (type: unknown) => {
+    if (type !== "array") return String(type);
     const items = formatType(spec, s.items, depth + 1);
-    return (items.includes(" | ") ? `(${items})[]` : `${items}[]`) + nullable;
-  }
-  return (type ?? (s.properties ? "object" : "any")) + nullable;
+    return items.includes(" | ") ? `(${items})[]` : `${items}[]`;
+  };
+  return types.map(member).join(" | ") + nullable;
 }
 
 function bodyFields(spec: Schema, schema: Schema): BodyField[] {
@@ -187,7 +194,7 @@ function parseRequestBody(spec: Schema, requestBody: unknown): RequestBodyInfo |
   if (!contentType) return undefined;
 
   const schema = flattenSchema(spec, content[contentType]?.schema);
-  const isArray = schema.type === "array";
+  const isArray = hasType(schema, "array");
   const fieldsSchema = isArray ? flattenSchema(spec, schema.items) : schema;
   return {
     contentType,
