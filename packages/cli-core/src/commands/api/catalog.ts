@@ -148,7 +148,9 @@ export function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema 
 export function formatType(spec: Schema, schema: unknown, depth = 0): string {
   if (depth > MAX_TYPE_DEPTH) return "object";
   const s = flattenSchema(spec, schema);
-  const nullable = s.nullable === true ? " | null" : "";
+  // A 3.1 type list that already has "null" doesn't need 3.0's `nullable` too.
+  const typeHasNull = Array.isArray(s.type) && s.type.includes("null");
+  const nullable = s.nullable === true && !typeHasNull ? " | null" : "";
   if (Array.isArray(s.enum) && s.enum.length > 0) {
     return s.enum.map((v: unknown) => JSON.stringify(v)).join(" | ") + nullable;
   }

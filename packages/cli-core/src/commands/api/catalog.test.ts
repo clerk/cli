@@ -374,6 +374,7 @@ describe("formatType", () => {
       { schema: { type: "string" }, expected: "string" },
       { schema: { type: "string", nullable: true }, expected: "string | null" },
       { schema: { type: ["string", "null"] }, expected: "string | null" },
+      { schema: { type: ["string", "null"], nullable: true }, expected: "string | null" },
       { schema: { $ref: "#/components/schemas/Alias" }, expected: "string" },
       { schema: { enum: ["a", "b"] }, expected: '"a" | "b"' },
       { schema: { enum: ["a"], nullable: true }, expected: '"a" | null' },
