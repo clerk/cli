@@ -239,6 +239,7 @@ clerk migrate export authjs --db-url "mysql://user:...@127.0.0.1:3306/authjs"
 clerk migrate export betterauth --db-url "./db.sqlite"
 clerk migrate export firebase --service-account ./service-account.json
 clerk migrate export workos --api-key sk_…
+clerk migrate export workos --password-hashes ./workos-password-hashes.csv
 ```
 
 The platform is an optional positional. Omitted, you get a picker built from
@@ -327,6 +328,7 @@ keep `--runs-dir`: the import looks the run ID up there.
 | `--api-key <key>`          | `workos`                           | WorkOS secret API key, the one starting `sk_`                     |
 | `--with-identities`        | `workos`                           | Also record each user's OAuth providers                           |
 | `--no-with-identities`     | `workos`                           | Skip the OAuth provider fan-out without being asked               |
+| `--password-hashes <path>` | `workos`                           | CSV of password hashes from a WorkOS support request              |
 | `--trust-oauth-emails`     | `authjs`                           | Mark the email of a user who signs in with OAuth verified         |
 
 `export clerk` also takes the targeting flags — it reads from a Clerk instance,
@@ -411,9 +413,11 @@ alongside imports.
   `auth0|` plus `alt_id`, or `_id` when there's no `alt_id`. Copy each
   `passwordHash` onto the matching user before importing, or migrate without
   passwords.
-- **WorkOS** returns neither password hashes nor TOTP secrets over the API:
-  hashes go in on import and never come back, and `totp.secret` is returned on
-  enrol only. WorkOS documents no other way to get them out.
+- **WorkOS** returns neither password hashes nor TOTP secrets over the API,
+  and returns `totp.secret` on enrol only. Hashes come only from a support
+  request, as a CSV that `--password-hashes` merges in (see
+  [WorkOS password hashes](#workos-password-hashes)). Without it, every
+  password user resets.
 - **Auth.js** core stores no passwords. An app that also uses the Credentials
   provider stores them wherever it chose to, which the export does not read,
   even a password column on the user table: migrate those separately, or have
@@ -421,8 +425,8 @@ alongside imports.
 
 Each prints a warning whenever it exports anyone. `clerk`'s and `workos`'s
 coverage also counts users who _have_ a password, so the size of the gap is
-visible up front — `workos` prints that row at zero unconditionally, because
-zero is the only value it can take.
+visible up front — without `--password-hashes`, `workos` prints that row at
+zero and names the flag.
 
 #### Database-backed exports (`supabase`, `authjs`, `betterauth`)
 
@@ -673,7 +677,7 @@ table, not as extra coverage rows:
 ```
 Field coverage
   ✓ 6/6 have an email address
-  ✗ 0/6 have a password (WorkOS returns none)
+  ✗ 0/6 have a password hash (needs --password-hashes)
 
 OAuth providers
   GoogleOAuth        2 users
@@ -701,6 +705,59 @@ Non-interactive runs get progress on stderr every 500 users during the fan-out,
 and every 10 pages during the user fetch. `withSpinner` hands a no-op to
 anything that is not a TTY, so without this an agent exporting a large tenant
 would see nothing at all until the run finished.
+
+#### WorkOS password hashes
+
+The API returns no hashes, but WorkOS support sends them on request, as a CSV
+of `email,password_hash,first_name,last_name`
+([WorkOS's export guide](https://workos.com/docs/migrate/export-from-workos)).
+That file can't be imported on its own: it has no WorkOS `id`, which re-runs
+match on, and no `email_verified`, metadata, or `created_at`.
+`--password-hashes <path>` reads it and copies each `password_hash` onto the
+API user with the same email, ignoring case.
+
+```sh
+clerk migrate export workos --password-hashes ./workos-password-hashes.csv
+```
+
+- The file is read before any request, so a wrong path fails without calling
+  WorkOS.
+- It is parsed as CSV, not split on commas: WorkOS warns that some hashes
+  contain them.
+- Rows whose email matches no WorkOS user are counted in a warning and left
+  out. That usually means the CSV is from another WorkOS environment.
+- The coverage row becomes `have a password hash`, counting the users the CSV
+  matched.
+
+The flag is on the export, not the import, because an import run is matched
+by the export file's sha256 (see [Re-running](#re-running)). A CSV passed at
+import time would leave that match unchanged, and a re-run would say
+"Already imported". The hashes land in `export.json` inside the gitignored run
+folder, as Better Auth's do.
+
+The `workos` source then names the hasher per user from the hash prefix:
+
+| WorkOS prefix                                    | `passwordHasher`                                                |
+| ------------------------------------------------ | --------------------------------------------------------------- |
+| `$2a$`, `$2b$`, `$2y$` (cost 4 to 15)            | `bcrypt`                                                        |
+| `$argon2id$`, `$argon2i$` (`v=19`)               | `argon2id`, `argon2i`                                           |
+| `$bcrypt-pbkdf2-sha1$`, `$bcrypt-pbkdf2-sha256$` | `bcrypt_pbkdf2_sha1`, `bcrypt_pbkdf2_sha256`                    |
+| `$bcrypt-ssha$`, `$bcrypt-ssha256$`              | `bcrypt_ssha`, `bcrypt_ssha256`                                 |
+| `$scrypt$`                                       | `scrypt`                                                        |
+| `$pbkdf2$` (`d=sha256`, `sha512`, `sha1`)        | `pbkdf2_sha256`, `pbkdf2_sha512_hex`, `pbkdf2_sha1`, re-encoded |
+
+All but `$pbkdf2$` go to Clerk unchanged. `$pbkdf2$` is rewritten into the
+matching Clerk layout: padded base64 for `pbkdf2_sha256`, hex for the others.
+
+Anything else is dropped, and that user is imported without a password and
+resets it. The checks count these users, the same as Better Auth's.
+
+- `$argon2d$`: Go's argon2 package has no argon2d.
+- `$firebase-scrypt$`: not converted yet.
+- `$pbkdf2$` sha256 whose key isn't 32 bytes, the only length `pbkdf2_sha256`
+  derives.
+- `$pbkdf2$` sha512 over 420,000 iterations, `pbkdf2_sha512_hex`'s cap.
+- bcrypt outside cost 4 to 15, and any other prefix.
 
 ### `clerk migrate import`
 
@@ -1245,7 +1302,7 @@ brings across. Adding a platform is one file in `sources/` plus one line in
 | `betterauth` | Better Auth export            | yes       | no      | no       |
 | `firebase`   | `firebase auth:export`        | yes       | no      | no       |
 | `supabase`   | Supabase `auth.users` export  | yes       | no      | partial  |
-| `workos`     | WorkOS User Management API    | no        | no      | yes      |
+| `workos`     | WorkOS User Management API    | partial   | no      | yes      |
 
 There is no column for social sign-ins, because no source copies them and none
 needs to. Every source shows the same note instead: enable the same providers in
@@ -1542,11 +1599,13 @@ reject the user as invalid. Each accepts a single value or an array.
 Clerk verifies the digest as-is, so `passwordHasher` must name the algorithm the
 source actually used:
 
-`argon2i`, `argon2id`, `awscognito`, `bcrypt`, `bcrypt_peppered`,
-`bcrypt_sha256_django`, `hmac_sha256_utf16_b64`, `ldap_ssha`, `md5`,
+`argon2i`, `argon2id`, `awscognito`, `bcrypt`, `bcrypt_pbkdf2_sha1`,
+`bcrypt_pbkdf2_sha256`, `bcrypt_peppered`, `bcrypt_sha256_django`,
+`bcrypt_ssha`, `bcrypt_ssha256`, `hmac_sha256_utf16_b64`, `ldap_ssha`, `md5`,
 `md5_phpass`, `md5_salted`, `phpass`, `pbkdf2_sha1`, `pbkdf2_sha256`,
-`pbkdf2_sha256_django`, `pbkdf2_sha512`, `pbkdf2_sha512_hex`, `scrypt_firebase`,
-`scrypt_werkzeug`, `sha256`, `sha256_salted`, `sha512_symfony`
+`pbkdf2_sha256_django`, `pbkdf2_sha512`, `pbkdf2_sha512_hex`, `scrypt`,
+`scrypt_firebase`, `scrypt_werkzeug`, `sha256`, `sha256_salted`,
+`sha512_symfony`
 
 A user with an unrecognized hasher is rejected by the checks, naming the
 hasher, like any other invalid user.

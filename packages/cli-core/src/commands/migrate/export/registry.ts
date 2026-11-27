@@ -73,7 +73,8 @@ export const exportPlatforms: ExportRegistryEntry[] = [
   {
     key: "workos",
     label: "WorkOS",
-    description: "A WorkOS tenant, via the User Management API — no password hashes",
+    description:
+      "A WorkOS tenant, via the User Management API — password hashes only from a WorkOS support CSV",
     sourceKey: "workos",
     run: async (options) => exportWorkOs(options),
   },

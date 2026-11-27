@@ -437,7 +437,10 @@ export function transformUsers(
  *
  * @param headers - Column names, for a CSV with no header row.
  */
-async function readCsv(filePath: string, headers?: string[]): Promise<Record<string, unknown>[]> {
+export async function readCsv(
+  filePath: string,
+  headers?: string[],
+): Promise<Record<string, unknown>[]> {
   return new Promise((resolve, reject) => {
     const users: Record<string, unknown>[] = [];
     fs.createReadStream(filePath)

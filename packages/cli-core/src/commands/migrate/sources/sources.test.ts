@@ -8,6 +8,10 @@ import type { FirebaseHashConfig, User } from "../types.ts";
 import { isAuthJsVerified } from "./authjs.ts";
 import { getSource, isSourcePath, sourceKeys, sources } from "./registry.ts";
 import { isVerified, toIsoDate } from "./shared.ts";
+import { detectWorkOsHash } from "./workos.ts";
+
+const BCRYPT = "$2b$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy";
+const ARGON2ID = "$argon2id$v=19$m=65536,t=3,p=4$c29tZXNhbHQ$RdescudvJCsgt3ub+b+dWRWJTmaaJObG";
 
 const FIREBASE_HASH: FirebaseHashConfig = {
   base64_signer_key: "SIGNERKEY==",
@@ -296,10 +300,34 @@ describe("workos", () => {
     expect("workosExternalId" in (users[0] ?? {})).toBe(false);
   });
 
-  // No other transformer omits it. WorkOS never returns a digest, so naming a
-  // hasher would imply a password column that cannot exist.
-  test("names no password hasher, because WorkOS returns no hashes", () => {
+  // One support CSV can hold several formats, so the hasher is set per user.
+  test("names no default password hasher", () => {
     expect(getSource("workos").defaults).toBeUndefined();
+  });
+
+  test("sets the hasher from a merged password_hash", () => {
+    const user = one("workos", { ...base, email_verified: true, password_hash: BCRYPT });
+    expect(user?.password).toBe(BCRYPT);
+    expect(user?.passwordHasher).toBe("bcrypt");
+    expect(user?.passwordDropped).toBeUndefined();
+  });
+
+  // The user is still imported, and resets their password.
+  test("drops a hash Clerk can't verify, and flags it", () => {
+    const user = one("workos", {
+      ...base,
+      email_verified: true,
+      password_hash: ARGON2ID.replace("argon2id", "argon2d"),
+    });
+    expect(user?.password).toBeUndefined();
+    expect(user?.passwordHasher).toBeUndefined();
+    expect(user?.passwordDropped).toBe(true);
+  });
+
+  test("leaves a user without a hash alone", () => {
+    const user = one("workos", { ...base, email_verified: true });
+    expect(user?.password).toBeUndefined();
+    expect(user?.passwordDropped).toBeUndefined();
   });
 
   // The export carries these so whoever runs the migration can see who used
@@ -310,6 +338,81 @@ describe("workos", () => {
     ]);
     expect(users[0]?.userId).toBe("user_01ABC");
     expect("identities" in (users[0] ?? {})).toBe(false);
+  });
+});
+
+describe("detectWorkOsHash", () => {
+  // WorkOS trims base64 padding; Clerk's pbkdf2_sha256 wants it back.
+  const b64 = (bytes: Buffer) => bytes.toString("base64").replace(/=+$/, "");
+  const salt = Buffer.from("sixteen-byte-slt");
+  const key = (bytes: number) => Buffer.alloc(bytes, 7);
+  const wrapped = b64(Buffer.from(BCRYPT));
+
+  test.each([
+    ["bcrypt", BCRYPT, "bcrypt"],
+    ["argon2id", ARGON2ID, "argon2id"],
+    ["argon2i", ARGON2ID.replace("argon2id", "argon2i"), "argon2i"],
+    [
+      "bcrypt-pbkdf2-sha1",
+      `$bcrypt-pbkdf2-sha1$v=1$i=1000,kl=20$${b64(salt)}$${wrapped}`,
+      "bcrypt_pbkdf2_sha1",
+    ],
+    [
+      "bcrypt-pbkdf2-sha256",
+      `$bcrypt-pbkdf2-sha256$v=1$i=1000,kl=32$${b64(salt)}$${wrapped}`,
+      "bcrypt_pbkdf2_sha256",
+    ],
+    ["bcrypt-ssha", `$bcrypt-ssha$v=1$${b64(salt)}$${wrapped}`, "bcrypt_ssha"],
+    ["bcrypt-ssha256", `$bcrypt-ssha256$v=1$sp=prefix$${b64(salt)}$${wrapped}`, "bcrypt_ssha256"],
+    ["scrypt", `$scrypt$v=1$n=16384,r=8,p=1,kl=64$${b64(salt)}$${b64(key(64))}`, "scrypt"],
+  ])("sends %s unchanged", (_, hash, hasher) => {
+    expect<unknown>(detectWorkOsHash(hash)).toEqual({ password: hash, passwordHasher: hasher });
+  });
+
+  test.each([
+    [
+      "sha256",
+      `$pbkdf2$i=600000,d=sha256$${b64(salt)}$${b64(key(32))}`,
+      `pbkdf2_sha256$600000$${salt.toString("base64")}$${key(32).toString("base64")}`,
+      "pbkdf2_sha256",
+    ],
+    [
+      "sha256 with the params reversed",
+      `$pbkdf2$d=sha256,i=600000$${b64(salt)}$${b64(key(32))}`,
+      `pbkdf2_sha256$600000$${salt.toString("base64")}$${key(32).toString("base64")}`,
+      "pbkdf2_sha256",
+    ],
+    [
+      "sha512",
+      `$pbkdf2$i=210000,d=sha512$${b64(salt)}$${b64(key(64))}`,
+      `pbkdf2_sha512_hex$210000$${salt.toString("hex")}$${key(64).toString("hex")}`,
+      "pbkdf2_sha512_hex",
+    ],
+    [
+      "sha1",
+      `$pbkdf2$i=1000,d=sha1$${b64(salt)}$${b64(key(20))}`,
+      `pbkdf2_sha1$1000$${salt.toString("hex")}$${key(20).toString("hex")}$20`,
+      "pbkdf2_sha1",
+    ],
+  ])("rewrites pbkdf2 %s into Clerk's layout", (_, hash, password, hasher) => {
+    expect<unknown>(detectWorkOsHash(hash)).toEqual({ password, passwordHasher: hasher });
+  });
+
+  test.each([
+    ["argon2d", ARGON2ID.replace("argon2id", "argon2d")],
+    ["firebase-scrypt", `$firebase-scrypt$v=1$r=8,m=14,ss=Bw,sk=c2lnbmVy$${b64(salt)}$abc`],
+    ["pbkdf2 sha256 with a 36-byte key", `$pbkdf2$i=600000,d=sha256$${b64(salt)}$${b64(key(36))}`],
+    [
+      "pbkdf2 sha512 over 420,000 iterations",
+      `$pbkdf2$i=500000,d=sha512$${b64(salt)}$${b64(key(64))}`,
+    ],
+    ["pbkdf2 without iterations", `$pbkdf2$d=sha256$${b64(salt)}$${b64(key(32))}`],
+    ["pbkdf2 with an unknown digest", `$pbkdf2$i=1000,d=md5$${b64(salt)}$${b64(key(16))}`],
+    ["bcrypt over Clerk's cost cap", BCRYPT.replace("$10$", "$31$")],
+    ["a wrapped format without v=1", `$bcrypt-ssha$${b64(salt)}$${wrapped}`],
+    ["plain SSHA", "{SSHA}c29tZWhhc2hzb21lc2FsdA=="],
+  ])("drops %s", (_, hash) => {
+    expect(detectWorkOsHash(hash)).toBeUndefined();
   });
 });
 

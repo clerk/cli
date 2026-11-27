@@ -128,6 +128,7 @@ describe("registerMigrate", () => {
       "--api-key",
       "--with-identities",
       "--no-with-identities",
+      "--password-hashes",
       "--output",
       "--yes",
       "--runs-dir",
