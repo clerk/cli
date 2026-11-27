@@ -14,6 +14,7 @@ export type { InstanceEnvironment } from "../native/remote.ts";
 export type NativeAPI = Pick<
   typeof plapi,
   | "fetchApplication"
+  | "listApplications"
   | "getNativeSettings"
   | "listIOSApplications"
   | "createIOSApplication"
