@@ -18,6 +18,11 @@ const logUiOutput = new Writable({
     callback();
   },
 });
+// Clack wraps spinner frames at `output.columns`, defaulting to 80 when it's
+// missing. Wrapping at 80 in a wider terminal breaks its redraw: it sizes the
+// erase from the bare message but draws "◒  " + message, so an 78–80 char
+// message wraps once and every frame leaves its first line behind.
+Object.defineProperty(logUiOutput, "columns", { get: () => process.stderr.columns });
 
 function getOutput() {
   return getUiOutput() ?? logUiOutput;
