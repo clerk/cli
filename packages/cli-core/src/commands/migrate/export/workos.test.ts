@@ -523,13 +523,32 @@ describe("buildWorkOsExport", () => {
     expect(lines.map((line) => line.status)).toEqual(["exported", "exported"]);
   });
 
-  // Always shown, always zero: seeing it before the import is the point.
-  test("reports the password row even though it can only ever be zero", () => {
-    const { coverage } = buildWorkOsExport([workosUser(0)]);
+  // Always shown: seeing zero before the import is the point.
+  test("reports the password row at zero, naming the flag, without the CSV", () => {
+    const { coverage, unmatchedHashes } = buildWorkOsExport([workosUser(0)]);
     expect(coverage.at(-1)).toEqual({
-      label: "have a password (WorkOS returns none)",
+      label: "have a password hash (needs --password-hashes)",
       count: 0,
     });
+    expect(unmatchedHashes).toBe(0);
+  });
+
+  test("merges CSV hashes by email, ignoring case, and counts the leftovers", () => {
+    const hashes = new Map([
+      ["a0@x.dev", "$2b$10$hash0"],
+      ["gone@x.dev", "$2b$10$gone"],
+    ]);
+    const { users, coverage, unmatchedHashes } = buildWorkOsExport(
+      [workosUser(0, { email: "A0@X.dev" }), workosUser(1)],
+      undefined,
+      undefined,
+      hashes,
+    );
+
+    expect(users[0]?.password_hash).toBe("$2b$10$hash0");
+    expect("password_hash" in (users[1] ?? {})).toBe(false);
+    expect(coverage.at(-1)).toEqual({ label: "have a password hash", count: 1 });
+    expect(unmatchedHashes).toBe(1);
   });
 
   // Providers get their own block: a coverage row means "N of M users have
@@ -613,10 +632,43 @@ describe("exportWorkOs", () => {
   });
 
   // Finding this out after the import means nobody can sign in.
-  test("says plainly that no credentials are in the file", async () => {
+  test("says plainly that no credentials are in the file, and how to add them", async () => {
     stubWorkOs([[workosUser(0)]]);
     await exportWorkOs({ apiKey: API_KEY, output: "warned.json" });
     expect(captured.err).toContain("does not return password hashes or TOTP secrets");
+    expect(captured.err).toContain("--password-hashes");
+  });
+
+  // WorkOS warns that some hashes contain commas.
+  test("--password-hashes merges the support CSV into the file", async () => {
+    stubWorkOs([[workosUser(0), workosUser(1)]]);
+    fs.writeFileSync(
+      path.join(workDir, "hashes.csv"),
+      'email,password_hash,first_name,last_name\nA0@x.dev,"$pbkdf2$i=600000,d=sha256$c2FsdA$a2V5",Given0,Family0\nstranger@x.dev,$2b$10$x,S,T\n',
+    );
+
+    await exportWorkOs({ apiKey: API_KEY, output: "hashed.json", passwordHashes: "hashes.csv" });
+
+    const written = (
+      JSON.parse(fs.readFileSync(path.join(workDir, "hashed.json"), "utf-8")) as {
+        users: Record<string, unknown>[];
+      }
+    ).users;
+    expect(written[0]?.password_hash).toBe("$pbkdf2$i=600000,d=sha256$c2FsdA$a2V5");
+    expect("password_hash" in (written[1] ?? {})).toBe(false);
+    expect(captured.err).toContain("1/2 have a password hash");
+    expect(captured.err).toContain("1 row in hashes.csv matched no WorkOS user");
+    expect(captured.err).not.toContain("does not return password hashes");
+  });
+
+  test("--password-hashes fails on a missing file before calling WorkOS", async () => {
+    stubWorkOs([[workosUser(0)]]);
+    const error = await exportWorkOs({ apiKey: API_KEY, passwordHashes: "nope.csv" }).catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(CliError);
+    expect((error as CliError).message).toContain("No password hash file at");
+    expect(requests).toHaveLength(0);
   });
 });
 

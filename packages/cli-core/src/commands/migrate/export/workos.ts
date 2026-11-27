@@ -6,17 +6,23 @@
  * everything the command sends shows up under `--verbose`. See the header of
  * `auth0.ts` and `.claude/rules/debug-logging.md`.
  *
- * **WorkOS is API-only, and no credential leaves it.** There is no
+ * **WorkOS is API-only, and its API returns no credentials.** There is no
  * bring-your-own-database option — apps mirror WorkOS users into their own
  * store through webhooks, but that mirror is a derived copy holding no secrets,
- * which is why this has no `--db-url` sibling. Password hashes are accepted on
- * import and never returned; TOTP secrets come back on enrol only, never on
- * list or get. So a WorkOS migration moves identities, and every password user
- * signs in again by reset. The run says so rather than leaving it to be
- * discovered when nobody can sign in.
+ * which is why this has no `--db-url` sibling. The API never returns password
+ * hashes, and returns TOTP secrets on enrol only, never on list or get.
+ *
+ * Password hashes come only from WorkOS support, as a CSV of
+ * `email,password_hash,first_name,last_name`. That file has no WorkOS ID,
+ * verification state, or metadata, so it can't be imported on its own:
+ * `--password-hashes` merges it into the API's users by email. Without it,
+ * every password user signs in again by reset, and the run says so rather
+ * than leaving it to be discovered when nobody can sign in.
  */
 
-import { ApiError, CliError, EXIT_CODE, throwUsageError } from "../../../lib/errors.ts";
+import fs from "node:fs";
+import path from "node:path";
+import { ApiError, CliError, ERROR_CODE, EXIT_CODE, throwUsageError } from "../../../lib/errors.ts";
 import { loggedFetch } from "../../../lib/fetch.ts";
 import { dim } from "../../../lib/color.ts";
 import { log } from "../../../lib/log.ts";
@@ -30,6 +36,8 @@ import { isAssumeYes } from "../lib/assume-yes.ts";
 import { throwApiFailure, withInputRetry } from "../lib/input-retry.ts";
 import { RateLimitExceededError, retryOn429 } from "../lib/retry.ts";
 import { createApiScheduler } from "../lib/scheduler.ts";
+import { plural } from "../lib/plural.ts";
+import { readCsv } from "../lib/transform.ts";
 import { finishExport, startExportRun, type ExportSection } from "./shared.ts";
 
 const API_BASE = "https://api.workos.com/user_management";
@@ -71,7 +79,43 @@ export type ExportWorkOsOptions = {
   runsDir?: string;
   /** Print the result as JSON on stdout; never prompts. */
   json?: boolean;
+  /** The CSV of password hashes WorkOS support sends, merged in by email. */
+  passwordHashes?: string;
 };
+
+/** Lowercased, so the CSV and the API needn't agree on case. */
+const emailKey = (email: unknown) =>
+  String(email ?? "")
+    .trim()
+    .toLowerCase();
+
+/**
+ * Reads the CSV WorkOS support sends, keyed by email.
+ *
+ * A CSV parser rather than a split on commas: WorkOS warns that some hashes
+ * contain commas. Rows without an email or a hash are skipped.
+ *
+ * @throws CliError when the file is missing, before any request is sent.
+ */
+export async function readWorkOsPasswordHashes(file: string): Promise<Map<string, string>> {
+  const resolved = path.resolve(process.cwd(), file);
+  if (!fs.existsSync(resolved)) {
+    throw new CliError(`No password hash file at ${resolved}.`, {
+      code: ERROR_CODE.FILE_NOT_FOUND,
+      docsUrl: DOCS_URL,
+    });
+  }
+
+  const hashes = new Map<string, string>();
+  // ponytail: a repeated email keeps its last hash; WorkOS emails are unique
+  // per environment, so this only matters for a CSV spanning environments.
+  for (const row of await readCsv(resolved)) {
+    const email = emailKey(row.email);
+    const hash = String(row.password_hash ?? "").trim();
+    if (email && hash) hashes.set(email, hash);
+  }
+  return hashes;
+}
 
 export type WorkOsUser = Record<string, unknown> & { id?: string };
 
@@ -412,7 +456,7 @@ export function buildIdentityReport(
 
 /**
  * Keeps the fields the `workos` transformer maps from, plus `identities` when
- * they were fetched.
+ * they were fetched and `password_hash` when the support CSV had one.
  *
  * A copy rather than the raw record: WorkOS also returns `locale`,
  * `profile_picture_url`, `last_sign_in_at`, and `updated_at`, which the import
@@ -423,6 +467,7 @@ export function buildIdentityReport(
 export function mapWorkOsUserToExport(
   user: WorkOsUser,
   identities?: WorkOsIdentity[],
+  passwordHash?: string,
 ): Record<string, unknown> {
   const exported: Record<string, unknown> = {};
 
@@ -448,32 +493,46 @@ export function mapWorkOsUserToExport(
 
   if (identities && identities.length > 0) exported.identities = identities;
 
+  if (passwordHash) exported.password_hash = passwordHash;
+
   return exported;
 }
 
 export type WorkOsExportResult = {
   users: Record<string, unknown>[];
   coverage: { label: string; count: number }[];
+  /** CSV rows whose email matched no WorkOS user. */
+  unmatchedHashes: number;
 };
 
+/**
+ * @param hashes - The support CSV by lowercased email, when `--password-hashes`
+ *   was passed.
+ */
 export function buildWorkOsExport(
   users: WorkOsUser[],
   record: (line: UserLine) => void = () => {},
   identities?: Map<string, WorkOsIdentity[]>,
+  hashes?: Map<string, string>,
 ): WorkOsExportResult {
   const exported: Record<string, unknown>[] = [];
-  const counts = { email: 0, firstName: 0, lastName: 0, metadata: 0 };
+  const counts = { email: 0, firstName: 0, lastName: 0, metadata: 0, password: 0 };
+  const matched = new Set<string>();
 
   for (const user of users) {
     const userId = String(user.id ?? "");
     try {
-      const mapped = mapWorkOsUserToExport(user, identities?.get(userId));
+      const key = emailKey(user.email);
+      const hash = hashes?.get(key);
+      if (hash) matched.add(key);
+      const mapped = mapWorkOsUserToExport(user, identities?.get(userId), hash);
       exported.push(mapped);
 
       if (mapped.email) counts.email++;
       if (mapped.first_name) counts.firstName++;
       if (mapped.last_name) counts.lastName++;
       if (mapped.metadata) counts.metadata++;
+      if (mapped.password_hash) counts.password++;
 
       record({ sourceId: userId, status: "exported" });
     } catch (error) {
@@ -488,14 +547,22 @@ export function buildWorkOsExport(
       { label: "have a first name", count: counts.firstName },
       { label: "have a last name", count: counts.lastName },
       { label: "have metadata", count: counts.metadata },
-      // Always present, always zero. WorkOS returns no digest for anyone, and
-      // seeing that before the import is the whole reason the row is here.
-      { label: "have a password (WorkOS returns none)", count: 0 },
+      // Always present: zero without the CSV, and seeing that before the
+      // import is the whole reason the row is here.
+      {
+        label: hashes ? "have a password hash" : "have a password hash (needs --password-hashes)",
+        count: counts.password,
+      },
     ],
+    unmatchedHashes: hashes ? hashes.size - matched.size : 0,
   };
 }
 
 export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> {
+  // Read first, so a wrong path fails before any request is sent.
+  const hashes = options.passwordHashes
+    ? await readWorkOsPasswordHashes(options.passwordHashes)
+    : undefined;
   const resolved = await resolveWorkOsApiKey(options);
 
   await withGutter("Exporting users from WorkOS", async () => {
@@ -522,11 +589,11 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
       : undefined;
 
     const run = await startExportRun(options, { platform: "workos" });
-    const { users: exported, coverage } = buildWorkOsExport(
-      users,
-      run.append,
-      providers?.identities,
-    );
+    const {
+      users: exported,
+      coverage,
+      unmatchedHashes,
+    } = buildWorkOsExport(users, run.append, providers?.identities, hashes);
     finishExport({
       run,
       options,
@@ -537,9 +604,18 @@ export async function exportWorkOs(options: ExportWorkOsOptions): Promise<void> 
         : [],
     });
 
-    if (exported.length > 0) {
+    if (unmatchedHashes > 0) {
       log.warn(
-        "WorkOS's API does not return password hashes or TOTP secrets. Imported users who signed in with a password must reset it on their first Clerk sign-in, and anyone using an authenticator app has to re-enrol. SSO and social users don't need a reset, but set up those providers in Clerk first: social accounts link by verified email, and SSO needs an enterprise connection.",
+        `${plural(unmatchedHashes, "row")} in ${options.passwordHashes} matched no WorkOS user by email, so the export left those hashes out. Check that the CSV is from the same WorkOS environment as the API key.`,
+      );
+    }
+
+    if (exported.length > 0) {
+      const passwords = hashes
+        ? "WorkOS's API does not return TOTP secrets. Imported users whose hash is missing from the CSV, or is in a format Clerk can't verify, must reset their password on their first Clerk sign-in."
+        : "WorkOS's API does not return password hashes or TOTP secrets. Imported users who signed in with a password must reset it on their first Clerk sign-in. To keep their passwords, ask WorkOS support for a password hash export and pass the CSV with --password-hashes.";
+      log.warn(
+        `${passwords} Anyone using an authenticator app has to re-enrol. SSO and social users don't need a reset, but set up those providers in Clerk first: social accounts link by verified email, and SSO needs an enterprise connection.`,
       );
       log.info(dim(`See ${DOCS_URL}`));
     }

@@ -218,6 +218,10 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       "Also record each user's OAuth providers — one extra request per user",
     )
     .option("--no-with-identities", "Skip the OAuth provider fan-out without being asked")
+    .option(
+      "--password-hashes <path>",
+      "CSV of password hashes from a WorkOS support request, merged in by email",
+    )
     .option("-o, --output <path>", "Write the export here instead of the run folder")
     .option(
       "-y, --yes",
@@ -229,6 +233,10 @@ export function registerMigrateExport(migrateCommand: Command<[], Record<string,
       {
         command: "clerk migrate export workos --api-key sk_…",
         description: "Export with an explicit API key",
+      },
+      {
+        command: "clerk migrate export workos --password-hashes ./workos-password-hashes.csv",
+        description: "Add the password hashes WorkOS support sent",
       },
       {
         command: "clerk migrate export workos",
