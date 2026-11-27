@@ -1,5 +1,31 @@
 # clerk
 
+## 4.5.0
+
+### Minor Changes
+
+- Make `clerk link` claim the application a signed-out `clerk init` created and link the folder to it, and make `clerk deploy` and `clerk deploy status` say how to link a folder that runs on an unclaimed application. If the claim fails with an error that keeps the claim token, or the workspace is managed by an integration, `clerk link` now stops with the error and says whether to rerun it or link another app with `--app`, instead of offering apps that can't include the claimed one. If the folder's publishable key belongs to a different application, `clerk link` and `clerk auth login` claim the application but leave the folder unlinked and its env files unchanged, and say which file holds the other key. ([#600](https://github.com/clerk/cli/pull/600)) by [@shane-kercheval](https://github.com/shane-kercheval)
+
+  - `clerk auth login`'s claim-failure messages now say why the claim failed and what to do, and `clerk init`, `clerk migrate` and `clerk doctor` print them too when they sign you in.
+
+- `clerk init` and `clerk doctor` now warn when an existing Clerk native registration's App ID Prefix differs from the Apple team the iOS or macOS app is signed by, as happens after moving the app to another team. Setup still uses the registered prefix. If that prefix differs from the App ID's actual prefix in Apple Developer, passkeys and password AutoFill fail until the registration matches. The warning says how to fix it: look up the Bundle ID in Apple Developer, select the owning team in Xcode if needed, and copy the App ID's prefix into the registration in the Clerk Dashboard if it differs, or, for an iOS App ID that really uses a legacy prefix, pass `--app-id-prefix` with that prefix to confirm it. `clerk doctor` now accepts `--app-id-prefix` for that, its production check no longer treats a mismatched prefix as confirmed, and a production registration that differs from the release build's signing team is reported: as a `Production App ID Prefix` warning, or, when it also conflicts with the prefix carried over from development, under `Production native registration`. `clerk init --json` reports the warning in `identity.warnings` and as an `app-id-prefix-review` item in `handoff.remaining`; `clerk doctor` reports it as an `App ID Prefix` check. ([#638](https://github.com/clerk/cli/pull/638)) by [@seanperez29](https://github.com/seanperez29)
+
+### Patch Changes
+
+- Stop adding a duplicate `.clerk/` line to `.gitignore` when the folder is already ignored under an equivalent pattern such as `/.clerk/`, `.clerk`, or `.clerk/*`. ([#595](https://github.com/clerk/cli/pull/595)) by [@manovotny](https://github.com/manovotny)
+
+- Keep the trailing newline on files that `clerk init` edits, so they no longer show "No newline at end of file" in `git diff`. ([#599](https://github.com/clerk/cli/pull/599)) by [@manovotny](https://github.com/manovotny)
+
+- `clerk init` now treats a project with `.ts` or `.tsx` source files as TypeScript before `tsconfig.json` exists, so it updates an existing `app/layout.tsx` and writes `.ts`/`.tsx` files instead of skipping the layout and writing `.js`/`.jsx`. ([#590](https://github.com/clerk/cli/pull/590)) by [@djgould](https://github.com/djgould)
+
+- Create the entitlements file inside the app's synchronized folder (for example `MyApp/MyApp.entitlements`), as Xcode does, when `clerk init` adds Associated Domains or Sign in with Apple to an iOS or macOS app that has none, so Xcode's navigator shows it. This covers apps from Xcode 16 and later templates, `project.xcproj` projects, and `clerk init --starter` apps; projects without a synchronized folder still get the file next to the `.xcodeproj`. ([#622](https://github.com/clerk/cli/pull/622)) by [@seanperez29](https://github.com/seanperez29)
+
+- Stop `clerk init` from setting up an existing iOS or macOS app against the linked Clerk application when the app's `Clerk.configure` publishable key belongs to a different application. With `--json` it reports an `input-required` status that names each mismatched configuration and the key's application, with the `--relink` command when relinking would fix every configuration, and the result now includes a `configuredKeys` field saying, for each configuration, whether its key was checked. ([#639](https://github.com/clerk/cli/pull/639)) by [@seanperez29](https://github.com/seanperez29)
+
+- Wait for Xcode to finish resolving packages when `clerk init` sets up an iOS or macOS app that's open in Xcode, and say Xcode is still resolving instead of pointing to network access. ([#624](https://github.com/clerk/cli/pull/624)) by [@seanperez29](https://github.com/seanperez29)
+
+- Deprecate `--end-user-only` on `clerk logs list` and `clerk logs get`. The Backend API now ignores it, so it filters nothing. Passing it still works and prints a warning. ([#644](https://github.com/clerk/cli/pull/644)) by [@BrandonRomano](https://github.com/BrandonRomano)
+
 ## 4.4.0
 
 ### Minor Changes
