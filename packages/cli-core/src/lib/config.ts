@@ -41,7 +41,7 @@ interface Profile {
   };
 }
 
-export function profileLabel(profile: Profile): string {
+export function profileLabel(profile: { appId: string; appName?: string }): string {
   return profile.appName ? `${profile.appName} (${profile.appId})` : profile.appId;
 }
 

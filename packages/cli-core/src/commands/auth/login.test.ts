@@ -1,5 +1,5 @@
 import { test, expect, describe, afterEach, beforeEach, mock, spyOn } from "bun:test";
-import { AuthError, ERROR_CODE, UserAbortError } from "../../lib/errors.ts";
+import { AuthError, CliError, ERROR_CODE, PlapiError, UserAbortError } from "../../lib/errors.ts";
 import { useCaptureLog, credentialStoreStubs, configStubs } from "../../test/lib/stubs.ts";
 import type { AutoclaimResult } from "../../lib/autoclaim.ts";
 import type { Application } from "../../lib/plapi.ts";
@@ -97,12 +97,18 @@ mock.module("../../lib/first-application.ts", () => ({
   ensureFirstApplication: () => mockEnsureFirstApplication(),
 }));
 
-const mockAttemptAutoclaim = mock(async (_cwd: string): Promise<AutoclaimResult> => ({
-  status: "not_keyless",
-}));
+const mockAttemptAutoclaim = mock(
+  async (_cwd: string, _options: { checkKeys: boolean }): Promise<AutoclaimResult> => ({
+    status: "not_keyless",
+  }),
+);
 
+// The real warning texts, so these tests pin what `clerk auth login` prints.
+const actualAutoclaim = await import("../../lib/autoclaim.ts");
 mock.module("../../lib/autoclaim.ts", () => ({
-  attemptAutoclaim: (cwd: string) => mockAttemptAutoclaim(cwd),
+  ...actualAutoclaim,
+  attemptAutoclaim: (cwd: string, options: { checkKeys: boolean }) =>
+    mockAttemptAutoclaim(cwd, options),
 }));
 
 const { setLogLevel } = await import("../../lib/log.ts");
@@ -116,14 +122,22 @@ describe("login", () => {
   const origSpawn = Bun.spawn;
   const origStdinIsTTY = process.stdin.isTTY;
 
+  // The claim's failure advice depends on it; a developer's own must not decide these tests.
+  const originalApiKey = process.env.CLERK_PLATFORM_API_KEY;
+
   beforeEach(() => {
+    delete process.env.CLERK_PLATFORM_API_KEY;
     consoleSpy = spyOn(console, "log").mockImplementation(() => {});
     // The paste-back prompt only appears on an interactive stdin. Pin it off
     // so the suite doesn't change behaviour when run from a terminal.
     process.stdin.isTTY = false;
+    // Also set after each test; here too, so the first test doesn't run without it.
+    mockOpenBrowser.mockResolvedValue({ ok: true, launcher: "test" });
   });
 
   afterEach(() => {
+    if (originalApiKey === undefined) delete process.env.CLERK_PLATFORM_API_KEY;
+    else process.env.CLERK_PLATFORM_API_KEY = originalApiKey;
     mockGetValidToken.mockReset();
     mockStoreToken.mockReset();
     mockCreateOAuthSession.mockReset();
@@ -670,6 +684,7 @@ describe("login", () => {
     mockResolveProfile.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
+      linked: true,
       envPulled: true,
       app: {
         application_id: "app_claimed",
@@ -693,12 +708,117 @@ describe("login", () => {
     );
   });
 
+  test("warns, links nothing, and exits 0 when the folder's key belongs to another app", async () => {
+    // Human mode: only it prints the next steps.
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    const exitCodeBefore = process.exitCode;
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "keys_mismatch",
+      sources: [".env.local"],
+      app: {
+        application_id: "app_claimed",
+        name: "bad-agent",
+        instances: [
+          {
+            instance_id: "ins_dev_claimed",
+            environment_type: "development",
+            publishable_key: "pk_test_claimed",
+          },
+        ],
+      } as Application,
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Claimed application `bad-agent` (app_claimed) into your account, but .env.local holds a publishable key for a different application, " +
+        "so this folder wasn't linked and its keys weren't changed. " +
+        "Run `clerk link --app <app_id>` with the application this folder should use.",
+    );
+    expect(captured.err).not.toContain("Claimed and linked application");
+    // The next step repeats the warning's advice: if a person ran a bare `clerk link`, picked the
+    // claimed app in the picker and then ran `clerk env pull`, its keys would overwrite the other app's.
+    const advice = "Run `clerk link --app <app_id>` with the application this folder should use";
+    expect(captured.err.split(advice).length - 1).toBe(2);
+    expect(captured.err).not.toContain("Run `clerk link` to connect your Clerk application");
+    expect(captured.err).not.toContain("clerk env pull");
+    expect(process.exitCode).toBe(exitCodeBefore);
+  });
+
+  test("clerk init's sign-in call claims without the key check", async () => {
+    // `clerk init` calls exactly this (pinned in commands/init/index.test.ts and strategy.test.ts).
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+
+    await runLogin({ showNextSteps: false });
+
+    expect(mockAttemptAutoclaim).toHaveBeenCalledWith(process.cwd(), { checkKeys: false });
+  });
+
+  test("checkClaimKeys turns the key check on, as the clerk auth login command does", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+
+    await runLogin({ checkClaimKeys: true });
+
+    expect(mockAttemptAutoclaim).toHaveBeenCalledWith(process.cwd(), { checkKeys: true });
+  });
+
+  test("a claim that didn't link the folder says so and points at clerk link", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "claimed",
+      linked: false,
+      linkError: "the application has no development instance",
+      envPulled: false,
+      app: { application_id: "app_claimed", name: "bad-agent", instances: [] },
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain("Claimed application: `bad-agent`");
+    expect(captured.err).not.toContain("Claimed and linked application");
+    expect(captured.err).toContain(
+      "This folder wasn't linked: the application has no development instance. Run `clerk link` to finish setup.",
+    );
+    expect(captured.err).toContain("Run `clerk link` to connect your Clerk application");
+  });
+
+  test("claim: false signs in without claiming, for clerk link to claim itself", async () => {
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+
+    await runLogin({ showNextSteps: false, claim: false });
+
+    expect(mockAttemptAutoclaim).not.toHaveBeenCalled();
+    expect(captured.err).not.toContain("Claimed and linked application");
+  });
+
+  test("claim: false also skips the claim when an agent reuses a session", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+
+    await runLogin({ claim: false });
+
+    expect(mockAttemptAutoclaim).not.toHaveBeenCalled();
+  });
+
   test("links to the development instance even when production is listed first", async () => {
     mockGetValidToken.mockResolvedValue(null);
     mockOAuthSuccess();
     mockResolveProfile.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
+      linked: true,
       envPulled: true,
       app: {
         application_id: "app_claimed",
@@ -734,6 +854,7 @@ describe("login", () => {
     mockResolveProfile.mockResolvedValue(undefined);
     mockAttemptAutoclaim.mockResolvedValue({
       status: "claimed",
+      linked: true,
       envPulled: true,
       // Deliberately shaped like API JSON that dropped the array.
       app: { application_id: "app_claimed", name: "bad-agent" } as Application,
@@ -818,6 +939,7 @@ describe("login", () => {
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
     mockAttemptAutoclaim.mockResolvedValue({
       status: "managed_workspace",
+      error: new PlapiError(403, "{}"),
       longMessage:
         "The target application cannot be claimed into the current workspace. Select a different workspace and try again.",
     });
@@ -831,11 +953,184 @@ describe("login", () => {
     expect(captured.err).not.toContain("does not have an active organization");
   });
 
+  test("a temporary claim failure gives the same advice as clerk link, and the --app next step", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(503, "Service Unavailable"),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Couldn't claim the application `clerk init` created because of a temporary error. " +
+        "Rerun `clerk link` to retry, or run `clerk link --app <app_id>` to link a different application.",
+    );
+    expect(captured.err).not.toContain("retried on your next `clerk auth login`");
+    expect(captured.err).toContain("Run `clerk auth login` again to retry auto-claim");
+    expect(captured.err).toContain(
+      "Run `clerk link --app <app_id>` to link a different application",
+    );
+    expect(captured.err).not.toContain("Run `clerk link` to connect your application manually");
+  });
+
+  test("a 4xx claim failure says Clerk rejected the claim, and the next steps offer no retry", async () => {
+    // Human mode: only it prints the next steps.
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(
+        400,
+        JSON.stringify({
+          errors: [{ code: "form_param_invalid", message: "Invalid claim token" }],
+        }),
+      ),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Clerk rejected the claim of the application `clerk init` created. " +
+        "Run `clerk link --app <app_id>` with the application this folder should use. " +
+        "Clerk's reason (400): Invalid claim token",
+    );
+    expect(captured.err).not.toContain("temporary error");
+    // The next step; the warning above words the --app advice differently.
+    expect(captured.err).toContain(
+      "Run `clerk link --app <app_id>` to link a different application",
+    );
+    expect(captured.err).not.toContain("Run `clerk auth login` again to retry auto-claim");
+  });
+
+  test("a 401 claim failure says to sign in again, with no --app advice in the warning or next steps", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(401, "Unauthorized"),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Clerk rejected the saved sign-in while claiming the application `clerk init` created. " +
+        "Run `clerk auth login` to sign in again, then rerun `clerk link`.",
+    );
+    expect(captured.err).toContain("Run `clerk auth login` to sign in again");
+    expect(captured.err).not.toContain("--app");
+  });
+
+  test("a 401 with CLERK_PLATFORM_API_KEY set says to fix or unset the key, not to sign in", async () => {
+    const original = process.env.CLERK_PLATFORM_API_KEY;
+    process.env.CLERK_PLATFORM_API_KEY = "ak_test";
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new PlapiError(401, "Unauthorized"),
+    });
+
+    try {
+      await runLogin();
+    } finally {
+      if (original === undefined) delete process.env.CLERK_PLATFORM_API_KEY;
+      else process.env.CLERK_PLATFORM_API_KEY = original;
+    }
+
+    expect(captured.err).toContain(
+      "Clerk rejected `CLERK_PLATFORM_API_KEY` while claiming the application `clerk init` created. " +
+        "Fix or unset it, then rerun `clerk link`.",
+    );
+    expect(captured.err).toContain(
+      "Fix or unset `CLERK_PLATFORM_API_KEY`, then run `clerk link` to claim the application",
+    );
+    expect(captured.err).not.toContain("sign in again");
+  });
+
+  test("a CLI error with CLERK_PLATFORM_API_KEY set warns with its own message, and the next step is the key", async () => {
+    process.env.CLERK_PLATFORM_API_KEY = "sk_test_wrong_kind";
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new CliError("Expected a Platform API key (ak_...), found a secret key (sk_...).", {
+        code: ERROR_CODE.INVALID_KEY_FORMAT,
+      }),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Expected a Platform API key (ak_...), found a secret key (sk_...).",
+    );
+    expect(captured.err).not.toContain("temporary error");
+    expect(captured.err).not.toContain("Run `clerk auth login` again to retry auto-claim");
+    expect(captured.err).toContain(
+      "Fix or unset `CLERK_PLATFORM_API_KEY`, then run `clerk link` to claim the application",
+    );
+    expect(captured.err).not.toContain("clerk link --app");
+  });
+
+  test("a CLI error without CLERK_PLATFORM_API_KEY set shows no next steps beyond its message", async () => {
+    mockIsHuman.mockReturnValue(true);
+    mockGetValidToken.mockResolvedValue(null);
+    mockOAuthSuccess();
+    mockResolveProfile.mockResolvedValue(undefined);
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new CliError(
+        "Expected a secret key starting with `sk_` in .env, found something else.",
+        {
+          code: ERROR_CODE.INVALID_KEY_FORMAT,
+        },
+      ),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain("found something else.");
+    expect(captured.err).not.toContain("Next steps");
+    expect(captured.err).not.toContain("clerk link --app");
+  });
+
+  test("an expired session during the claim gives the sign-in advice", async () => {
+    mockGetValidToken.mockResolvedValue("existing-token");
+    mockGetAuth.mockResolvedValue({ userId: "user_123" });
+    mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "failed",
+      error: new AuthError({ reason: "session_expired" }),
+    });
+
+    await runLogin();
+
+    expect(captured.err).toContain(
+      "Run `clerk auth login` to sign in again, then rerun `clerk link`.",
+    );
+    expect(captured.err).not.toContain("temporary error");
+  });
+
   test("falls back to a generic provider when the managed-workspace rejection has no long message", async () => {
     mockGetValidToken.mockResolvedValue("existing-token");
     mockGetAuth.mockResolvedValue({ userId: "user_123" });
     mockFetchUserInfo.mockResolvedValue({ userId: "user_123", email: "existing@example.com" });
-    mockAttemptAutoclaim.mockResolvedValue({ status: "managed_workspace", longMessage: null });
+    mockAttemptAutoclaim.mockResolvedValue({
+      status: "managed_workspace",
+      longMessage: null,
+      error: new PlapiError(403, "{}"),
+    });
 
     await runLogin();
 

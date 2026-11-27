@@ -61,6 +61,7 @@ test("scaffolds all actions for a fresh Nuxt project (Nuxt 3 layout)", async () 
   expect(config.type).toBe("modify");
   if (config.type === "modify") {
     expect(config.content).toContain("@clerk/nuxt");
+    expect(config.content.endsWith("\n")).toBe(true);
   }
 
   // Nuxt 3 layout: pages at pages/ (no app/ directory)

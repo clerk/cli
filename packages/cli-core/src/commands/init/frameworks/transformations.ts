@@ -3,8 +3,20 @@
  * These functions take source code as input and return modified source code.
  * Used by framework scaffolders for import injection, provider wrapping, and indentation.
  */
-import { parseModule } from "magicast";
+import { parseModule, type ProxifiedModule } from "magicast";
 import { maskCommentsAndStrings } from "./source-scan.js";
+
+/**
+ * Print a magicast module in the line endings of the source it was parsed from, keeping
+ * its trailing line break. magicast's printer joins lines with the host's EOL and drops
+ * the final line break, which leaves "No newline at end of file" in the user's diff.
+ */
+export function printModule(mod: ProxifiedModule, source: string): string {
+  const lineTerminator = /\r?\n/.exec(source)?.[0] ?? "\n";
+  const code = mod.generate({ lineTerminator }).code;
+  const eol = /\r?\n$/.exec(source)?.[0];
+  return eol && !code.endsWith("\n") ? code + eol : code;
+}
 
 /** Check if file content already imports from a @clerk/ package. */
 export function hasClerkImport(content: string): boolean {
@@ -30,7 +42,10 @@ export function safeAddImport(content: string, source: string, imported: string)
     // spacing, and no printer option overrides that. Projects without a
     // formatter would keep `import {x}`, so re-space the one statement we
     // added — anchored on `from` so only an import statement can match.
-    return mod.generate().code.replace(`import {${imported}} from`, `import { ${imported} } from`);
+    return printModule(mod, content).replace(
+      `import {${imported}} from`,
+      `import { ${imported} } from`,
+    );
   } catch {
     return `import { ${imported} } from "${source}";\n${content}`;
   }

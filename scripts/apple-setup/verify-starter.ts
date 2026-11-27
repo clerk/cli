@@ -20,6 +20,9 @@ for (const platform of ["ios", "macos"] as const) {
     await writeStarterProject(projectRoot, { name: "MyApp", bundleIdentifier, teamId, platform });
     const registrations: Awaited<ReturnType<NativeAPI["listIOSApplications"]>> = [];
     const api: NativeAPI = {
+      async listApplications() {
+        return [];
+      },
       async fetchApplication(id) {
         return {
           application_id: id,

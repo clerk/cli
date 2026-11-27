@@ -1,5 +1,5 @@
 import { test, expect, describe, beforeEach, afterEach, mock, spyOn } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { tmpdir } from "node:os";
 import { useCaptureLog, listageStubs, captureTelemetryPayload } from "../../test/lib/stubs.ts";
@@ -542,6 +542,66 @@ describe("deploy", () => {
       "Production Linear sign-in requires custom OAuth credentials.",
       "Reference: https://clerk.com/docs/authentication/social-connections/linear",
     ]);
+  });
+
+  describe("not_linked message names the app the folder runs on", () => {
+    const INIT_APP =
+      "This folder holds a claim token a signed-out `clerk init` wrote to `.clerk/keyless.json`. " +
+      "If no account owns that application yet, `clerk link` claims it into your account. " +
+      "Run `clerk link` to link this folder, then rerun `clerk deploy`.";
+    const SDK_APP =
+      "This folder holds a claim link a Clerk SDK wrote to `.clerk/.tmp/keyless.json`. " +
+      "If no account owns that application yet, a person must run `clerk open` to claim it in the Dashboard. " +
+      "Then run `clerk link` and choose it (agents: `clerk auth login` if needed, then `clerk apps list --json` and `clerk link --app <app_id>`), " +
+      "then rerun `clerk deploy`.";
+    const PLAIN =
+      "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy`.";
+
+    let cwdSpy: ReturnType<typeof spyOn> | undefined;
+
+    afterEach(() => {
+      cwdSpy?.mockRestore();
+      cwdSpy = undefined;
+    });
+
+    /** An unlinked project whose folder (the temp dir) holds the given keyless file. */
+    async function unlinkedFolder(state: "init_app" | "sdk_app" | "plain") {
+      await unlinkedProject();
+      cwdSpy = spyOn(process, "cwd").mockReturnValue(tempDir);
+      if (state === "init_app") {
+        await mkdir(join(tempDir, ".clerk"), { recursive: true });
+        await Bun.write(
+          join(tempDir, ".clerk", "keyless.json"),
+          JSON.stringify({ claimToken: "tok_init", createdAt: "2026-11-02T00:00:00.000Z" }),
+        );
+      }
+      if (state === "sdk_app") {
+        await mkdir(join(tempDir, ".clerk", ".tmp"), { recursive: true });
+        await Bun.write(
+          join(tempDir, ".clerk", ".tmp", "keyless.json"),
+          JSON.stringify({ claimUrl: "https://dashboard.clerk.com/apps/claim?token=tok_sdk" }),
+        );
+      }
+    }
+
+    test.each([
+      ["init_app", "agent", INIT_APP],
+      ["sdk_app", "agent", SDK_APP],
+      ["plain", "agent", PLAIN],
+      ["init_app", "human", INIT_APP],
+      ["sdk_app", "human", SDK_APP],
+      ["plain", "human", PLAIN],
+    ] as const)("%s folder in %s mode", async (state, mode, expected) => {
+      await unlinkedFolder(state);
+      mockIsAgent.mockReturnValue(mode === "agent");
+
+      const error = await runDeploy({}).catch((caught: unknown) => caught);
+
+      expect(error).toBeInstanceOf(CliError);
+      expect((error as CliError).code).toBe(ERROR_CODE.NOT_LINKED);
+      expect((error as CliError).message).toBe(expected);
+      expect(mockFetchApplication).not.toHaveBeenCalled();
+    });
   });
 
   describe("agent mode", () => {
