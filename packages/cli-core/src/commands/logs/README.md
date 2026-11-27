@@ -95,7 +95,7 @@ clerk logs --follow --type 'sign_in.*' --json
 
 #### Filters
 
-Each filter flag is sent as a `GET /v1/logs` query parameter on every request of a run, like the time range. By default a log must match every filter; `--match any` keeps logs that match at least one of the string and `--payload-filter` filters (the time range and `--end-user-only` always apply).
+Each filter flag is sent as a `GET /v1/logs` query parameter on every request of a run, like the time range. By default a log must match every filter; `--match any` keeps logs that match at least one of the string and `--payload-filter` filters (the time range always applies).
 
 | Flag                            | API parameter                  | Notes                                                                   |
 | ------------------------------- | ------------------------------ | ----------------------------------------------------------------------- |
@@ -112,7 +112,7 @@ Each filter flag is sent as a `GET /v1/logs` query parameter on every request of
 | `--payload-filter <path=value>` | `payload_filter[<path>]=value` | Repeatable; a payload field (dot path) equals a value. Needs `--type`   |
 | `--fields <a,b>`                | `payload_fields`               | Payload fields to return in each log's `payload`. Needs `--type`        |
 | `--match <all\|any>`            | `filter_match`                 | `all` (default) sends nothing                                           |
-| `--end-user-only`               | `end_user_facing_only=true`    | Only event types shown to end users                                     |
+| `--end-user-only`               | `end_user_facing_only=true`    | Deprecated. Does nothing, since the API ignores it. Prints a warning    |
 
 These combinations are usage errors, raised before any request, matching the Backend API's own checks:
 

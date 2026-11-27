@@ -14,6 +14,7 @@ export {
   hasClerkImport,
   indentBlock,
   safeAddImport,
+  printModule,
   insertAfterLastImport,
   addSuspenseImport,
   wrapBodyWithProvider,

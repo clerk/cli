@@ -26,7 +26,7 @@ export function registerAuth(program: Program): void {
     ])
     .action(async (opts) => {
       printBanner();
-      await login(opts);
+      await login({ ...opts, checkClaimKeys: true });
     });
 
   auth
@@ -42,7 +42,7 @@ export function registerAuth(program: Program): void {
     .option("-y, --yes", "Proceed with OAuth without prompting when already logged in")
     .action(async (opts) => {
       printBanner();
-      await login(opts);
+      await login({ ...opts, checkClaimKeys: true });
     });
 
   program

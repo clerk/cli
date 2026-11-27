@@ -106,6 +106,18 @@ describe("findKeylessClaimUrl", () => {
     expect(await findKeylessClaimUrl(projectDir)).toBeUndefined();
   });
 
+  test("percent-encodes a quote and spaces in an https claimUrl, so no raw quote reaches cmd.exe", async () => {
+    await mkdir(join(projectDir, ".clerk", ".tmp"), { recursive: true });
+    await writeFile(
+      join(projectDir, ".clerk", ".tmp", "keyless.json"),
+      JSON.stringify({ claimUrl: 'https://a.com/" & calc & "' }),
+    );
+
+    const destination = await findKeylessClaimUrl(projectDir);
+    expect(destination?.url).toBe("https://a.com/%22%20&%20calc%20&%20%22");
+    expect(destination?.url).not.toContain('"');
+  });
+
   test("URL-encodes the breadcrumb claim token", async () => {
     await mkdir(join(projectDir, ".clerk"), { recursive: true });
     await writeFile(

@@ -28,6 +28,7 @@ import {
 } from "./status.ts";
 import { recordDeployObservation, recordDeployPoll } from "./telemetry.ts";
 import type { DeployContext } from "./state.ts";
+import { notLinkedMessage } from "../../lib/unlinked-advice.ts";
 
 type DeployStatusOptions = {
   wait?: boolean;
@@ -52,10 +53,9 @@ export async function deployStatus(options: DeployStatusOptions = {}): Promise<v
     const ctx = await resolveDeployContext();
     // Not an interrupt, so the catch rethrows this untouched.
     if (!ctx.appId || !ctx.developmentInstanceId) {
-      throw new CliError(
-        "No Clerk project linked to this directory. Run `clerk link`, then rerun `clerk deploy status`.",
-        { code: ERROR_CODE.NOT_LINKED },
-      );
+      throw new CliError(await notLinkedMessage(process.cwd(), "clerk deploy status"), {
+        code: ERROR_CODE.NOT_LINKED,
+      });
     }
 
     const preflightTriggered = await runPreflightDeployStatusCheck(ctx);
