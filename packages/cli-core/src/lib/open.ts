@@ -22,6 +22,7 @@
  */
 
 import { observeHostCapabilityFailure, withBrowserLaunch } from "./host-execution.ts";
+import { log } from "./log.ts";
 
 /** Outcome of an `openBrowser` call. */
 export type OpenResult =
@@ -34,7 +35,7 @@ export type OpenResult =
  */
 const LAUNCHERS: Record<NodeJS.Platform, readonly string[]> = {
   darwin: ["open"],
-  win32: ["start"],
+  win32: ["rundll32"],
   linux: ["xdg-open", "gnome-open", "kde-open", "sensible-browser"],
   // Other platforms (freebsd, openbsd, sunos, aix, android) get xdg-open as
   // a best guess.
@@ -45,7 +46,7 @@ const LAUNCHERS: Record<NodeJS.Platform, readonly string[]> = {
   netbsd: ["xdg-open"],
   openbsd: ["xdg-open"],
   sunos: ["xdg-open"],
-  cygwin: ["start"],
+  cygwin: ["rundll32"],
 };
 
 /**
@@ -81,20 +82,53 @@ async function isWsl(): Promise<boolean> {
 }
 
 /**
+ * Serialize `url` the way a browser would, so it carries no space or `"`
+ * (both are percent-encoded). Returns `undefined` unless it parses as an
+ * http: or https: URL: FileProtocolHandler hands its argument to
+ * ShellExecute, which also opens (and runs) file paths, UNC paths and
+ * `file:` URLs.
+ */
+function serializeWebUrl(url: string): string | undefined {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return undefined;
+  }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+  return parsed.href;
+}
+
+/**
+ * rundll32 by absolute path, so Windows can't pick up a `rundll32.exe` from
+ * the current directory ahead of PATH. Falls back to the `Bun.which` result
+ * when `SystemRoot` is unset.
+ */
+function rundll32Path(resolved: string): string {
+  const root = process.env.SystemRoot;
+  return root ? `${root}\\System32\\rundll32.exe` : resolved;
+}
+
+/**
  * Build the spawn command for a given launcher.
  *
- * - `start` (Windows): invoked via cmd.exe. The entire command is passed as a
- *   single string after `/c` so that cmd.exe parses it exactly as if typed at
- *   the prompt: `start "" "https://..."`. The empty `""` is the window title
- *   (otherwise `start` interprets a quoted URL as the title), and the URL is
- *   quoted so `&` in OAuth query strings is not treated as a cmd.exe command
- *   separator.
+ * - `rundll32` (Windows): `rundll32 url.dll,FileProtocolHandler <url>` hands
+ *   the URL to the default protocol handler without going through cmd.exe,
+ *   so nothing in it is a shell metacharacter: `%NAME%` is not expanded and
+ *   `&`, `^` and `|` are not operators. rundll32 receives the rest of its
+ *   command line verbatim, so the URL is serialized first: with no space or
+ *   `"` left in it, Bun's argument quoting leaves it untouched. Anything but
+ *   an http(s) URL gets no command (`undefined`).
  * - `powershell.exe` (WSL interop): `Start-Process '<url>'` with the URL in
  *   single quotes so `&` is not treated as a PowerShell operator; embedded
  *   single quotes are doubled per PowerShell quoting rules.
  */
-function launchCommand(launcher: string, url: string): string[] {
-  if (launcher === "start") return ["cmd.exe", "/c", `start "" "${url}"`];
+function launchCommand(launcher: string, resolved: string, url: string): string[] | undefined {
+  if (launcher === "rundll32") {
+    const href = serializeWebUrl(url);
+    if (!href) return undefined;
+    return [rundll32Path(resolved), "url.dll,FileProtocolHandler", href];
+  }
   if (launcher === "powershell.exe") {
     return [
       "powershell.exe",
@@ -126,16 +160,18 @@ export async function openBrowser(url: string): Promise<OpenResult> {
     ? WSL_LAUNCHERS
     : (LAUNCHERS[process.platform] ?? ["xdg-open"]);
 
-  // Pick the first launcher that's actually installed. `start` is a cmd.exe
-  // builtin (not a real binary on PATH), so we treat it as always-available
-  // when present in the candidate list (Bun.which would always return null
-  // for it). Everything else is checked normally.
-  const launcher = candidates.find((bin) => bin === "start" || Bun.which(bin) !== null);
-  if (!launcher) {
+  // Pick the first launcher that's actually installed.
+  const launcher = candidates.find((bin) => Bun.which(bin) !== null);
+  const resolved = launcher && Bun.which(launcher);
+  if (!launcher || !resolved) {
     return { ok: false, reason: "no-launcher" };
   }
 
-  const command = launchCommand(launcher, url);
+  const command = launchCommand(launcher, resolved, url);
+  if (!command) {
+    log.debug(`open: refusing to pass a non-http(s) URL to ${launcher}`);
+    return { ok: false, reason: "spawn-failed" };
+  }
 
   try {
     const result = await withBrowserLaunch(
@@ -147,12 +183,10 @@ export async function openBrowser(url: string): Promise<OpenResult> {
           stdout: "ignore",
           stderr: "ignore",
           stdin: "ignore",
-          // Prevent Bun from escaping the quotes inside the cmd.exe command string.
-          windowsVerbatimArguments: launcher === "start",
         });
 
         // Race the launcher's exit against a short grace period. Real launchers
-        // (open, xdg-open, wslview, cmd start) hand off to the OS and exit within
+        // (open, xdg-open, wslview, rundll32) hand off to the OS and exit within
         // a few ms, so the common case is either:
         //   - exit code 0 before the timer fires -> clear success
         //   - still running after 150ms -> effectively success, fire-and-forget
