@@ -131,9 +131,9 @@ export async function readSdkClaimUrl(cwd: string): Promise<string | undefined> 
     const claimUrl = typeof parsed.claimUrl === "string" ? parsed.claimUrl : undefined;
     if (!claimUrl) return undefined;
 
-    // Written by another process, so untrusted input. The browser launcher on Windows runs
-    // `cmd /c start "" "<url>"`, so only https goes through, and only as the parsed URL's
-    // `href`, which percent-encodes quotes and spaces: no raw `"` can end the argument.
+    // Written by another process, so untrusted input. Only https goes through, and only as
+    // the parsed URL's `href`, which percent-encodes quotes and spaces, so the Windows
+    // launcher (`rundll32 url.dll,FileProtocolHandler`) gets one unquoted argument.
     let url: URL | undefined;
     try {
       url = new URL(claimUrl);

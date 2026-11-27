@@ -4,6 +4,7 @@ import { openBrowser } from "./open.ts";
 const origWhich = Bun.which;
 const origSpawn = Bun.spawn;
 const origPlatform = process.platform;
+const origSystemRoot = process.env.SystemRoot;
 
 const bunOverrides = Bun as unknown as {
   which: (bin: string) => string | null;
@@ -46,20 +47,43 @@ afterEach(() => {
   });
   delete process.env.WSL_DISTRO_NAME;
   delete process.env.WSL_INTEROP;
+  if (origSystemRoot === undefined) delete process.env.SystemRoot;
+  else process.env.SystemRoot = origSystemRoot;
 });
+
+const RUNDLL32 = "C:\\Windows\\System32\\rundll32.exe";
+
+/** Windows with rundll32 on PATH and `SystemRoot` set, as on a real install. */
+function stubWin32() {
+  stubPlatform("win32");
+  process.env.SystemRoot = "C:\\Windows";
+  stubWhich({ rundll32: RUNDLL32 });
+}
 
 const OAUTH_URL = "https://example.com/oauth?client_id=abc&response_type=code&state=xyz";
 
 describe("openBrowser", () => {
-  test("win32: opens the URL with rundll32, not through cmd.exe", async () => {
-    stubPlatform("win32");
-    stubWhich({ rundll32: "C:\\Windows\\System32\\rundll32.exe" });
+  test("win32: opens the URL with rundll32 by its System32 path, not through cmd.exe", async () => {
+    stubWin32();
     const spawned = captureSpawn();
 
     const result = await openBrowser(OAUTH_URL);
 
     expect(result).toEqual({ ok: true, launcher: "rundll32" });
-    expect(spawned).toEqual([["rundll32", "url.dll,FileProtocolHandler", OAUTH_URL]]);
+    expect(spawned).toEqual([[RUNDLL32, "url.dll,FileProtocolHandler", OAUTH_URL]]);
+  });
+
+  test("win32: falls back to the PATH lookup for rundll32 when SystemRoot is unset", async () => {
+    stubWin32();
+    delete process.env.SystemRoot;
+    stubWhich({ rundll32: "D:\\Win\\System32\\rundll32.exe" });
+    const spawned = captureSpawn();
+
+    await openBrowser(OAUTH_URL);
+
+    expect(spawned).toEqual([
+      ["D:\\Win\\System32\\rundll32.exe", "url.dll,FileProtocolHandler", OAUTH_URL],
+    ]);
   });
 
   // No shell parses the argv, so cmd.exe metacharacters reach the handler as
@@ -80,27 +104,32 @@ describe("openBrowser", () => {
       "https://example.com/claim?t=%PATH%&x=a^b&q=%22hi%22%20there",
     ],
   ])("win32: %s", async (_name, url, expected) => {
-    stubPlatform("win32");
-    stubWhich({ rundll32: "C:\\Windows\\System32\\rundll32.exe" });
+    stubWin32();
     const spawned = captureSpawn();
 
     await openBrowser(url);
 
-    expect(spawned).toEqual([["rundll32", "url.dll,FileProtocolHandler", expected]]);
+    expect(spawned).toEqual([[RUNDLL32, "url.dll,FileProtocolHandler", expected]]);
   });
 
-  test("win32: passes a URL that doesn't parse through unchanged", async () => {
-    stubPlatform("win32");
-    stubWhich({ rundll32: "C:\\Windows\\System32\\rundll32.exe" });
+  // FileProtocolHandler passes its argument to ShellExecute, which would open
+  // or run a file path, so only http(s) URLs are launched.
+  test.each([
+    ["a string that isn't a URL", "not a url %PATH%"],
+    ["a file: URL", "file:///C:/Windows/System32/calc.exe"],
+    ["a Windows path", "C:\\Windows\\System32\\calc.exe"],
+  ])("win32: refuses %s without spawning", async (_name, url) => {
+    stubWin32();
     const spawned = captureSpawn();
 
-    await openBrowser("not a url %PATH%");
+    const result = await openBrowser(url);
 
-    expect(spawned).toEqual([["rundll32", "url.dll,FileProtocolHandler", "not a url %PATH%"]]);
+    expect(result).toEqual({ ok: false, reason: "spawn-failed" });
+    expect(spawned).toEqual([]);
   });
 
   test("win32: reports no-launcher when rundll32 is not on PATH", async () => {
-    stubPlatform("win32");
+    stubWin32();
     stubWhich({});
     const spawned = captureSpawn();
 

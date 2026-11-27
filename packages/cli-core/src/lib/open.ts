@@ -22,6 +22,7 @@
  */
 
 import { observeHostCapabilityFailure, withBrowserLaunch } from "./host-execution.ts";
+import { log } from "./log.ts";
 
 /** Outcome of an `openBrowser` call. */
 export type OpenResult =
@@ -82,14 +83,30 @@ async function isWsl(): Promise<boolean> {
 
 /**
  * Serialize `url` the way a browser would, so it carries no space or `"`
- * (both are percent-encoded). Falls back to the input when it doesn't parse.
+ * (both are percent-encoded). Returns `undefined` unless it parses as an
+ * http: or https: URL: FileProtocolHandler hands its argument to
+ * ShellExecute, which also opens (and runs) file paths, UNC paths and
+ * `file:` URLs.
  */
-function serializeUrl(url: string): string {
+function serializeWebUrl(url: string): string | undefined {
+  let parsed: URL;
   try {
-    return new URL(url).href;
+    parsed = new URL(url);
   } catch {
-    return url;
+    return undefined;
   }
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return undefined;
+  return parsed.href;
+}
+
+/**
+ * rundll32 by absolute path, so Windows can't pick up a `rundll32.exe` from
+ * the current directory ahead of PATH. Falls back to the `Bun.which` result
+ * when `SystemRoot` is unset.
+ */
+function rundll32Path(resolved: string): string {
+  const root = process.env.SystemRoot;
+  return root ? `${root}\\System32\\rundll32.exe` : resolved;
 }
 
 /**
@@ -98,16 +115,19 @@ function serializeUrl(url: string): string {
  * - `rundll32` (Windows): `rundll32 url.dll,FileProtocolHandler <url>` hands
  *   the URL to the default protocol handler without going through cmd.exe,
  *   so nothing in it is a shell metacharacter: `%NAME%` is not expanded and
- *   `&`, `^`, `|` and `"` are not operators. rundll32 receives the rest of
- *   its command line verbatim, so the URL is serialized first: with no space
- *   or `"` left in it, Bun's argument quoting leaves it untouched.
+ *   `&`, `^` and `|` are not operators. rundll32 receives the rest of its
+ *   command line verbatim, so the URL is serialized first: with no space or
+ *   `"` left in it, Bun's argument quoting leaves it untouched. Anything but
+ *   an http(s) URL gets no command (`undefined`).
  * - `powershell.exe` (WSL interop): `Start-Process '<url>'` with the URL in
  *   single quotes so `&` is not treated as a PowerShell operator; embedded
  *   single quotes are doubled per PowerShell quoting rules.
  */
-function launchCommand(launcher: string, url: string): string[] {
+function launchCommand(launcher: string, resolved: string, url: string): string[] | undefined {
   if (launcher === "rundll32") {
-    return ["rundll32", "url.dll,FileProtocolHandler", serializeUrl(url)];
+    const href = serializeWebUrl(url);
+    if (!href) return undefined;
+    return [rundll32Path(resolved), "url.dll,FileProtocolHandler", href];
   }
   if (launcher === "powershell.exe") {
     return [
@@ -142,11 +162,16 @@ export async function openBrowser(url: string): Promise<OpenResult> {
 
   // Pick the first launcher that's actually installed.
   const launcher = candidates.find((bin) => Bun.which(bin) !== null);
-  if (!launcher) {
+  const resolved = launcher && Bun.which(launcher);
+  if (!launcher || !resolved) {
     return { ok: false, reason: "no-launcher" };
   }
 
-  const command = launchCommand(launcher, url);
+  const command = launchCommand(launcher, resolved, url);
+  if (!command) {
+    log.debug(`open: refusing to pass a non-http(s) URL to ${launcher}`);
+    return { ok: false, reason: "spawn-failed" };
+  }
 
   try {
     const result = await withBrowserLaunch(

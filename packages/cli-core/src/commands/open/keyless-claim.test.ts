@@ -106,7 +106,7 @@ describe("findKeylessClaimUrl", () => {
     expect(await findKeylessClaimUrl(projectDir)).toBeUndefined();
   });
 
-  test("percent-encodes a quote and spaces in an https claimUrl, so no raw quote reaches cmd.exe", async () => {
+  test("percent-encodes a quote and spaces in an https claimUrl, so no raw quote reaches the browser launcher", async () => {
     await mkdir(join(projectDir, ".clerk", ".tmp"), { recursive: true });
     await writeFile(
       join(projectDir, ".clerk", ".tmp", "keyless.json"),
