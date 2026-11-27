@@ -152,6 +152,14 @@ describe("ensureGitignoreEntry", () => {
     ".clerk/**\n!.clerk/keyless.json\n",
     "/.clerk/*\n!/.clerk/keyless.json\n",
     ".clerk/*\n!.clerk/*.json\n",
+    ".clerk/*\n!*.json\n",
+    ".clerk/*\n!**/keyless.json\n",
+    ".clerk/*\n!keyless.json\n",
+    ".clerk/**\n!/**/keyless.json\n",
+    ".clerk/*\n!.clerk*/keyless.json\n",
+    // Redundant but intentional: git never descends into the ignored folder, so
+    // the file stays ignored, but a nested negation still triggers the append.
+    ".clerk/\n!.clerk/keyless.json\n",
   ])("appends the entry when a later negation re-includes a path under it: %p", async (content) => {
     await Bun.write(gitignorePath, content);
     await ensureGitignoreEntry(tempDir, ".clerk/");

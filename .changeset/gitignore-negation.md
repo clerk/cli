@@ -2,4 +2,4 @@
 "clerk": patch
 ---
 
-Add `.clerk/` to `.gitignore` when a later negation such as `!.clerk/keyless.json` re-includes a file under an existing `.clerk/*` pattern, so the keyless breadcrumb is never left committable.
+Add `.clerk/` to `.gitignore` when an existing `.clerk/*` or `.clerk/**` pattern is followed by a negation that can re-include the keyless breadcrumb, such as `!.clerk/keyless.json` or `!*.json`, so the breadcrumb is not left committable.

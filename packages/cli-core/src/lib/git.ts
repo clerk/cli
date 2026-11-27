@@ -126,16 +126,22 @@ export async function ensureGitignoreEntry(cwd: string, entry: string): Promise<
   const target = normalizeGitignorePattern(entry);
   // Git strips a trailing CR and trailing spaces, but keeps tabs and leading
   // whitespace. The last matching rule wins, so a later `!.clerk/` re-includes
-  // the folder, and a later `!.clerk/keyless.json` re-includes that file when
-  // only the folder's contents were ignored (`.clerk/*`).
+  // the folder. After a contents-only form (`.clerk/*`, `.clerk/**`) any later
+  // negation, such as `!*.json` or `!**/keyless.json`, may re-include a file,
+  // so it undoes the listing. Git never descends into an ignored folder, so
+  // after `.clerk/` a negation like `!.clerk/keyless.json` changes nothing; it
+  // still undoes the listing here, which costs only a redundant append.
   let listed = false;
+  let contentsOnly = false;
   for (const line of content.split("\n").map((l) => l.replace(/\r$/, "").replace(/ +$/, ""))) {
     if (!line || line.startsWith("#")) continue;
     const negated = line.startsWith("!");
     const pattern = negated ? line.slice(1) : line;
     const path = normalizeGitignorePattern(pattern);
-    if (path === target) listed = !negated;
-    else if (negated && path.startsWith(`${target}/`)) listed = false;
+    if (path === target) {
+      listed = !negated;
+      contentsOnly = !negated && /\/\*{1,2}$/.test(pattern);
+    } else if (negated && (contentsOnly || path.startsWith(`${target}/`))) listed = false;
   }
   if (listed) return;
   const separator = content && !content.endsWith("\n") ? "\n" : "";
