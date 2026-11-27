@@ -52,11 +52,12 @@ async function resolveTargets(
     safeRealpath(runningPath),
   ]);
 
-  const resolved = await Promise.all(onPath.map(async (p) => resolveAsdfShim(p)));
-  const candidates = onPath.map((displayPath, i) => ({
-    displayPath,
-    resolvedPath: resolved[i]!,
-  }));
+  const candidates = await Promise.all(
+    onPath.map(async ({ path, real }) => ({
+      displayPath: path,
+      resolvedPath: await resolveAsdfShim(real),
+    })),
+  );
 
   // Dedupe by resolvedPath: a shim and its resolved target shouldn't both appear.
   const seen = new Set<string>();
