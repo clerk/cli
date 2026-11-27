@@ -31,10 +31,12 @@ async function swiftFilesUnder(folder: string, files: string[]): Promise<void> {
   }
 }
 
-async function pbxprojSources(inspection: Inspection, sourceRoot: string): Promise<TargetSources> {
-  const objects = parse(inspection.document.source).objects as Record<string, any>;
-  const target = objects[inspection.input.selection.targetId];
-  if (!target) return unknown("doesn't list the selected target");
+/**
+ * Resolves where a `.pbxproj` group or file reference lives, following its parent groups the way
+ * Xcode does: an absolute path, a path under `sourceRoot`, or undefined when Xcode would need a
+ * build setting to resolve it.
+ */
+export function pbxprojLocations(objects: Record<string, any>, sourceRoot: string) {
   const parents = new Map<string, string>();
   for (const [id, object] of Object.entries(objects))
     for (const child of Array.isArray(object?.children) ? object.children : [])
@@ -57,6 +59,14 @@ async function pbxprojSources(inspection: Inspection, sourceRoot: string): Promi
         return undefined;
     }
   };
+  return (id: string) => location(id);
+}
+
+async function pbxprojSources(inspection: Inspection, sourceRoot: string): Promise<TargetSources> {
+  const objects = parse(inspection.document.source).objects as Record<string, any>;
+  const target = objects[inspection.input.selection.targetId];
+  if (!target) return unknown("doesn't list the selected target");
+  const location = pbxprojLocations(objects, sourceRoot);
   const files: string[] = [];
   for (const phaseId of target.buildPhases ?? []) {
     const phase = objects[phaseId];

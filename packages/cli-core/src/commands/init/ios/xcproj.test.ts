@@ -8,7 +8,8 @@ import { convertFixtureToXCProj } from "./setup-test-helpers.ts";
 import { applySetup, prepareSetup } from "./workflow.ts";
 import { sdkHealth } from "./sdk-health.ts";
 import { scaffoldSDK } from "./sdk.ts";
-import type { CommandRunner } from "./xcode.ts";
+import { inspectSelectedProject, type CommandRunner } from "./xcode.ts";
+import { planAllCapabilities } from "./capabilities.ts";
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -139,3 +140,34 @@ test(".xcproj ambiguous ownership and conditional links receive manual guidance"
     if (action.type === "skip") expect(action.skipReason).not.toContain("already linked");
   }
 });
+
+test.each([
+  ["ios", "MyApp/MyApp.entitlements", "CODE_SIGN_ENTITLEMENTS[config=Debug][sdk=iphone*]"],
+  ["macos", "MyApp/MyApp-macOS.entitlements", "CODE_SIGN_ENTITLEMENTS[config=Debug][sdk=macosx*]"],
+] as const)(
+  "%s: .xcproj puts new entitlements in the target's member folder",
+  async (platform, path, key) => {
+    const f = await fixture(platform);
+    await writeFile(
+      f.path,
+      applyXCProjValue(
+        await readFile(f.path, "utf8"),
+        ["targets", 0, "build-settings", "CODE_SIGN_ENTITLEMENTS"],
+        undefined,
+      ),
+    );
+    await rm(join(f.root, "MyApp/MyApp.entitlements"));
+    const run: CommandRunner = async (command, root, signal) =>
+      (await f.run(command, root, signal)).replace('"MyApp/MyApp.entitlements"', '""');
+    const inspection = await inspectSelectedProject({ ...f.options, configuration: "Debug" }, run);
+    const plan = await planAllCapabilities(
+      inspection,
+      inspection.document.source,
+      "fixture.clerk.accounts.dev",
+    );
+    expect(plan.actions.map((action) => [action.type, action.path])).toEqual([["create", path]]);
+    expect(xcprojTargets(parseXCProjSource(plan.projectSource).root)[0]!.buildSettings[key]).toBe(
+      path,
+    );
+  },
+);
