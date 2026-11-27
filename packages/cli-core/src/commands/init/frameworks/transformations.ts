@@ -248,11 +248,11 @@ export function addBootstrapHeader(
 
 /** Wrap the contents of a `<body>` tag with a provider component (e.g. `<ClerkProvider>`). */
 export function wrapBodyWithProvider(content: string, provider: string): string {
-  const bodyPattern = /^( *)(<body[^>]*>)([\s\S]*?)(<\/body>)/m;
+  const bodyPattern = /^( *)((?:.*> *)?)(<body[^>]*>)([\s\S]*?)(<\/body>)/m;
   const match = bodyPattern.exec(content);
   if (!match) return content;
 
-  const [fullMatch, bodyIndent = "", openTag, inner = "", closeTag] = match;
+  const [fullMatch, bodyIndent = "", beforeBody = "", openTag, inner = "", closeTag] = match;
   const providerIndent = bodyIndent + "  ";
   const contentIndent = providerIndent + "  ";
 
@@ -266,7 +266,7 @@ export function wrapBodyWithProvider(content: string, provider: string): string 
     .join("\n");
 
   const wrapped = [
-    `${bodyIndent}${openTag}`,
+    `${bodyIndent}${beforeBody}${openTag}`,
     `${providerIndent}<${provider}>`,
     reindented,
     `${providerIndent}</${provider}>`,
