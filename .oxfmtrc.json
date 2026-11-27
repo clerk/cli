@@ -1,4 +1,4 @@
 {
   "$schema": "./node_modules/oxfmt/configuration_schema.json",
-  "ignorePatterns": ["test/e2e/fixtures/**"]
+  "ignorePatterns": ["test/e2e/fixtures/**", "test/migrate-live/data/**"]
 }
