@@ -37,9 +37,10 @@ export function isHomebrewPath(execPath: string): boolean {
 // install that owns `process.execPath` rather than the first PATH hit.
 
 /**
- * Returns symlink-resolved absolute paths to every `clerk` binary on PATH, in
- * PATH order. Duplicates (same realpath reached via two PATH entries) are
- * collapsed; first occurrence wins so PATH order is preserved.
+ * Returns every `clerk` binary on PATH, in PATH order: `path` is the entry as
+ * the shell sees it (e.g. `/opt/homebrew/bin/clerk`), `real` its
+ * symlink-resolved target. Duplicates (same realpath reached via two PATH
+ * entries) are collapsed; first occurrence wins so PATH order is preserved.
  *
  * Shell-agnostic: reads `process.env.PATH` directly, no `which`/`where`
  * subshell. Post-update command-hash invalidation (`hash -r`, `rehash`) is
@@ -51,14 +52,16 @@ export function isHomebrewPath(execPath: string): boolean {
  *   Windows: iterates PATHEXT in declared order; accepts any regular file
  *            since NTFS has no X bit.
  */
-export async function findClerkOnPath(binaryName = UPDATE_PACKAGE_NAME): Promise<string[]> {
+export async function findClerkOnPath(
+  binaryName = UPDATE_PACKAGE_NAME,
+): Promise<Array<{ path: string; real: string }>> {
   const dirs = (process.env.PATH ?? "").split(delimiter).filter(Boolean);
   const exts =
     process.platform === "win32"
       ? (process.env.PATHEXT ?? ".EXE;.CMD;.BAT").split(";").filter(Boolean)
       : [""];
 
-  const resolved: string[] = [];
+  const resolved: Array<{ path: string; real: string }> = [];
   const seen = new Set<string>();
   for (const dir of dirs) {
     for (const ext of exts) {
@@ -72,7 +75,7 @@ export async function findClerkOnPath(binaryName = UPDATE_PACKAGE_NAME): Promise
       }
       if (seen.has(real)) continue;
       seen.add(real);
-      resolved.push(real);
+      resolved.push({ path: candidate, real });
       break; // first matching extension in this dir wins (Windows resolution order)
     }
   }

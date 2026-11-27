@@ -13,6 +13,7 @@ interface SpinnerCall {
   message?: string;
 }
 let spinnerCalls: SpinnerCall[] = [];
+let lastSpinnerOutput: { columns?: number } | undefined;
 
 mock.module("@clack/prompts", () => ({
   intro: (title?: string) => {
@@ -23,23 +24,26 @@ mock.module("@clack/prompts", () => ({
     outroCalls++;
     lastOutroLabel = label;
   },
-  spinner: () => ({
-    start: (message: string) => {
-      spinnerCalls.push({ type: "start", message });
-    },
-    stop: (message?: string) => {
-      spinnerCalls.push({ type: "stop", message });
-    },
-    message: (message?: string) => {
-      spinnerCalls.push({ type: "message", message });
-    },
-    clear: () => {
-      spinnerCalls.push({ type: "clear" });
-    },
-    error: (message?: string) => {
-      spinnerCalls.push({ type: "error", message });
-    },
-  }),
+  spinner: (opts?: { output?: { columns?: number } }) => {
+    lastSpinnerOutput = opts?.output;
+    return {
+      start: (message: string) => {
+        spinnerCalls.push({ type: "start", message });
+      },
+      stop: (message?: string) => {
+        spinnerCalls.push({ type: "stop", message });
+      },
+      message: (message?: string) => {
+        spinnerCalls.push({ type: "message", message });
+      },
+      clear: () => {
+        spinnerCalls.push({ type: "clear" });
+      },
+      error: (message?: string) => {
+        spinnerCalls.push({ type: "error", message });
+      },
+    };
+  },
   // Stubs for sibling test-process exports
   cancel: () => {},
   log: { info: () => {}, warn: () => {}, error: () => {}, success: () => {} },
@@ -233,6 +237,18 @@ test("withSpinner starts, runs fn, and stops with success message", async () => 
   expect(spinnerCalls[0]?.message).toBe("Loading...");
   // Default doneMessage trims trailing "..."
   expect(spinnerCalls[1]?.message).toBe("Loading");
+});
+
+test("spinner output reports the real stderr width so clack wraps frames correctly", async () => {
+  const saved = Object.getOwnPropertyDescriptor(process.stderr, "columns");
+  Object.defineProperty(process.stderr, "columns", { value: 173, configurable: true });
+  try {
+    await captureStderrAsync(() => withSpinner("Loading...", async () => undefined));
+    expect(lastSpinnerOutput?.columns).toBe(173);
+  } finally {
+    if (saved) Object.defineProperty(process.stderr, "columns", saved);
+    else delete (process.stderr as { columns?: number }).columns;
+  }
 });
 
 test("withSpinner uses an explicit doneMessage when provided", async () => {

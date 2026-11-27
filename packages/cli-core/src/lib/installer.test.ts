@@ -296,7 +296,7 @@ describe("findClerkOnPath", () => {
     await chmod(bin, 0o755);
     process.env.PATH = sandbox;
     const found = await findClerkOnPath();
-    expect(found).toEqual([bin]);
+    expect(found).toEqual([{ path: bin, real: bin }]);
   });
 
   test("skips non-executable files on POSIX", async () => {
@@ -326,10 +326,10 @@ describe("findClerkOnPath", () => {
     await chmod(aBin, 0o755);
     await chmod(bBin, 0o755);
     process.env.PATH = [dirA, dirB].join(delimiter);
-    expect(await findClerkOnPath()).toEqual([aBin, bBin]);
+    expect((await findClerkOnPath()).map((f) => f.path)).toEqual([aBin, bBin]);
     // Reversed PATH should reverse the order too.
     process.env.PATH = [dirB, dirA].join(delimiter);
-    expect(await findClerkOnPath()).toEqual([bBin, aBin]);
+    expect((await findClerkOnPath()).map((f) => f.path)).toEqual([bBin, aBin]);
   });
 
   test("dedupes by realpath when two PATH entries resolve to the same file", async () => {
@@ -343,8 +343,21 @@ describe("findClerkOnPath", () => {
     await chmod(bin, 0o755);
     process.env.PATH = [real, link].join(delimiter);
     const found = await findClerkOnPath();
-    expect(found.length).toBe(1);
-    expect(found[0]).toBe(bin);
+    expect(found).toEqual([{ path: bin, real: bin }]);
+  });
+
+  test("keeps the PATH entry for display while resolving symlinks (Homebrew layout)", async () => {
+    if (process.platform === "win32") return; // skip symlink test on win32
+    const cellarBin = join(sandbox, "Cellar", "clerk", "3.4.0", "bin");
+    const binDir = join(sandbox, "bin");
+    await mkdir(cellarBin, { recursive: true });
+    await mkdir(binDir);
+    const real = join(cellarBin, "clerk");
+    await writeFile(real, "#!/bin/sh\necho fake");
+    await chmod(real, 0o755);
+    await symlink(real, join(binDir, "clerk"));
+    process.env.PATH = binDir;
+    expect(await findClerkOnPath()).toEqual([{ path: join(binDir, "clerk"), real }]);
   });
 
   test("ignores empty PATH entries (:: as CWD)", async () => {
@@ -352,7 +365,7 @@ describe("findClerkOnPath", () => {
     await writeFile(bin, "#!/bin/sh\necho fake");
     await chmod(bin, 0o755);
     process.env.PATH = `${sandbox}${delimiter}${delimiter}`;
-    expect(await findClerkOnPath()).toEqual([bin]);
+    expect(await findClerkOnPath()).toEqual([{ path: bin, real: bin }]);
   });
 });
 

@@ -28,7 +28,7 @@ clerk update [options]
 5. Runs the installer's global install command (e.g. `npm install -g clerk@<version>`, `bun add -g clerk@<version>`)
 6. If any updated target was inside an asdf-managed tool, runs `asdf reshim <plugin>` so the shim picks up the new binary (safety net; modern asdf-nodejs auto-reshims)
 7. With `--all`, updates every on-PATH `clerk` install whose owner the CLI can drive. If the primary itself is blocked (e.g. Homebrew on `canary`, or `null` owner), the primary is skipped with a warning and the remaining installs still run; the run only refuses when every target is blocked. Failures on individual installs are recorded in the summary but don't short-circuit the rest.
-8. After a successful install, prints a shell-specific `hash -r` / `rehash` hint when applicable
+8. After a successful install, prints a shell-specific `hash -r` / `rehash` hint when applicable (skipped when only Homebrew installs were updated, since Homebrew upgrades in place behind the same symlink)
 
 ## Primary target selection
 

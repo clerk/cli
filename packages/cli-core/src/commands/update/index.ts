@@ -52,11 +52,12 @@ async function resolveTargets(
     safeRealpath(runningPath),
   ]);
 
-  const resolved = await Promise.all(onPath.map(async (p) => resolveAsdfShim(p)));
-  const candidates = onPath.map((displayPath, i) => ({
-    displayPath,
-    resolvedPath: resolved[i]!,
-  }));
+  const candidates = await Promise.all(
+    onPath.map(async ({ path, real }) => ({
+      displayPath: path,
+      resolvedPath: await resolveAsdfShim(real),
+    })),
+  );
 
   // Dedupe by resolvedPath: a shim and its resolved target shouldn't both appear.
   const seen = new Set<string>();
@@ -270,18 +271,20 @@ export async function update(options: UpdateOptions): Promise<void> {
   if (isHuman()) intro("Checking for updates");
 
   const [latest, installDirs] = await Promise.all([
-    withSpinner("Checking for updates...", async () => fetchLatestVersion(channel)).catch(
-      (error: unknown) => {
-        // A registry that answered — badly, or without the requested channel —
-        // already carries its own code, and a Ctrl-C is the user's decision,
-        // not the network's. Only transport and timeout failures are genuinely
-        // "unreachable", and retrying is only right for those.
-        if (error instanceof CliError || isCancelled(error)) throw error;
-        throw new CliError("Could not reach npm registry. Check your network connection.", {
-          code: ERROR_CODE.REGISTRY_UNREACHABLE,
-        });
-      },
-    ),
+    withSpinner(
+      "Fetching latest version...",
+      async () => fetchLatestVersion(channel),
+      "Fetched latest version",
+    ).catch((error: unknown) => {
+      // A registry that answered — badly, or without the requested channel —
+      // already carries its own code, and a Ctrl-C is the user's decision,
+      // not the network's. Only transport and timeout failures are genuinely
+      // "unreachable", and retrying is only right for those.
+      if (error instanceof CliError || isCancelled(error)) throw error;
+      throw new CliError("Could not reach npm registry. Check your network connection.", {
+        code: ERROR_CODE.REGISTRY_UNREACHABLE,
+      });
+    }),
     getInstallerPackageDirs(),
   ]);
 
@@ -297,7 +300,6 @@ export async function update(options: UpdateOptions): Promise<void> {
   log.info(`  Current: ${CURRENT_VERSION}`);
   log.info(`  Latest:  ${cyan(latest)}${formatChannelLabel(channel)}`);
   log.info(`  Target:  ${formatTarget(primary)}`);
-  log.blank();
 
   // Build the ordered updatable list. Without --all, only the primary counts;
   // with --all, include every on-PATH install whose owner we can update.
@@ -376,7 +378,9 @@ export async function update(options: UpdateOptions): Promise<void> {
     const owner = t.owner as Installer;
     try {
       await withSpinner(
-        `Installing ${packageSpec} via ${owner} (${t.displayPath})...`,
+        // Path stays out of the spinner: it's on the Target line already, and
+        // a long frame that wraps garbles clack's redraw in narrow terminals.
+        `Installing ${packageSpec} via ${owner}...`,
         async () => runGlobalInstall(owner, packageSpec, latest),
         `Updated ${owner}: ${t.displayPath}`,
       );
@@ -434,7 +438,9 @@ export async function update(options: UpdateOptions): Promise<void> {
     reportOtherInstalls(others, channel);
   }
 
-  const hint = hashHint();
+  // Homebrew upgrades in place behind the same `bin/clerk` symlink, so the
+  // shell's cached path stays valid and the hint would only be noise.
+  const hint = results.some((r) => r.ok && r.target.owner !== "homebrew") ? hashHint() : null;
   if (hint) {
     log.blank();
     log.info(hint);
