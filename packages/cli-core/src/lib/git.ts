@@ -126,13 +126,16 @@ export async function ensureGitignoreEntry(cwd: string, entry: string): Promise<
   const target = normalizeGitignorePattern(entry);
   // Git strips a trailing CR and trailing spaces, but keeps tabs and leading
   // whitespace. The last matching rule wins, so a later `!.clerk/` re-includes
-  // the folder.
+  // the folder, and a later `!.clerk/keyless.json` re-includes that file when
+  // only the folder's contents were ignored (`.clerk/*`).
   let listed = false;
   for (const line of content.split("\n").map((l) => l.replace(/\r$/, "").replace(/ +$/, ""))) {
     if (!line || line.startsWith("#")) continue;
     const negated = line.startsWith("!");
     const pattern = negated ? line.slice(1) : line;
-    if (normalizeGitignorePattern(pattern) === target) listed = !negated;
+    const path = normalizeGitignorePattern(pattern);
+    if (path === target) listed = !negated;
+    else if (negated && path.startsWith(`${target}/`)) listed = false;
   }
   if (listed) return;
   const separator = content && !content.endsWith("\n") ? "\n" : "";
