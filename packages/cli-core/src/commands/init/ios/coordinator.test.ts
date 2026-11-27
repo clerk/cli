@@ -108,6 +108,46 @@ test.each([
   },
 );
 
+test("an existing registration from another signing team is kept, with a warning in the preview, result, and JSON", async () => {
+  const f = await fixture();
+  // Registered as TEST123456 (say, while on a Personal Team); the app is now signed by ABCDE12345.
+  const run = f.dependencies.run;
+  f.dependencies.run = async (command, root, signal) => {
+    const output = await run(command, root, signal);
+    if (!command.includes("-showBuildSettings")) return output;
+    const rows = JSON.parse(output);
+    for (const row of rows) row.buildSettings.DEVELOPMENT_TEAM = "ABCDE12345";
+    return JSON.stringify(rows);
+  };
+  const outro = spyOn(spinner, "outro").mockResolvedValue(undefined);
+  spies.push(outro);
+  await runAppleInit({ root: f.root, agent: false, yes: true }, "app_test", f.dependencies);
+  const warning =
+    "Clerk's native registration for com.example.MyApp uses App ID Prefix TEST123456, but the app is signed by team ABCDE12345.";
+  expect(captured.err).toContain("Native identity: TEST123456.com.example.MyApp");
+  // Once before applying and once among the remaining steps.
+  expect(captured.err.split(warning)).toHaveLength(3);
+  expect(captured.err).toContain("rerun with --app-id-prefix TEST123456 to confirm it");
+  expect(outro).toHaveBeenCalledWith("Setup needs attention");
+  expect(f.state.apps.map((app) => app.app_id_prefix)).toEqual(["TEST123456"]);
+
+  captured.clear();
+  await runAppleInit({ root: f.root, agent: true, json: true }, "app_test", f.dependencies);
+  const result = JSON.parse(captured.out);
+  expect(result).toMatchObject({
+    status: "manual-steps-required",
+    identity: {
+      appIdPrefix: "TEST123456",
+      prefixSource: "clerk-registration",
+      warnings: [expect.stringContaining(warning)],
+    },
+  });
+  expect(result.handoff.remaining).toContainEqual({
+    id: "app-id-prefix-review",
+    detail: result.identity.warnings[0],
+  });
+});
+
 test("existing app receives capabilities and a precise JSON handoff without rewriting Swift; reruns are idempotent", async () => {
   const f = await fixture();
   const before = await readFile(join(f.root, "MyApp/MyAppApp.swift"), "utf8");

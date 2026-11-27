@@ -2,7 +2,7 @@ import type { Program } from "../../cli-program.ts";
 import { isAgent, isHuman } from "../../mode.ts";
 import { bold, green, red } from "../../lib/color.ts";
 import { log } from "../../lib/log.ts";
-import { CliError, ERROR_CODE, errorMessage } from "../../lib/errors.ts";
+import { CliError, ERROR_CODE, errorMessage, throwUsageError } from "../../lib/errors.ts";
 import { intro, outro, bar, withSpinner } from "../../lib/spinner.ts";
 import { createDoctorContext } from "./context.ts";
 import {
@@ -75,7 +75,12 @@ function getChecks(native: boolean): { name: string; run: CheckFn }[] {
  * case where doctor itself is broken.
  */
 async function runChecks(ctx: DoctorContext, options: DoctorOptions): Promise<CheckResult[]> {
-  const apple = Boolean(options.xcodeProject || options.xcodeTarget || options.xcodeConfiguration);
+  const apple = Boolean(
+    options.xcodeProject ||
+    options.xcodeTarget ||
+    options.xcodeConfiguration ||
+    options.appIdPrefix,
+  );
   const android = Boolean(
     options.androidModule || options.androidPackage || options.androidFingerprint,
   );
@@ -127,6 +132,9 @@ function printResults(results: CheckResult[], options: DoctorOptions): void {
 }
 
 export async function doctor(options: DoctorOptions = {}): Promise<void> {
+  if (options.appIdPrefix != null && !/^[A-Z0-9]{10}$/.test(options.appIdPrefix.trim())) {
+    throwUsageError("--app-id-prefix must be the 10-character App ID Prefix from Apple Developer.");
+  }
   if (!options.json) {
     intro("Running diagnostics");
   }
@@ -216,6 +224,10 @@ export function registerDoctor(program: Program): void {
     .option("--xcode-project <path>", "Xcode project or workspace to check")
     .option("--xcode-target <name-or-id>", "Xcode app target to check, by name or ID")
     .option("--xcode-configuration <name>", "Xcode build configuration to check")
+    .option(
+      "--app-id-prefix <prefix>",
+      "Apple App ID Prefix to check the native registration against, such as a legacy prefix",
+    )
     .option(
       "--android-module <path>",
       "Android application module to check, relative to the project",
