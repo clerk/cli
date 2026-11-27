@@ -11,7 +11,10 @@ const bunOverrides = Bun as unknown as {
 };
 
 function stubPlatform(platform: NodeJS.Platform) {
-  Object.defineProperty(process, "platform", { value: platform, writable: true });
+  Object.defineProperty(process, "platform", {
+    value: platform,
+    writable: true,
+  });
 }
 
 /** Only the given binaries resolve on PATH. */
@@ -37,7 +40,10 @@ function captureSpawn(): string[][] {
 afterEach(() => {
   bunOverrides.which = origWhich as typeof bunOverrides.which;
   bunOverrides.spawn = origSpawn as typeof bunOverrides.spawn;
-  Object.defineProperty(process, "platform", { value: origPlatform, writable: true });
+  Object.defineProperty(process, "platform", {
+    value: origPlatform,
+    writable: true,
+  });
   delete process.env.WSL_DISTRO_NAME;
   delete process.env.WSL_INTEROP;
 });
@@ -45,16 +51,63 @@ afterEach(() => {
 const OAUTH_URL = "https://example.com/oauth?client_id=abc&response_type=code&state=xyz";
 
 describe("openBrowser", () => {
-  test("win32: quotes URL so ampersands are not treated as cmd.exe separators", async () => {
+  test("win32: opens the URL with rundll32, not through cmd.exe", async () => {
     stubPlatform("win32");
+    stubWhich({ rundll32: "C:\\Windows\\System32\\rundll32.exe" });
     const spawned = captureSpawn();
 
     const result = await openBrowser(OAUTH_URL);
 
-    expect(result.ok).toBe(true);
-    // cmd.exe /c 'start "" "<url>"' — passed as a single string so cmd.exe
-    // parses it as a shell command line, preserving the quotes around the URL.
-    expect(spawned).toEqual([["cmd.exe", "/c", `start "" "${OAUTH_URL}"`]]);
+    expect(result).toEqual({ ok: true, launcher: "rundll32" });
+    expect(spawned).toEqual([["rundll32", "url.dll,FileProtocolHandler", OAUTH_URL]]);
+  });
+
+  // No shell parses the argv, so cmd.exe metacharacters reach the handler as
+  // written; space and `"` are percent-encoded so Bun's Windows argument
+  // quoting has nothing to wrap or escape.
+  test.each([
+    [
+      "%PATH% stays literal",
+      "https://example.com/claim?t=%PATH%",
+      "https://example.com/claim?t=%PATH%",
+    ],
+    ["& is not a separator", "https://example.com/?a=1&b=2", "https://example.com/?a=1&b=2"],
+    ["^ is not an escape", "https://example.com/?q=a^b", "https://example.com/?q=a^b"],
+    ['" is percent-encoded', 'https://example.com/?q="x"', "https://example.com/?q=%22x%22"],
+    [
+      "all of them together",
+      'https://example.com/claim?t=%PATH%&x=a^b&q="hi" there',
+      "https://example.com/claim?t=%PATH%&x=a^b&q=%22hi%22%20there",
+    ],
+  ])("win32: %s", async (_name, url, expected) => {
+    stubPlatform("win32");
+    stubWhich({ rundll32: "C:\\Windows\\System32\\rundll32.exe" });
+    const spawned = captureSpawn();
+
+    await openBrowser(url);
+
+    expect(spawned).toEqual([["rundll32", "url.dll,FileProtocolHandler", expected]]);
+  });
+
+  test("win32: passes a URL that doesn't parse through unchanged", async () => {
+    stubPlatform("win32");
+    stubWhich({ rundll32: "C:\\Windows\\System32\\rundll32.exe" });
+    const spawned = captureSpawn();
+
+    await openBrowser("not a url %PATH%");
+
+    expect(spawned).toEqual([["rundll32", "url.dll,FileProtocolHandler", "not a url %PATH%"]]);
+  });
+
+  test("win32: reports no-launcher when rundll32 is not on PATH", async () => {
+    stubPlatform("win32");
+    stubWhich({});
+    const spawned = captureSpawn();
+
+    const result = await openBrowser(OAUTH_URL);
+
+    expect(result).toEqual({ ok: false, reason: "no-launcher" });
+    expect(spawned).toEqual([]);
   });
 
   test("non-win32: passes URL without extra quoting", async () => {
@@ -70,7 +123,10 @@ describe("openBrowser", () => {
 
   test("WSL: prefers wslview when installed", async () => {
     stubWsl();
-    stubWhich({ wslview: "/usr/bin/wslview", "powershell.exe": "/mnt/c/powershell.exe" });
+    stubWhich({
+      wslview: "/usr/bin/wslview",
+      "powershell.exe": "/mnt/c/powershell.exe",
+    });
     const spawned = captureSpawn();
 
     const result = await openBrowser(OAUTH_URL);
