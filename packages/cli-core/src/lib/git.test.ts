@@ -147,6 +147,34 @@ describe("ensureGitignoreEntry", () => {
     expect(await Bun.file(gitignorePath).text()).toBe("/.clerk/\n!.clerk/\n.clerk/\n");
   });
 
+  test.each([
+    ".clerk/*\n!.clerk/keyless.json\n",
+    ".clerk/**\n!.clerk/keyless.json\n",
+    "/.clerk/*\n!/.clerk/keyless.json\n",
+    ".clerk/*\n!.clerk/*.json\n",
+    ".clerk/*\n!*.json\n",
+    ".clerk/*\n!**/keyless.json\n",
+    ".clerk/*\n!keyless.json\n",
+    ".clerk/**\n!/**/keyless.json\n",
+    ".clerk/*\n!.clerk*/keyless.json\n",
+    // Redundant but intentional: git never descends into the ignored folder, so
+    // the file stays ignored, but a nested negation still triggers the append.
+    ".clerk/\n!.clerk/keyless.json\n",
+  ])("appends the entry when a later negation re-includes a path under it: %p", async (content) => {
+    await Bun.write(gitignorePath, content);
+    await ensureGitignoreEntry(tempDir, ".clerk/");
+    expect(await Bun.file(gitignorePath).text()).toBe(`${content}.clerk/\n`);
+  });
+
+  test.each(["!.clerk/keyless.json\n.clerk/*\n", ".clerk/*\n!.clerk/keyless.json\n.clerk/\n"])(
+    "leaves .gitignore unchanged when the entry follows a nested negation: %p",
+    async (content) => {
+      await Bun.write(gitignorePath, content);
+      await ensureGitignoreEntry(tempDir, ".clerk/");
+      expect(await Bun.file(gitignorePath).text()).toBe(content);
+    },
+  );
+
   test("leaves .gitignore unchanged when the entry follows a negation", async () => {
     const content = "!.clerk/\n/.clerk/\n";
     await Bun.write(gitignorePath, content);
