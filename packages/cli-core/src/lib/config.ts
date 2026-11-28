@@ -404,6 +404,31 @@ export function resolveFetchedApplicationInstance(
 }
 
 /**
+ * Fetch an application and resolve `instance` (an alias such as `prod`, or an
+ * instance ID; development when omitted) among its instances.
+ */
+export async function fetchApplicationInstance(
+  appId: string,
+  instance?: string,
+  fetchOptions?: { includeSecretKeys?: boolean },
+): Promise<{
+  app: Application;
+  instance: ApplicationInstance;
+  instanceId: string;
+  instanceLabel: string;
+}> {
+  const { fetchApplication } = await import("./plapi.ts");
+  const app = await fetchApplication(appId, fetchOptions);
+  const resolved = resolveFetchedApplicationInstance(appId, app, instance);
+  if (!resolved.found) {
+    throw new CliError(`Instance ${resolved.instanceId} not found in application ${appId}.`, {
+      code: ERROR_CODE.INSTANCE_NOT_FOUND,
+    });
+  }
+  return { app, ...resolved };
+}
+
+/**
  * Resolve app context from explicit flags or linked profile.
  * This is the isomorphic resolution chain used by profile-dependent commands:
  *   1. Explicit --app flag (works from any directory)
@@ -414,23 +439,11 @@ export async function resolveAppContext(
   options: AppContextOptions,
 ): Promise<{ appId: string; appLabel: string; instanceId: string; instanceLabel: string }> {
   if (options.app) {
-    const { fetchApplication } = await import("./plapi.ts");
-    const app = await fetchApplication(options.app);
-    const appLabel = app.name || options.app;
-    const resolved = resolveFetchedApplicationInstance(options.app, app, options.instance);
-    if (!resolved.found) {
-      throw new CliError(
-        `Instance ${resolved.instanceId} not found in application ${options.app}.`,
-        { code: ERROR_CODE.INSTANCE_NOT_FOUND },
-      );
-    }
-
-    return {
-      appId: options.app,
-      appLabel,
-      instanceId: resolved.instanceId,
-      instanceLabel: resolved.instanceLabel,
-    };
+    const { app, instanceId, instanceLabel } = await fetchApplicationInstance(
+      options.app,
+      options.instance,
+    );
+    return { appId: options.app, appLabel: app.name || options.app, instanceId, instanceLabel };
   }
 
   const resolved = await resolveProfile(options.cwd ?? process.cwd());

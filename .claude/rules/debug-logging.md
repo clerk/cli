@@ -25,7 +25,7 @@ Skip: pure in-memory computation, loop internals, prompt rendering, anything a c
 log.debug(`<namespace>: <message>`);
 ```
 
-- `<namespace>` — tag the subsystem. Existing tags: `plapi`, `bapi`, `oauth`, `update-check`, `credentials`, `config`, `env`, `auth-server`, `git`, `autolink`, `framework`, `runners`. Add new ones sparingly.
+- `<namespace>` — tag the subsystem. Existing tags: `plapi`, `bapi`, `oauth`, `update-check`, `credentials`, `config`, `env`, `auth-server`, `git`, `autolink`, `framework`, `runners`, `mcp`. Add new ones sparingly.
 - `<message>` — one line. Put the primary identifier (URL, path, commit) inline, not on a separate line.
 
 Examples:

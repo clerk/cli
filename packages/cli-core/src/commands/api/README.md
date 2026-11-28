@@ -19,6 +19,10 @@ clerk api ls
 # Filter endpoints by keyword
 clerk api ls users
 
+# Show request body fields for the endpoints at a path
+clerk api ls /users
+clerk api ls /platform/applications --platform
+
 # Interactive request builder (TTY only)
 clerk api
 
@@ -177,6 +181,10 @@ Lists available API endpoints from the Clerk OpenAPI spec.
 - Caches locally in `~/.clerk/cache/` for 1 hour
 - Supports `--platform` to list Platform API endpoints
 - Optional filter keyword matches against path, summary, tag, and operation ID
+- A filter starting with `/` is an endpoint path (a leading `/v1` is ignored). Endpoints at exactly
+  that path also list their request body: content type, then each top-level field with its type,
+  a `required` marker, and the first line of its description. For an array body the fields are
+  those of its items. Endpoints without a body print as a single row.
 
 ### `clerk api` (interactive mode)
 

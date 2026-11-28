@@ -72,6 +72,7 @@ Options:
   --verbose            Show detailed output (enables debug messages)
 
 Commands:
+  agents                                          Set up Clerk auth for agent tooling you build, such as MCP servers
   api              [options] [endpoint] [filter]  Call any Clerk API endpoint (200+; `clerk api ls` to browse)
   apps                                            Manage your Clerk applications
   auth                                            Manage authentication

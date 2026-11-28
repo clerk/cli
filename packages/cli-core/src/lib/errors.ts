@@ -139,6 +139,14 @@ export const ERROR_CODE = {
    * folder's publishable key belongs to an app other than the one `clerk link` just claimed.
    */
   KEY_PAIR_MISMATCH: "key_pair_mismatch",
+  /** The URL is already an OAuth resource on the instance that isn't marked as an MCP server. */
+  OAUTH_RESOURCE_CONFLICT: "oauth_resource_conflict",
+  /** The application still uses the legacy OAuth provider, which can't host MCP servers. */
+  LEGACY_OAUTH_PROVIDER: "legacy_oauth_provider",
+  /** `clerk agents mcp check` was given a URL that isn't an MCP server on the instance. */
+  MCP_SERVER_NOT_REGISTERED: "mcp_server_not_registered",
+  /** `clerk agents mcp check` found a configuration check that failed. */
+  MCP_CHECK_FAILED: "mcp_check_failed",
   /** `clerk logs get` found no log group with that ID in the targeted instance. */
   LOG_GROUP_NOT_FOUND: "log_group_not_found",
   /** The Backend API has no `GET /v1/logs/types` yet, so `clerk logs schema` can't list event types. */

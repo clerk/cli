@@ -28,13 +28,38 @@ export interface EndpointInfo {
   operationId: string;
   pathParams: PathParam[];
   hasRequestBody: boolean;
+  /** Absent when the operation takes no body, or its body declares no content type. */
+  requestBody?: RequestBodyInfo;
+}
+
+export interface BodyField {
+  name: string;
+  /** Display type, such as `string`, `string[]`, `string | null` or `"api" | "mcp"`. */
+  type: string;
+  required: boolean;
+  /** First line of the field's description. */
+  description: string;
+}
+
+export interface RequestBodyInfo {
+  contentType: string;
+  required: boolean;
+  /** Display type of the whole body: `object`, or `array of object` for a list of objects. */
+  type: string;
+  /** Top-level properties of the body, or of its items when the body is an array. */
+  fields: BodyField[];
 }
 
 export interface Catalog {
   endpoints: EndpointInfo[];
   tags: string[];
   fetchedAt: number;
+  /** Shape version of the cached catalog; a cache with another value is refetched. */
+  format?: number;
 }
+
+/** Bump when the parsed catalog gains or changes fields, so old caches are refreshed. */
+const CATALOG_FORMAT = 2;
 
 // ── Test helper ────────────────────────────────────────────────────────────
 
@@ -87,6 +112,110 @@ async function writeCache(platform: boolean, catalog: Catalog): Promise<void> {
 
 const HTTP_METHODS = ["get", "post", "put", "patch", "delete"] as const;
 
+type Schema = Record<string, any>;
+
+/** How deep `$ref` chains and `allOf` nesting are followed before giving up. */
+const MAX_SCHEMA_DEPTH = 20;
+/** How deep `formatType` descends into items and alternatives before printing `object`. */
+const MAX_TYPE_DEPTH = 10;
+
+/** Follow local `$ref`s (`#/components/...`) until a concrete schema is reached. */
+export function resolveRef(spec: Schema, schema: unknown, depth = 0): Schema {
+  if (!schema || typeof schema !== "object") return {};
+  const ref = (schema as Schema).$ref;
+  if (typeof ref !== "string" || depth > MAX_SCHEMA_DEPTH) return schema as Schema;
+  const target = ref
+    .replace(/^#\//, "")
+    .split("/")
+    .reduce<unknown>((node, key) => (node as Schema | undefined)?.[key], spec);
+  return resolveRef(spec, target, depth + 1);
+}
+
+/**
+ * Resolve a schema and merge its `allOf` parts into one set of properties and
+ * required names. A property several parts define becomes an `allOf` of its
+ * definitions, so each part's constraints (such as an `enum`) survive.
+ */
+export function flattenSchema(spec: Schema, schema: unknown, depth = 0): Schema {
+  const resolved = resolveRef(spec, schema);
+  if (!Array.isArray(resolved.allOf) || depth > MAX_SCHEMA_DEPTH) return resolved;
+  const parts = resolved.allOf.map((part: unknown) => flattenSchema(spec, part, depth + 1));
+  const merged = [...parts, { ...resolved, allOf: undefined }];
+  return {
+    ...Object.assign({}, ...merged),
+    properties: merged
+      .flatMap((p) => Object.entries<unknown>(p.properties ?? {}))
+      .reduce<Schema>(
+        (acc, [name, prop]) => ({
+          ...acc,
+          [name]: name in acc ? { allOf: [acc[name], prop] } : prop,
+        }),
+        {},
+      ),
+    required: merged.flatMap((p) => (Array.isArray(p.required) ? p.required : [])),
+  };
+}
+
+/** Whether a schema's `type`, a name or a 3.1 type list, includes `name`. */
+function hasType(schema: Schema, name: string): boolean {
+  return Array.isArray(schema.type) ? schema.type.includes(name) : schema.type === name;
+}
+
+/** A schema's type as `api ls` prints it, such as `string | null` or `("a" | "b")[]`. */
+export function formatType(spec: Schema, schema: unknown, depth = 0): string {
+  if (depth > MAX_TYPE_DEPTH) return "object";
+  const s = flattenSchema(spec, schema);
+  // A 3.1 type list that already has "null" doesn't need 3.0's `nullable` too.
+  const nullable = s.nullable === true && !hasType(s, "null") ? " | null" : "";
+  if (Array.isArray(s.enum) && s.enum.length > 0) {
+    return s.enum.map((v: unknown) => JSON.stringify(v)).join(" | ") + nullable;
+  }
+  const alternatives = s.oneOf ?? s.anyOf;
+  if (Array.isArray(alternatives)) {
+    const types = alternatives.map((alt: unknown) => formatType(spec, alt, depth + 1));
+    return [...new Set(types)].join(" | ") + nullable;
+  }
+  const types: unknown[] = Array.isArray(s.type) ? s.type : s.type ? [s.type] : [];
+  if (types.length === 0) return (s.properties ? "object" : "any") + nullable;
+  // Format an "array" member with its items, so ["array", "null"] reads `string[] | null`.
+  const member = (type: unknown) => {
+    if (type !== "array") return String(type);
+    const items = formatType(spec, s.items, depth + 1);
+    return items.includes(" | ") ? `(${items})[]` : `${items}[]`;
+  };
+  return types.map(member).join(" | ") + nullable;
+}
+
+function bodyFields(spec: Schema, schema: Schema): BodyField[] {
+  const required = new Set<string>(Array.isArray(schema.required) ? schema.required : []);
+  return Object.entries<unknown>(schema.properties ?? {}).map(([name, prop]) => ({
+    name,
+    type: formatType(spec, prop),
+    required: required.has(name),
+    description: String(flattenSchema(spec, prop).description ?? "")
+      .split("\n")[0]!
+      .trim(),
+  }));
+}
+
+/** Summarize an operation's request body, preferring its JSON content. */
+function parseRequestBody(spec: Schema, requestBody: unknown): RequestBodyInfo | undefined {
+  const body = resolveRef(spec, requestBody);
+  const content = (body.content ?? {}) as Record<string, { schema?: unknown }>;
+  const contentType = "application/json" in content ? "application/json" : Object.keys(content)[0];
+  if (!contentType) return undefined;
+
+  const schema = flattenSchema(spec, content[contentType]?.schema);
+  const isArray = hasType(schema, "array");
+  const fieldsSchema = isArray ? flattenSchema(spec, schema.items) : schema;
+  return {
+    contentType,
+    required: body.required === true,
+    type: isArray ? `array of ${formatType(spec, schema.items)}` : formatType(spec, schema),
+    fields: bodyFields(spec, fieldsSchema),
+  };
+}
+
 /** Parse an OpenAPI YAML string into a Catalog. Pure function, no I/O. */
 export function parseSpec(yamlText: string): Catalog {
   const spec = parseYaml(yamlText);
@@ -119,12 +248,13 @@ export function parseSpec(yamlText: string): Catalog {
         operationId: (op.operationId as string) ?? "",
         pathParams,
         hasRequestBody: !!op.requestBody,
+        requestBody: parseRequestBody(spec, op.requestBody),
       });
     }
   }
 
   const tags = [...new Set(endpoints.map((e) => e.tag))].sort();
-  return { endpoints, tags, fetchedAt: Date.now() };
+  return { endpoints, tags, fetchedAt: Date.now(), format: CATALOG_FORMAT };
 }
 
 // ── Loading ────────────────────────────────────────────────────────────────
@@ -134,7 +264,7 @@ export async function loadCatalog(options: { platform?: boolean } = {}): Promise
 
   // Check cache
   const cached = await readCache(platform);
-  if (cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+  if (cached && cached.format === CATALOG_FORMAT && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     return cached;
   }
 

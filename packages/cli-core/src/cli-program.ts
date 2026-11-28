@@ -22,6 +22,7 @@ import { registerApi } from "./commands/api/index.ts";
 import { registerDoctor } from "./commands/doctor/index.ts";
 import { registerSecurity } from "./commands/security/index.ts";
 import { registerMcp } from "./commands/mcp/index.ts";
+import { registerAgents } from "./commands/agents/index.ts";
 import { registerSwitchEnv } from "./commands/switch-env/index.ts";
 import { registerCompletion } from "./commands/completion/index.ts";
 import { registerUpdate } from "./commands/update/index.ts";
@@ -86,6 +87,7 @@ const registrants: CommandRegistrant[] = [
   registerDoctor,
   registerSecurity,
   registerMcp,
+  registerAgents,
   registerSwitchEnv,
   registerCompletion,
   registerUpdate,

@@ -8,6 +8,9 @@ import {
   loadCatalog,
   filterEndpoints,
   endpointsByTag,
+  flattenSchema,
+  formatType,
+  resolveRef,
   _setCacheDir,
 } from "./catalog.ts";
 
@@ -92,6 +95,31 @@ describe("parseSpec", () => {
     const catalog = parseSpec(MINIMAL_SPEC);
     const noTag = catalog.endpoints.find((e) => e.operationId === "NoTag");
     expect(noTag!.tag).toBe("Other");
+  });
+
+  test("lists the item fields of a body typed as a nullable array", () => {
+    const catalog = parseSpec(`
+openapi: "3.1.0"
+paths:
+  /items:
+    post:
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: [array, "null"]
+              items:
+                type: object
+                required: [name]
+                properties:
+                  name: { type: string, description: The name }
+`);
+    expect(catalog.endpoints[0]!.requestBody).toEqual({
+      contentType: "application/json",
+      required: false,
+      type: "array of object",
+      fields: [{ name: "name", type: "string", required: true, description: "The name" }],
+    });
   });
 
   test("produces sorted unique tags", () => {
@@ -283,5 +311,136 @@ describe("loadCatalog", () => {
     // Cache uses platform filename
     const cacheFile = Bun.file(join(tempDir, "plapi-catalog.json"));
     expect(await cacheFile.exists()).toBe(true);
+  });
+});
+
+const SPEC = {
+  components: {
+    schemas: {
+      Name: { type: "string", description: "A name" },
+      Alias: { $ref: "#/components/schemas/Name" },
+      Loop: { $ref: "#/components/schemas/Loop" },
+      Base: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+      },
+      Mixin: {
+        properties: { tag: { type: "string" } },
+        required: ["tag"],
+      },
+      Derived: {
+        allOf: [{ $ref: "#/components/schemas/Base" }, { $ref: "#/components/schemas/Mixin" }],
+        properties: { extra: { type: "integer" } },
+        description: "Derived",
+      },
+    },
+  },
+};
+
+describe("resolveRef", () => {
+  test.each([
+    {
+      label: "a schema without $ref as is",
+      schema: { type: "integer" },
+      expected: { type: "integer" },
+    },
+    {
+      label: "a local $ref",
+      schema: { $ref: "#/components/schemas/Name" },
+      expected: { type: "string", description: "A name" },
+    },
+    {
+      label: "a chain of $refs",
+      schema: { $ref: "#/components/schemas/Alias" },
+      expected: { type: "string", description: "A name" },
+    },
+    {
+      label: "a missing $ref target as empty",
+      schema: { $ref: "#/components/schemas/Nope" },
+      expected: {},
+    },
+    { label: "a non-object as empty", schema: "string", expected: {} },
+    { label: "undefined as empty", schema: undefined, expected: {} },
+    {
+      label: "a self-referencing $ref by stopping",
+      schema: { $ref: "#/components/schemas/Loop" },
+      expected: { $ref: "#/components/schemas/Loop" },
+    },
+  ])("resolves $label", ({ schema, expected }) => {
+    expect(resolveRef(SPEC, schema)).toEqual(expected);
+  });
+});
+
+describe("flattenSchema", () => {
+  test("merges allOf parts and the schema's own properties and required names", () => {
+    const flat = flattenSchema(SPEC, { $ref: "#/components/schemas/Derived" });
+    expect(Object.keys(flat.properties)).toEqual(["id", "tag", "extra"]);
+    expect(flat.required).toEqual(["id", "tag"]);
+    expect(flat.type).toBe("object");
+    expect(flat.description).toBe("Derived");
+  });
+
+  test("combines a property several allOf parts define instead of replacing it", () => {
+    const flat = flattenSchema(SPEC, {
+      allOf: [
+        { properties: { mode: { enum: ["api", "mcp"] } } },
+        { properties: { mode: { type: "string", description: "The mode" } } },
+      ],
+    });
+    expect(formatType(SPEC, flat.properties.mode)).toBe('"api" | "mcp"');
+    expect(flattenSchema(SPEC, flat.properties.mode).description).toBe("The mode");
+  });
+
+  test.each([
+    { label: "a schema without allOf", schema: { type: "string" }, expected: { type: "string" } },
+    {
+      label: "a $ref without allOf",
+      schema: { $ref: "#/components/schemas/Base" },
+      expected: { type: "object", properties: { id: { type: "string" } }, required: ["id"] },
+    },
+  ])("returns $label as resolved", ({ schema, expected }) => {
+    expect(flattenSchema(SPEC, schema)).toEqual(expected);
+  });
+});
+
+describe("formatType", () => {
+  test.each(
+    [
+      { schema: { type: "string" }, expected: "string" },
+      { schema: { type: "string", nullable: true }, expected: "string | null" },
+      { schema: { type: ["string", "null"] }, expected: "string | null" },
+      { schema: { type: ["string", "null"], nullable: true }, expected: "string | null" },
+      { schema: { $ref: "#/components/schemas/Alias" }, expected: "string" },
+      { schema: { enum: ["a", "b"] }, expected: '"a" | "b"' },
+      { schema: { enum: ["a"], nullable: true }, expected: '"a" | null' },
+      {
+        schema: { oneOf: [{ type: "string" }, { type: "integer" }] },
+        expected: "string | integer",
+      },
+      { schema: { anyOf: [{ type: "string" }, { type: "string" }] }, expected: "string" },
+      { schema: { type: "array", items: { type: "string" } }, expected: "string[]" },
+      {
+        schema: { type: "array", items: { oneOf: [{ type: "string" }, { type: "integer" }] } },
+        expected: "(string | integer)[]",
+      },
+      {
+        schema: { type: "array", items: { type: "string" }, nullable: true },
+        expected: "string[] | null",
+      },
+      {
+        schema: { type: ["array", "null"], items: { type: "string" } },
+        expected: "string[] | null",
+      },
+      {
+        schema: { type: ["array", "null"], items: { enum: ["a", "b"] } },
+        expected: '("a" | "b")[] | null',
+      },
+      { schema: { $ref: "#/components/schemas/Derived" }, expected: "object" },
+      { schema: { properties: { a: { type: "string" } } }, expected: "object" },
+      { schema: {}, expected: "any" },
+    ].map((c) => ({ ...c, json: JSON.stringify(c.schema) })),
+  )("formats $json as $expected", ({ schema, expected }) => {
+    expect(formatType(SPEC, schema)).toBe(expected);
   });
 });
